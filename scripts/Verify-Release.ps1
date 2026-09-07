@@ -76,7 +76,7 @@ finally {
     $cngKey.Dispose()
 }
 
-$zipPath = Join-Path $artifactRoot ("AI採掘機-v$($manifest.version).zip")
+$zipPath = Join-Path $artifactRoot ("AI-Miner-v$($manifest.version).zip")
 if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) {
     throw "Release ZIP is missing: $zipPath"
 }

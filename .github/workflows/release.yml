@@ -62,7 +62,7 @@ jobs:
           $artifactRoot = Join-Path $PWD "artifacts\$tag"
           $assets = @(
             (Join-Path $artifactRoot 'ai-miner-win-x64.exe'),
-            (Join-Path $artifactRoot "AI採掘機-$tag.zip"),
+            (Join-Path $artifactRoot "AI-Miner-$tag.zip"),
             (Join-Path $artifactRoot 'update-manifest.json'),
             (Join-Path $artifactRoot 'update-manifest.sig'),
             (Join-Path $artifactRoot 'SHA256SUMS.txt')

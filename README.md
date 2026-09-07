@@ -16,7 +16,7 @@ FiveM上の対象ボタンを検出し、採掘・石洗い・砂金採りを繰
 
 ## インストール
 
-1. [Releases](https://github.com/kanzakideath/fivemstonefarm/releases) から最新の `AI採掘機-vX.Y.Z.zip` を取得します。
+1. [Releases](https://github.com/kanzakideath/fivemstonefarm/releases) から最新の `AI-Miner-vX.Y.Z.zip` を取得します。
 2. ZIPを任意の書き込み可能なフォルダーへ展開します。
 3. `AI採掘機.exe` を起動します。
 
@@ -69,7 +69,7 @@ git push origin v5.2.0
 `.github/workflows/release.yml` はタグ `vX.Y.Z` のみを受け付け、ビルド・自己検証・署名・署名再検証を行った後に次を公開します。
 
 - `ai-miner-win-x64.exe`
-- `AI採掘機-vX.Y.Z.zip`
+- `AI-Miner-vX.Y.Z.zip`
 - `update-manifest.json`
 - `update-manifest.sig`
 - `SHA256SUMS.txt`
