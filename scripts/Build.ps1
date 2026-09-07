@@ -98,13 +98,14 @@ function Invoke-CSharpBuild {
 function Invoke-CapabilitySmokeTest {
     param(
         [Parameter(Mandatory)] [string]$Executable,
-        [Parameter(Mandatory)] [string]$Expected
+        [Parameter(Mandatory)] [string]$Expected,
+        [ValidateSet('capabilities', 'self-test')] [string]$Mode = 'capabilities'
     )
 
-    $resultPath = Join-Path $stageRoot ([System.IO.Path]::GetFileNameWithoutExtension($Executable) + '-capabilities.txt')
+    $resultPath = Join-Path $stageRoot ([System.IO.Path]::GetFileNameWithoutExtension($Executable) + '-' + $Mode + '.txt')
     if (Test-Path -LiteralPath $resultPath) { Remove-Item -LiteralPath $resultPath -Force }
 
-    $argumentLine = 'capabilities "' + $resultPath.Replace('"', '""') + '"'
+    $argumentLine = $Mode + ' "' + $resultPath.Replace('"', '""') + '"'
     $process = Start-Process -FilePath $Executable -ArgumentList $argumentLine -PassThru -WindowStyle Hidden
     if (-not $process.WaitForExit(15000)) {
         try { $process.Kill() } catch { }
@@ -124,7 +125,8 @@ $bridgeOutput = Join-Path $stageRoot 'AI採掘機_Background.exe'
 $updaterOutput = Join-Path $stageRoot 'AI採掘機_Updater.exe'
 Invoke-CSharpBuild -Source $bridgeSource -Output $bridgeOutput
 Invoke-CSharpBuild -Source $updaterSource -Output $updaterOutput
-Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'CAPS 3 MINE WASH GOLD NUDGE'
+Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'CAPS 4 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY'
+Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'SELFTEST OK' -Mode 'self-test'
 Invoke-CapabilitySmokeTest -Executable $updaterOutput -Expected 'UPDATE_CAPS 1 CHECK DOWNLOAD APPLY'
 
 $stagedMain = Join-Path $stageRoot 'mining-auto.ahk'
