@@ -1,0 +1,65 @@
+# 秘密鍵・認証情報（公開鍵はソースへ定数として埋め込む）
+*.key
+*.pem
+*.pfx
+*.p12
+*.pkcs8
+*.b64
+*.sig
+.env
+.env.*
+!.env.example
+secrets/
+private/
+credentials/
+*secret*
+*credential*
+id_rsa*
+id_ecdsa*
+
+# ビルドツール・キャッシュ
+tools/
+.cache/
+.packages/
+
+# 生成物
+build/
+dist/
+artifacts/
+outputs/
+releases/
+bin/
+obj/
+*.exe
+*.dll
+*.pdb
+*.zip
+*.7z
+update-manifest.json
+update-manifest.sig
+SHA256SUMS.txt
+
+# 一時ファイル・ログ
+tmp/
+temp/
+.tmp/
+*.tmp
+*.temp
+*.log
+logs/
+crashdumps/
+
+# 利用者ごとの設定
+/AI採掘機.ini
+/自動採掘マクロ.ini
+*.local.ini
+
+# エディター・OS
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+.DS_Store
+Thumbs.db
+Desktop.ini

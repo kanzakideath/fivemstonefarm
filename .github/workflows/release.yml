@@ -1,0 +1,84 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, sign, and publish
+    runs-on: windows-latest
+    timeout-minutes: 25
+    environment: release
+
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Validate tag
+        id: version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = '${{ github.ref_name }}'
+          if ($tag -notmatch '^v(?<version>\d+\.\d+\.\d+)$') {
+            throw "Release tags must be strict vX.Y.Z: $tag"
+          }
+          "version=$($Matches.version)" >> $env:GITHUB_OUTPUT
+          $publishedAt = (git show -s --format=%cI $env:GITHUB_SHA).Trim()
+          $publishedAtUtc = [DateTimeOffset]::Parse($publishedAt).UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ')
+          "published_at=$publishedAtUtc" >> $env:GITHUB_OUTPUT
+
+      - name: Download and verify pinned build tools
+        shell: pwsh
+        run: .\scripts\Bootstrap-Tools.ps1
+
+      - name: Build, smoke-test, sign, and verify assets
+        shell: pwsh
+        env:
+          UPDATE_SIGNING_KEY_PKCS8_B64: ${{ secrets.UPDATE_SIGNING_KEY_PKCS8_B64 }}
+        run: |
+          .\scripts\Make-Release.ps1 `
+            -Version '${{ steps.version.outputs.version }}' `
+            -PublishedAt '${{ steps.version.outputs.published_at }}'
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = '${{ github.ref_name }}'
+          $artifactRoot = Join-Path $PWD "artifacts\$tag"
+          $assets = @(
+            (Join-Path $artifactRoot 'ai-miner-win-x64.exe'),
+            (Join-Path $artifactRoot "AI採掘機-$tag.zip"),
+            (Join-Path $artifactRoot 'update-manifest.json'),
+            (Join-Path $artifactRoot 'update-manifest.sig'),
+            (Join-Path $artifactRoot 'SHA256SUMS.txt')
+          )
+          foreach ($asset in $assets) {
+            if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) {
+              throw "Release asset is missing: $asset"
+            }
+          }
+          gh release create $tag @assets `
+            --repo '${{ github.repository }}' `
+            --verify-tag `
+            --title "AI採掘機 $tag" `
+            --generate-notes `
+            --draft
+          gh release edit $tag `
+            --repo '${{ github.repository }}' `
+            --draft=false `
+            --latest
