@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "baseArguments": [
+    "--visual-test"
+  ],
+  "windowTitlePattern": "^AI\u63a1\u6398\u6a5f(?:\\s.*)?$",
+  "scenarios": [
+    {
+      "name": "overview",
+      "arguments": ["--fixture", "overview", "--window-width", "820", "--window-height", "640"]
+    },
+    {
+      "name": "action-sheet",
+      "arguments": ["--fixture", "action-sheet", "--window-width", "820", "--window-height", "640"]
+    },
+    {
+      "name": "settings",
+      "arguments": ["--fixture", "settings", "--window-width", "820", "--window-height", "640"]
+    },
+    {
+      "name": "narrow",
+      "arguments": ["--fixture", "overview", "--window-width", "520", "--window-height", "640"]
+    }
+  ]
+}
