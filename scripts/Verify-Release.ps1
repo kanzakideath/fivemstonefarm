@@ -80,8 +80,48 @@ $zipPath = Join-Path $artifactRoot ("AI-Miner-v$($manifest.version).zip")
 if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) {
     throw "Release ZIP is missing: $zipPath"
 }
+$companionZipPath = Join-Path $artifactRoot ("AI-Miner-Companion-v$($manifest.version).zip")
+if (-not (Test-Path -LiteralPath $companionZipPath -PathType Leaf)) {
+    throw "Companion resource ZIP is missing: $companionZipPath"
+}
 
-$sumAssets = @($executablePath, $zipPath, $manifestPath, $signaturePath)
+Add-Type -AssemblyName System.IO.Compression
+$requiredCompanionEntries = @(
+    'fxmanifest.lua',
+    'config.shared.lua',
+    'config.server.lua',
+    'client.lua',
+    'server.lua',
+    'ui/index.html',
+    'ui/styles.css',
+    'ui/app.js',
+    'README.md'
+)
+foreach ($archiveCheck in @(
+    @{ Path = $zipPath; Prefix = 'server-resource/ai_miner_companion/' },
+    @{ Path = $companionZipPath; Prefix = 'ai_miner_companion/' }
+)) {
+    $stream = [System.IO.File]::OpenRead($archiveCheck.Path)
+    $archive = [System.IO.Compression.ZipArchive]::new($stream, [System.IO.Compression.ZipArchiveMode]::Read, $false)
+    try {
+        foreach ($relativeEntry in $requiredCompanionEntries) {
+            $requiredEntry = $archiveCheck.Prefix + $relativeEntry
+            $matches = @($archive.Entries | Where-Object { $_.FullName -ceq $requiredEntry })
+            if ($matches.Count -ne 1) {
+                throw "Required companion entry must occur exactly once in $($archiveCheck.Path): $requiredEntry"
+            }
+            if ($matches[0].Length -le 0) {
+                throw "Required companion entry is empty in $($archiveCheck.Path): $requiredEntry"
+            }
+        }
+    }
+    finally {
+        $archive.Dispose()
+        $stream.Dispose()
+    }
+}
+
+$sumAssets = @($executablePath, $zipPath, $companionZipPath, $manifestPath, $signaturePath)
 $expectedSums = foreach ($path in $sumAssets) {
     $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
     "$hash  $([System.IO.Path]::GetFileName($path))"

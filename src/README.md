@@ -1,36 +1,36 @@
 # ソース配置
 
-ビルドは次のファイルを使用します。
+- `mining-auto.ahk`: v7.0.0のデスクトップ本体。採掘・石洗い・砂金採り、重量監視、ネイティブUI、companion連携、安全停止を担当します。
+- `background-bridge/CdpBridge.cs`: FiveMの対象・インベントリNUIを構造的に操作し、`ai_miner_companion` の公開状態とDevConコマンドを厳格なプロトコルで中継します。
+- `updater/Updater.cs`: 固定GitHub ReleaseのECDSA署名、配布物SHA-256、置換後の自己検証を行います。
+- `assets/`: AutoHotkeyへ埋め込む静的アセットです。
 
-- `mining-auto.ahk`: v6.2.0のメインアプリ。採掘・石洗い・砂金採り、解像度に依存しないバックグラウンド操作、iOS/iPadOSの情報階層を参考にしたネイティブWindows UI、車両ルート登録、容量・接続の安全制御を含みます。
-- `background-bridge/CdpBridge.cs`: FiveM NUIの対象・インベントリ構造を読み書きし、DevConへ移動・視点入力を送るバックグラウンドヘルパーです。
-- `updater/Updater.cs`: 固定GitHub Releaseから取得したマニフェスト署名、配布物のSHA-256、置換後の自己検証を行う更新ヘルパーです。
-- `assets/`: `FileInstall` するPNGなどの静的アセットです。
+FiveM側のソースは `../fivem-resource/ai_miner_companion/` に分離しています。所有権アダプターを含む `config.server.lua` はshared scriptではなく、クライアントへ配信しません。
 
-## 車両収納のデータモデル
+## 車両収納の境界
 
-ライブFiveM画面で、作業位置から車両後部までの往路と復路を登録します。W/A/S/Dの移動bitと、矢印キーから得た4方向の視点bitを同じ時系列の `duration:mask` へ記録します。v6.2.0の有効な登録は `RouteFormat=3`、保存したストレージ種類は `trunk` だけです。形式1・2の登録情報は残しますが自動再生せず、UIから再登録を求めます。
+v7の有効なデスクトップ設定は `RouteFormat=4`、`CompanionProtocol=1`、サーバー発行の `CompanionRegistrationId`、検証済みの種類 `trunk` です。旧版の座標・W/A/S/D・矢印キー記録は使用しません。`OutboundRoute` と `ReturnRoute` は移行時に読み込めても、車両移動には再生しません。
 
-視点bitの再生にはDevConの `+look_up` / `+look_down` / `+look_left` / `+look_right` を使用します。中断、例外、終了時はdirect、`*_only`、`scaled_*_only`を含む全視点入力と移動入力を解放します。ヘルパーのself-testと偽DevConテストはコマンド文字列と解放を検証しますが、実FiveM内のカメラ反応はクライアント・サーバー資源・入力設定に依存するため、ライブ往復テストが最終確認です。
+resourceはプレイヤー識別子・ナンバー・モデルへ紐付いた不透明IDをサーバーKVPに保存します。車両のnetwork IDと座標は一時値です。操作のたびにサーバーがOneSync上で車両を再解決して所有権と距離を検証し、クライアントが現在の車体寸法と向きから後部の接近地点を計算し直してNavMesh移動します。
 
-登録時は対象メニューにある `ストレージを開く`、`トランクを開く`、`荷台を開く`の完全一致候補を扱います。候補が複数なら押さず、開いた右側インベントリが `trunk` でなければ拒否します。保存後はストレージIDと種類の完全一致を要求し、グローブボックスや別車両へは移しません。
+既定構成の `server.cfg` では `ensure ox_inventory` を `ensure ai_miner_companion` より前に置きます。`ox_target` を使用する場合もcompanionより先に起動します。resource更新時は既存の `config.server.lua` を別の安全な場所へバックアップし、新しいテンプレートとの差分へ所有権ValidatorとIdentityProviderを手作業でマージしてください。ZIPから稼働中の設定を直接上書きしません。
 
-実行時は登録ルートの到着地点を探索原点とし、前後左右・斜めの短い8位置、同じ8位置とdirect-lookの組み合わせ、少し長い前後左右4位置の順で、最大20回の境界付き小範囲探索を試します。各失敗経路は逆再生して原点へ戻り、一致した経路の逆操作も収納後に再生します。小さな駐車位置・視点ずれを吸収する機構であり、画面上の車両検出、所有者判定、任意経路探索、大きく移動した車両の追跡ではありません。
+デスクトップbridgeはhidden NUIのprotocol/version/epoch/token/capabilities/stateを検証し、allowlist済みコマンドだけを送ります。epoch変更、登録ID不一致、semantic failure、タイムアウトでは成功扱いにしません。停止時はresourceへ `cancel` を送り、FiveMタスクも解除します。
 
 ## 容量と採集品の保護
 
-プレイヤー容量はox_inventoryの `leftInventory.weight` と `leftInventory.maxWeight` を優先し、残り重量が `MinimumFreeWeight` 以下になると収納を開始します。サーバー重量が取得不能な場合のみアイテム重量の合計へフォールバックし、使用スロット数は補助の満杯条件です。開始時点ですでに閾値以下なら作業を開始せず、実行中にスナップショットを読めない間も新しい作業は行いません。3回連続で失敗すると安全停止します。
+プレイヤー容量はox_inventoryの `leftInventory.weight` / `maxWeight` を優先し、残り重量が `MinimumFreeWeight` 以下になると収納を開始します。全スロット使用は補助条件です。
 
-開始時のアイテムをスロット、名前、正規化メタデータ、数量で基準化します。収納時はその基準分を保護し、開始後に増えた数量だけを移動します。荷台側もサーバーの `rightInventory.weight` を優先して事前容量を確認し、各スタック移動後はプレイヤー側の減少と荷台側の増加を照合します。
+開始時のアイテムをスロット、名前、正規化メタデータ、数量で基準化し、その基準分を保護します。荷台側の容量を確認し、各移動後にプレイヤー側の減少と荷台側の増加を照合します。登録したストレージIDと種類 `trunk` が一致しない場合は移動しません。
 
-## サーバーセッション監視
+## セッション監視
 
-開始時にFiveMのウィンドウとPIDを固定し、対象NUIとインベントリNUIのフレームIDからセッション識別子を作ります。実行中は `ServerHealthIntervalMs` 間隔で同じPID・セッションを確認します。PID消失・置換またはセッション変更は即時停止、一時的なヘルス取得失敗は作業を凍結して再試行し、3回連続で失敗すると停止します。これはサーバー固有イベントの購読ではなく、NUI境界でのフェイルクローズ監視です。
+FiveMウィンドウ/PID、対象NUI、インベントリNUI、companion epochを開始時に固定します。PID消失・置換、NUI session変更、resource epoch変更は即時停止し、一時的な取得失敗中は新しい作業を凍結します。
 
-登録テスト、通常の往復・探索、砂金補正の各ルートは `play-route-health` で再生します。開始時と累積約2.5秒ごとのステップ境界で移動・視点入力を全解放してから、期待するNUI session epochを照合します。車両到着時、荷台を開いて収納する直前、収納後に入力を解放して補正復帰・復路へ入る前にも独立したepoch照合を行います。不一致または取得不能ならルートを失敗として打ち切り、車両処理は安全停止、砂金補正は同じ未検出中の追加移動を無効化します。ステップ境界での検査なので、厳密な2.5秒周期を保証するものではありません。
+## UI
 
-## UIとビルド
+デスクトップUIはAutoHotkey v2のネイティブGUIです。車両登録の可視状態はresource NUIの入力透過HUDで表示し、車両選択は通常のox_targetを優先します。既定のバックグラウンドNUI操作とcompanion経路ではNUIフォーカスや物理マウスを占有せず、固定画面座標や独自の矢印操作パネルは使いません。
 
-メインUIと登録HUDはいずれもAutoHotkeyのネイティブGUIで、WebViewやフォントファイルを同梱しません。メインUIはシステムフォント、単一アクセント、グループ化された一覧、暗色の状態カードを使います。登録HUDはクリック透過で、移動・視点キー、押下状態、記録時間、対象の検出結果だけを表示します。偽のiPhone外枠やステータスバーは実装しません。
+## ビルド
 
-`Build.ps1` は `src/` を一時ステージへコピーし、C#ヘルパーを `AI採掘機_Background.exe` と `AI採掘機_Updater.exe` の名前でステージ直下へ生成してからAutoHotkeyアプリをコンパイルします。生成されたEXEを `src/` へコミットしないでください。
+`Build.ps1` はC# helperとAutoHotkey本体を生成し、bridge capability/self-test、偽DevConテスト、resource静的検証、完成EXEのvalidate/smoke-testを実行します。生成EXEや取得済みtoolchainを `src/` へコミットしないでください。

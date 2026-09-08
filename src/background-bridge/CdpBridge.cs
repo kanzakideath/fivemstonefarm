@@ -16,7 +16,10 @@ internal static class CdpBridge
     private const string TargetsUrl = "http://127.0.0.1:13172/json";
     private const string TargetFramePart = "cfx-nui-ox_target/web/index.html";
     private const string InventoryFramePart = "cfx-nui-ox_inventory/web/build/index.html";
-    private const string Capabilities = "CAPS 6 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HEALTH";
+    private const string CompanionFramePart = "cfx-nui-ai_miner_companion/ui/index.html";
+    private const string CompanionProtocol = "ai-miner-companion";
+    private const string CompanionResource = "ai_miner_companion";
+    private const string Capabilities = "CAPS 7 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HEALTH COMPANION";
     private const int MaximumRouteSteps = 240;
     private const int MaximumRouteMilliseconds = 90000;
     private const int RouteHealthIntervalMilliseconds = 2500;
@@ -30,6 +33,12 @@ internal static class CdpBridge
     private static readonly Regex OperationTokenPattern = new Regex("^[A-Za-z0-9_-]{1,64}$", RegexOptions.CultureInvariant);
     private static readonly Regex TestTokenPattern = new Regex("^[a-f0-9]{64}$", RegexOptions.CultureInvariant);
     private static readonly Regex ServerEpochPattern = new Regex("^[A-Za-z0-9_-]{8,512}$", RegexOptions.CultureInvariant);
+    private static readonly Regex CompanionEpochPattern = new Regex("^ame_[a-f0-9]{32}$", RegexOptions.CultureInvariant);
+    private static readonly Regex CompanionTokenPattern = new Regex("^amt_[a-f0-9]{48}$", RegexOptions.CultureInvariant);
+    private static readonly Regex CompanionRegistrationPattern = new Regex("^amv_[a-f0-9]{36}$", RegexOptions.CultureInvariant);
+    private static readonly Regex CompanionCommandPattern = new Regex("^[a-z][a-z0-9-]{0,47}$", RegexOptions.CultureInvariant);
+    private static readonly Regex CompanionCodePattern = new Regex("^[A-Z0-9_]{1,64}$", RegexOptions.CultureInvariant);
+    private static readonly Regex CompanionVersionPattern = new Regex("^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$", RegexOptions.CultureInvariant);
     private static readonly Regex JsonNumberPattern = new Regex("^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$", RegexOptions.CultureInvariant);
     private static readonly Regex BaselineEntryPattern = new Regex(
         "^(?<slot>[0-9]{4})\\.(?<name>[A-Za-z0-9_-]{1,64})\\.(?<meta>[A-Za-z0-9_-]{2," + MaximumMetadataTokenLength + "})=(?<count>[0-9]{1,10})$",
@@ -50,6 +59,7 @@ internal static class CdpBridge
             || mode == "probe-storage" || mode == "click-storage"
             || mode == "inventory-snapshot" || mode == "capture-storage"
             || mode == "health"
+            || mode == "companion-status"
             || mode == "close-inventory"
             || mode == "try-mining" || mode == "try-probe-mining"
             || mode == "try-washing" || mode == "try-gold"
@@ -62,8 +72,11 @@ internal static class CdpBridge
         bool testDeactivateMode = args.Length == 4 && mode == "deactivate-test";
         bool depositMode = args.Length == 6 && mode == "deposit-delta";
         bool cancelOperationMode = args.Length == 3 && mode == "cancel-operation";
+        bool companionCommandMode = (args.Length == 3 || args.Length == 4)
+            && mode == "companion-command";
         if (!twoArgumentMode && !nudgeMode && !routeMode && !routeHealthMode && !viewMode
-            && !testDeactivateMode && !depositMode && !cancelOperationMode)
+            && !testDeactivateMode && !depositMode && !cancelOperationMode
+            && !companionCommandMode)
             return 64;
 
         string result;
@@ -139,6 +152,11 @@ internal static class CdpBridge
                     throw new ArgumentException();
                 result = CancelOperationAsync(args[2]).GetAwaiter().GetResult();
             }
+            else if (companionCommandMode)
+            {
+                string registrationId = args.Length == 4 ? DecodeIdentifier(args[3]) : "";
+                result = CompanionCommandAsync(args[2], registrationId).GetAwaiter().GetResult();
+            }
             else if (mode == "activate")
             {
                 result = ActivateAsync().GetAwaiter().GetResult();
@@ -173,6 +191,10 @@ internal static class CdpBridge
             else if (mode == "health")
             {
                 result = HealthAsync().GetAwaiter().GetResult();
+            }
+            else if (mode == "companion-status")
+            {
+                result = CompanionStatusAsync().GetAwaiter().GetResult();
             }
             else if (mode == "capture-storage")
             {
@@ -221,6 +243,8 @@ internal static class CdpBridge
             || result.StartsWith("ROUTE ", StringComparison.Ordinal)
             || result.StartsWith("VIEW ", StringComparison.Ordinal)
             || result.StartsWith("HEALTH READY ", StringComparison.Ordinal)
+            || result.StartsWith("COMPANION 1 ", StringComparison.Ordinal)
+            || result.StartsWith("COMPANION_DONE ", StringComparison.Ordinal)
             || result.StartsWith("SNAPSHOT ", StringComparison.Ordinal)
             || result.StartsWith("STORAGE ", StringComparison.Ordinal)
             || result.StartsWith("DEPOSITED ", StringComparison.Ordinal)
@@ -245,6 +269,99 @@ internal static class CdpBridge
         AppendRoutePresses(routeCommand, 65);
         var viewCommand = new StringBuilder(ViewReleaseCommand());
         AppendViewPresses(viewCommand, 10);
+        const string companionJson = "{\"protocol\":\"ai-miner-companion\",\"protocolVersion\":1,"
+            + "\"resource\":\"ai_miner_companion\",\"resourceVersion\":\"1.0.0\","
+            + "\"epoch\":\"ame_0123456789abcdef0123456789abcdef\",\"sequence\":7,"
+            + "\"token\":\"amt_0123456789abcdef0123456789abcdef0123456789abcdef\",\"status\":\"ready\","
+            + "\"capabilities\":{\"dynamicVehicleRegistration\":true,\"dynamicVehicleNavigation\":true,"
+             + "\"workAnchor\":true,\"returnToWork\":true,\"cancel\":true,\"cargoArrival\":true,"
+             + "\"transactionalRegistration\":true,\"registrationCommit\":true,"
+             + "\"serverRegistrationSync\":true,"
+             + "\"oxTarget\":true,\"openCargo\":false,\"maxVehicleDistance\":250},"
+            + "\"registrationTransaction\":{\"pending\":false,\"id\":\"\",\"previousId\":\"\","
+            + "\"startedAt\":0,\"expiresAt\":0,\"status\":\"idle\"},"
+            + "\"registration\":{\"registered\":true,\"id\":\"amv_0123456789abcdef0123456789abcdef0123\","
+            + "\"plate\":\"TEST 123\",\"model\":123,\"label\":\"Box Truck\",\"networkId\":55,"
+            + "\"lastSeen\":12345,\"available\":true,\"availabilityCode\":\"\"},"
+            + "\"workAnchor\":{\"set\":true,\"x\":1.25,\"y\":-2.5,\"z\":3,\"heading\":180},"
+            + "\"navigation\":{\"active\":false,\"kind\":\"\",\"registrationId\":\"\","
+            + "\"networkId\":0,\"distance\":-1,\"attempt\":0,\"startedAt\":0,\"status\":\"idle\"},"
+            + "\"lastResult\":{\"present\":true,\"requestId\":\"ui_target_123_1\","
+            + "\"command\":\"ox-target-register\",\"ok\":true,\"code\":\"REGISTERED\","
+            + "\"message\":\"registered\",\"registrationId\":\"amv_0123456789abcdef0123456789abcdef0123\","
+            + "\"networkId\":55},\"overlay\":{\"visible\":false,\"title\":\"\",\"detail\":\"\","
+            + "\"tone\":\"neutral\"}}";
+        CompanionState companion = ParseCompanionState(companionJson);
+        CompanionState directCargoCompanion = ParseCompanionState(
+            companionJson.Replace("\"openCargo\":false", "\"openCargo\":true"));
+        const string candidateRegistrationId = "amv_0123456789abcdef0123456789abcdef0123";
+        const string previousRegistrationId = "amv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        const string idleTransactionJson = "\"registrationTransaction\":{\"pending\":false,"
+            + "\"id\":\"\",\"previousId\":\"\",\"startedAt\":0,\"expiresAt\":0,"
+            + "\"status\":\"idle\"}";
+        string pendingTransactionJson = companionJson.Replace(idleTransactionJson,
+            "\"registrationTransaction\":{\"pending\":true,\"id\":\""
+            + candidateRegistrationId + "\",\"previousId\":\"" + previousRegistrationId
+            + "\",\"startedAt\":12345,\"expiresAt\":12525,\"status\":\"staged\"}");
+        string legacyCompanionJson = companionJson
+            .Replace("\"transactionalRegistration\":true,\"registrationCommit\":true,", "")
+            .Replace(idleTransactionJson + ",", "");
+        CompanionState pendingTransaction = ParseCompanionState(pendingTransactionJson);
+        CompanionState unsynchronizedCompanion = ParseCompanionState(companionJson.Replace(
+            "\"serverRegistrationSync\":true", "\"serverRegistrationSync\":false"));
+        string companionStatus = FormatCompanionStatus(companion);
+        string pendingCompanionStatus = FormatCompanionStatus(pendingTransaction);
+        string unsynchronizedCompanionStatus = FormatCompanionStatus(unsynchronizedCompanion);
+        string[] companionStatusFields = companionStatus.Split(' ');
+        string[] pendingCompanionStatusFields = pendingCompanionStatus.Split(' ');
+        string[] unsynchronizedCompanionStatusFields = unsynchronizedCompanionStatus.Split(' ');
+        var armStarted = new CompanionState { Sequence = companion.Sequence + 1,
+            Status = "registration_armed" };
+        var transactionStarted = new CompanionState { Sequence = companion.Sequence + 1,
+            Status = "registering" };
+        var commitResponse = new CompanionState {
+            RegistrationTransactionSupported = true,
+            RegistrationTransactionPending = false,
+            Registered = true,
+            RegistrationId = candidateRegistrationId,
+            LastRegistrationId = candidateRegistrationId
+        };
+        var abortResponse = new CompanionState {
+            RegistrationTransactionSupported = true,
+            RegistrationTransactionPending = false,
+            Registered = true,
+            RegistrationId = previousRegistrationId,
+            LastRegistrationId = candidateRegistrationId
+        };
+        var abortRetryInitial = new CompanionState {
+            RegistrationTransactionSupported = true,
+            RegistrationTransactionPending = false,
+            Registered = true,
+            RegistrationId = previousRegistrationId
+        };
+        var abortWithoutPreviousInitial = new CompanionState {
+            RegistrationTransactionSupported = true,
+            RegistrationTransactionPending = true,
+            RegistrationTransactionPreviousId = "",
+            Registered = true,
+            RegistrationId = candidateRegistrationId
+        };
+        var abortWithoutPreviousResponse = new CompanionState {
+            RegistrationTransactionSupported = true,
+            RegistrationTransactionPending = false,
+            Registered = false,
+            RegistrationId = ""
+        };
+        ValidateCompanionResponse("commit-registration", candidateRegistrationId,
+            pendingTransaction, commitResponse);
+        ValidateCompanionResponse("commit-registration", candidateRegistrationId,
+            companion, commitResponse);
+        ValidateCompanionResponse("abort-registration", candidateRegistrationId,
+            pendingTransaction, abortResponse);
+        ValidateCompanionResponse("abort-registration", candidateRegistrationId,
+            abortRetryInitial, abortResponse);
+        ValidateCompanionResponse("abort-registration", candidateRegistrationId,
+            abortWithoutPreviousInitial, abortWithoutPreviousResponse);
         int count;
         if (route.Count != 3 || route[0].Mask != 65 || route[2].Mask != 136
             || !RouteIsRejected("150:48") || !RouteIsRejected("150:192")
@@ -265,9 +382,120 @@ internal static class CdpBridge
             || IsValidServerEpoch("invalid+epoch")
             || !BaselineMetadataIsRejected("not-json")
             || DecodeIdentifier(EncodeIdentifier("trunk-test")) != "trunk-test"
-            || DecodeBase64Url(EncodeBase64Url("{\"quality\":100}")) != "{\"quality\":100}")
+            || DecodeBase64Url(EncodeBase64Url("{\"quality\":100}")) != "{\"quality\":100}"
+            || companion.OpenCargo || !directCargoCompanion.OpenCargo || !companion.Registered
+            || !companion.RegistrationTransactionSupported
+            || companion.RegistrationTransactionPending
+            || companion.RegistrationTransactionId != ""
+            || companion.RegistrationTransactionPreviousId != ""
+            || companion.RegistrationTransactionStartedAt != 0
+            || companion.RegistrationTransactionExpiresAt != 0
+            || companion.RegistrationTransactionStatus != "idle"
+            || !pendingTransaction.RegistrationTransactionSupported
+            || !pendingTransaction.RegistrationTransactionPending
+            || pendingTransaction.RegistrationTransactionId != candidateRegistrationId
+            || pendingTransaction.RegistrationTransactionPreviousId != previousRegistrationId
+            || pendingTransaction.RegistrationTransactionStartedAt != 12345
+            || pendingTransaction.RegistrationTransactionExpiresAt != 12525
+            || pendingTransaction.RegistrationTransactionStatus != "staged"
+            || companion.LastCommand != "ox-target-register"
+            || !companion.ServerRegistrationSynchronized
+            || companionStatusFields.Length != 17 || companionStatusFields[13] != "REGISTERED"
+            || companionStatusFields[14] != "1" || companionStatusFields[15] != "0"
+            || companionStatusFields[16] != "1"
+            || pendingCompanionStatusFields.Length != 17
+            || pendingCompanionStatusFields[14] != "1"
+            || pendingCompanionStatusFields[15] != "1"
+            || pendingCompanionStatusFields[16] != "1"
+            || unsynchronizedCompanion.ServerRegistrationSynchronized
+            || unsynchronizedCompanionStatusFields.Length != 17
+            || unsynchronizedCompanionStatusFields[16] != "0"
+            || !CompanionCommandStartObserved("arm-register", companion, armStarted)
+            || CompanionCommandStartObserved("go-vehicle", companion, armStarted)
+            || !IsAllowedCompanionCommand("commit-registration")
+            || !IsAllowedCompanionCommand("abort-registration")
+            || !CompanionCommandRequiresRegistration("commit-registration")
+            || !CompanionCommandRequiresRegistration("abort-registration")
+            || !IsKnownCompanionResultCommand("commit-registration")
+            || !IsKnownCompanionResultCommand("abort-registration")
+            || !IsKnownCompanionResultCommand("registration-transaction")
+            || !CompanionCommandStartObserved("commit-registration", companion, transactionStarted)
+            || !CompanionCommandStartObserved("abort-registration", companion, transactionStarted)
+            || !CompanionStateIsRejected(legacyCompanionJson, "COMPANION_INCOMPATIBLE")
+            || !CompanionStateIsRejected(companionJson.Replace(
+                    "\"transactionalRegistration\":true,", ""),
+                "COMPANION_INCOMPATIBLE")
+            || !CompanionStateIsRejected(companionJson.Replace(
+                    "\"registrationCommit\":true,", ""),
+                "COMPANION_INCOMPATIBLE")
+            || !CompanionStateIsRejected(companionJson.Replace(
+                    "\"serverRegistrationSync\":true,", ""),
+                "COMPANION_INCOMPATIBLE")
+            || !CompanionStateIsRejected(companionJson.Replace(
+                    "\"serverRegistrationSync\":true", "\"serverRegistrationSync\":\"true\""),
+                "COMPANION_STATE_INVALID")
+            || !CompanionStateIsRejected(companionJson.Replace(
+                    "\"transactionalRegistration\":true", "\"transactionalRegistration\":false"),
+                "COMPANION_INCOMPATIBLE")
+            || !CompanionStateIsRejected(companionJson.Replace(
+                    "\"registrationCommit\":true", "\"registrationCommit\":\"true\""),
+                "COMPANION_STATE_INVALID")
+            || !CompanionStateIsRejected(companionJson.Replace(idleTransactionJson + ",", ""),
+                "COMPANION_INCOMPATIBLE")
+            || !CompanionStateIsRejected(companionJson.Replace("\"cargoArrival\":true", "\"cargoArrival\":false"),
+                "COMPANION_INCOMPATIBLE")
+            || !CompanionStateIsRejected(companionJson.Replace("\"sequence\":7", "\"sequence\":\"7\""),
+                "COMPANION_STATE_INVALID")
+            || !CompanionStateIsRejected(companionJson.Replace("\"ox-target-register\"", "\"unknown-command\""),
+                "COMPANION_STATE_INVALID")
+            || !CompanionStateIsRejected(companionJson.Replace("\"present\":true", "\"present\":false"),
+                "COMPANION_STATE_INVALID")
+            || !CompanionStateIsRejected(pendingTransactionJson.Replace(
+                    "\"id\":\"" + candidateRegistrationId + "\",\"previousId\"",
+                    "\"id\":\"amv_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"previousId\""),
+                "COMPANION_STATE_INVALID")
+            || !CompanionStateIsRejected(pendingTransactionJson.Replace(
+                    "\"expiresAt\":12525", "\"expiresAt\":12345"),
+                "COMPANION_STATE_INVALID")
+            || !CompanionStateIsRejected(pendingTransactionJson.Replace(
+                    "\"startedAt\":12345", "\"startedAt\":\"12345\""),
+                "COMPANION_STATE_INVALID")
+            || !CompanionStateIsRejected(pendingTransactionJson.Replace(
+                    "\"pending\":true", "\"pending\":false"),
+                "COMPANION_STATE_INVALID")
+            || !CompanionResponseIsRejected("commit-registration", candidateRegistrationId,
+                pendingTransaction, abortResponse)
+            || !CompanionResponseIsRejected("abort-registration", candidateRegistrationId,
+                pendingTransaction, commitResponse))
             throw new InvalidOperationException("SELFTEST_FAILED");
         return "SELFTEST OK";
+    }
+
+    private static bool CompanionStateIsRejected(string json, string expectedMessage)
+    {
+        try
+        {
+            ParseCompanionState(json);
+            return false;
+        }
+        catch (InvalidOperationException error)
+        {
+            return expectedMessage == null || error.Message == expectedMessage;
+        }
+    }
+
+    private static bool CompanionResponseIsRejected(string command, string registrationId,
+        CompanionState initial, CompanionState response)
+    {
+        try
+        {
+            ValidateCompanionResponse(command, registrationId, initial, response);
+            return false;
+        }
+        catch (InvalidOperationException error)
+        {
+            return error.Message == "COMPANION_RESPONSE_MISMATCH";
+        }
     }
 
     private static bool BaselineMetadataIsRejected(string metadata)
@@ -462,6 +690,486 @@ internal static class CdpBridge
             string epoch = EncodeBase64Url(targetFrameId + "\n" + inventoryFrameId);
             return "HEALTH READY " + epoch;
         }
+    }
+
+    private static async Task<string> CompanionStatusAsync()
+    {
+        using (var session = await CdpSession.OpenAsync(
+            CompanionFramePart, TimeSpan.FromSeconds(5)).ConfigureAwait(false))
+        {
+            CompanionState state = await ReadCompanionStateAsync(session).ConfigureAwait(false);
+            return FormatCompanionStatus(state);
+        }
+    }
+
+    private static async Task<string> CompanionCommandAsync(string command, string registrationId)
+    {
+        command = (command ?? "").Trim().ToLowerInvariant();
+        bool requiresRegistration = CompanionCommandRequiresRegistration(command);
+        bool transactionCommand = command == "commit-registration"
+            || command == "abort-registration";
+        if (!IsAllowedCompanionCommand(command)
+            || (requiresRegistration && !CompanionRegistrationPattern.IsMatch(registrationId))
+            || (!requiresRegistration && !String.IsNullOrEmpty(registrationId)))
+            throw new ArgumentException();
+
+        int timeoutSeconds = command == "go-vehicle" || command == "return-work" ? 100
+            : command == "open-cargo" ? 18 : 10;
+        using (var session = await CdpSession.OpenAsync(
+            CompanionFramePart, TimeSpan.FromSeconds(timeoutSeconds)).ConfigureAwait(false))
+        {
+            CompanionState initial = await ReadCompanionStateAsync(session).ConfigureAwait(false);
+            if (!initial.ServerRegistrationSynchronized && command != "cancel")
+                return "ERROR COMPANION_SERVER_REGISTRATION_SYNC_PENDING";
+            if (transactionCommand && !initial.RegistrationTransactionSupported)
+                return "ERROR COMPANION_UNSUPPORTED";
+            if (!transactionCommand && requiresRegistration && (!initial.Registered
+                || !String.Equals(initial.RegistrationId, registrationId, StringComparison.Ordinal)))
+                return "ERROR COMPANION_REGISTRATION_NOT_FOUND";
+            if (transactionCommand
+                && ((initial.RegistrationTransactionPending
+                        && !String.Equals(initial.RegistrationTransactionId, registrationId,
+                            StringComparison.Ordinal))
+                    || (!initial.RegistrationTransactionPending
+                        && command == "commit-registration" && (!initial.Registered
+                            || !String.Equals(initial.RegistrationId, registrationId,
+                                StringComparison.Ordinal)))))
+                return "ERROR COMPANION_REGISTRATION_TRANSACTION_NOT_FOUND";
+            if (command == "open-cargo" && !initial.OpenCargo)
+                return "ERROR COMPANION_UNSUPPORTED";
+
+            string requestId = "req_" + Guid.NewGuid().ToString("N");
+            string devConCommand = "aiminer_companion " + initial.Token + " " + requestId
+                + " " + command + (requiresRegistration ? " " + registrationId : "");
+            bool fallbackPending = TrySendDevCon(29200, devConCommand, 0);
+            if (!fallbackPending && !TrySendDevCon(29300, devConCommand, 0))
+                throw new InvalidOperationException("COMPANION_COMMAND_UNAVAILABLE");
+            DateTime fallbackAt = DateTime.UtcNow.AddMilliseconds(1200);
+
+            long lastSequence = initial.Sequence;
+            while (true)
+            {
+                CompanionState state = await ReadCompanionStateAsync(session).ConfigureAwait(false);
+                if (!String.Equals(state.Epoch, initial.Epoch, StringComparison.Ordinal)
+                    || !String.Equals(state.Token, initial.Token, StringComparison.Ordinal)
+                    || !String.Equals(state.ResourceVersion, initial.ResourceVersion, StringComparison.Ordinal)
+                    || state.Sequence < lastSequence)
+                    throw new InvalidOperationException("COMPANION_SESSION_CHANGED");
+                lastSequence = state.Sequence;
+                if (state.LastResultPresent
+                    && String.Equals(state.LastRequestId, requestId, StringComparison.Ordinal))
+                {
+                    if (!String.Equals(state.LastCommand, command, StringComparison.Ordinal))
+                        throw new InvalidOperationException("COMPANION_RESPONSE_MISMATCH");
+                    if (!state.LastOk)
+                        return "ERROR COMPANION_" + SafeCompanionCode(state.LastCode);
+                    ValidateCompanionResponse(command, registrationId, initial, state);
+                    string returnedId = state.LastRegistrationId;
+                    if (String.IsNullOrEmpty(returnedId) && state.Registered)
+                        returnedId = state.RegistrationId;
+                    string encodedId = String.IsNullOrEmpty(returnedId)
+                        ? "-" : EncodeIdentifier(returnedId);
+                    return "COMPANION_DONE " + command + " "
+                        + SafeCompanionCode(state.LastCode) + " " + encodedId + " "
+                        + state.LastNetworkId.ToString(CultureInfo.InvariantCulture);
+                }
+                if (command == "arm-register" && initial.Status != "registration_armed"
+                    && state.Sequence > initial.Sequence && state.Status == "registration_armed"
+                    && !state.LastResultPresent)
+                    return "COMPANION_DONE arm-register ARMED - 0";
+                if (fallbackPending && CompanionCommandStartObserved(command, initial, state))
+                    fallbackPending = false;
+                if (fallbackPending && DateTime.UtcNow >= fallbackAt)
+                {
+                    // A successful TCP write is not an acknowledgement: another local FiveM
+                    // client can own that port. Only fall back when the companion state did not
+                    // enter this command's start state, and never broadcast to both ports at once.
+                    TrySendDevCon(29300, devConCommand, 0);
+                    fallbackPending = false;
+                }
+                await Task.Delay(100, session.Token).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static bool CompanionCommandStartObserved(string command, CompanionState initial,
+        CompanionState current)
+    {
+        if (current.Sequence <= initial.Sequence || current.Status == initial.Status)
+            return false;
+        return (command == "arm-register" && current.Status == "registration_armed")
+            || ((command == "register-nearby" || command == "clear-registration"
+                    || command == "commit-registration" || command == "abort-registration")
+                && current.Status == "registering")
+            || (command == "go-vehicle" && current.Status == "navigating_vehicle")
+            || (command == "open-cargo" && current.Status == "opening_cargo")
+            || (command == "return-work" && current.Status == "returning_work");
+    }
+
+    private static bool CompanionCommandRequiresRegistration(string command)
+    {
+        return command == "go-vehicle" || command == "open-cargo"
+            || command == "clear-registration" || command == "commit-registration"
+            || command == "abort-registration";
+    }
+
+    private static bool IsAllowedCompanionCommand(string command)
+    {
+        return command == "arm-register" || command == "register-nearby"
+            || command == "set-work-anchor" || command == "go-vehicle"
+            || command == "open-cargo" || command == "return-work"
+            || command == "cancel" || command == "clear-registration"
+            || command == "commit-registration" || command == "abort-registration";
+    }
+
+    private static async Task<CompanionState> ReadCompanionStateAsync(CdpSession session)
+    {
+        const string expression = "(() => {try{const live=globalThis.__AI_MINER_COMPANION_STATE__;"
+            + "if(live&&typeof live==='object')return JSON.stringify(live);"
+            + "const node=document.getElementById('ai-miner-companion-state');"
+            + "return node?String(node.textContent||''):'';}catch(e){return '';}})()";
+        string text = await session.EvaluateStringAsync(expression, false).ConfigureAwait(false);
+        return ParseCompanionState(text);
+    }
+
+    private static CompanionState ParseCompanionState(string text)
+    {
+        if (text == null || text.Length == 0 || text.Length > 32768)
+            throw new InvalidOperationException("COMPANION_STATE_INVALID");
+        Dictionary<string, object> root;
+        try { root = Json.DeserializeObject(text) as Dictionary<string, object>; }
+        catch { throw new InvalidOperationException("COMPANION_STATE_INVALID"); }
+        if (root == null)
+            throw new InvalidOperationException("COMPANION_STATE_INVALID");
+        string protocol = StrictCompanionString(root, "protocol", 64);
+        string resource = StrictCompanionString(root, "resource", 64);
+        long protocolVersion = StrictInteger(root, "protocolVersion", 0, Int32.MaxValue);
+        if (protocol != CompanionProtocol || resource != CompanionResource || protocolVersion != 1)
+            throw new InvalidOperationException("COMPANION_INCOMPATIBLE");
+
+        string resourceVersion = StrictCompanionString(root, "resourceVersion", 32);
+        string epoch = StrictCompanionString(root, "epoch", 128);
+        string token = StrictCompanionString(root, "token", 128);
+        string status = StrictCompanionString(root, "status", 48);
+        if (!CompanionVersionPattern.IsMatch(resourceVersion)
+            || !CompanionEpochPattern.IsMatch(epoch)
+            || !CompanionTokenPattern.IsMatch(token)
+            || !IsKnownCompanionStatus(status))
+            throw new InvalidOperationException("COMPANION_STATE_INVALID");
+
+        var capabilities = StrictObject(root, "capabilities");
+        foreach (string capability in new[] { "dynamicVehicleRegistration",
+            "dynamicVehicleNavigation", "workAnchor", "returnToWork", "cancel", "cargoArrival" })
+            if (!StrictBoolean(capabilities, capability))
+                throw new InvalidOperationException("COMPANION_INCOMPATIBLE");
+        if (!capabilities.ContainsKey("transactionalRegistration")
+            || !capabilities.ContainsKey("registrationCommit")
+            || !capabilities.ContainsKey("serverRegistrationSync"))
+            throw new InvalidOperationException("COMPANION_INCOMPATIBLE");
+        if (!StrictBoolean(capabilities, "transactionalRegistration")
+            || !StrictBoolean(capabilities, "registrationCommit"))
+            throw new InvalidOperationException("COMPANION_INCOMPATIBLE");
+        bool serverRegistrationSynchronized = StrictBoolean(capabilities,
+            "serverRegistrationSync");
+        StrictBoolean(capabilities, "oxTarget");
+        bool openCargo = StrictBoolean(capabilities, "openCargo");
+        StrictDecimal(capabilities, "maxVehicleDistance", 1m, 100000m);
+
+        var registration = StrictObject(root, "registration");
+        bool registered = StrictBoolean(registration, "registered");
+        string registrationId = StrictCompanionString(registration, "id", 40);
+        string plate = StrictCompanionString(registration, "plate", 16);
+        string label = StrictCompanionString(registration, "label", 48);
+        long model = StrictInteger(registration, "model", 0, UInt32.MaxValue);
+        long networkId = StrictInteger(registration, "networkId", 0, Int32.MaxValue);
+        StrictInteger(registration, "lastSeen", 0, Int64.MaxValue);
+        bool available = StrictBoolean(registration, "available");
+        string availabilityCode = StrictCompanionString(registration, "availabilityCode", 64);
+        if (registered != !String.IsNullOrEmpty(registrationId)
+            || (registered && (!CompanionRegistrationPattern.IsMatch(registrationId)
+                || String.IsNullOrEmpty(plate) || model == 0))
+            || (!registered && (!String.IsNullOrEmpty(plate) || !String.IsNullOrEmpty(label)
+                || model != 0 || networkId != 0 || available || !String.IsNullOrEmpty(availabilityCode)))
+            || (available && networkId == 0)
+            || (!String.IsNullOrEmpty(availabilityCode)
+                && !CompanionCodePattern.IsMatch(availabilityCode)))
+            throw new InvalidOperationException("COMPANION_STATE_INVALID");
+
+        object transactionValue;
+        if (!root.TryGetValue("registrationTransaction", out transactionValue))
+            throw new InvalidOperationException("COMPANION_INCOMPATIBLE");
+        var transaction = transactionValue as Dictionary<string, object>;
+        if (transaction == null)
+            throw new InvalidOperationException("COMPANION_STATE_INVALID");
+        bool transactionPending = StrictBoolean(transaction, "pending");
+        string transactionId = StrictCompanionString(transaction, "id", 40);
+        string transactionPreviousId = StrictCompanionString(transaction, "previousId", 40);
+        long transactionStartedAt = StrictInteger(transaction, "startedAt", 0, Int64.MaxValue);
+        long transactionExpiresAt = StrictInteger(transaction, "expiresAt", 0, Int64.MaxValue);
+        string transactionStatus = StrictCompanionString(transaction, "status", 16);
+        if (transactionPending)
+        {
+            if (!CompanionRegistrationPattern.IsMatch(transactionId)
+                || (!String.IsNullOrEmpty(transactionPreviousId)
+                    && !CompanionRegistrationPattern.IsMatch(transactionPreviousId))
+                || String.Equals(transactionId, transactionPreviousId, StringComparison.Ordinal)
+                || transactionStartedAt <= 0 || transactionExpiresAt <= transactionStartedAt
+                || transactionStatus != "staged" || !registered
+                || !String.Equals(registrationId, transactionId, StringComparison.Ordinal))
+                throw new InvalidOperationException("COMPANION_STATE_INVALID");
+        }
+        else if (!String.IsNullOrEmpty(transactionId)
+            || !String.IsNullOrEmpty(transactionPreviousId) || transactionStartedAt != 0
+            || transactionExpiresAt != 0 || transactionStatus != "idle")
+        {
+            throw new InvalidOperationException("COMPANION_STATE_INVALID");
+        }
+
+        var workAnchor = StrictObject(root, "workAnchor");
+        bool workAnchorSet = StrictBoolean(workAnchor, "set");
+        decimal workX = StrictDecimal(workAnchor, "x", -100000m, 100000m);
+        decimal workY = StrictDecimal(workAnchor, "y", -100000m, 100000m);
+        decimal workZ = StrictDecimal(workAnchor, "z", -100000m, 100000m);
+        decimal workHeading = StrictDecimal(workAnchor, "heading", 0m, 360m);
+        if (!workAnchorSet && (workX != 0m || workY != 0m || workZ != 0m || workHeading != 0m))
+            throw new InvalidOperationException("COMPANION_STATE_INVALID");
+
+        var navigation = StrictObject(root, "navigation");
+        bool navigationActive = StrictBoolean(navigation, "active");
+        string navigationKind = StrictCompanionString(navigation, "kind", 16);
+        string navigationRegistrationId = StrictCompanionString(navigation, "registrationId", 40);
+        long navigationNetworkId = StrictInteger(navigation, "networkId", 0, Int32.MaxValue);
+        decimal distance = StrictDecimal(navigation, "distance", -1m, 100000m);
+        long navigationAttempt = StrictInteger(navigation, "attempt", 0, Int32.MaxValue);
+        long navigationStartedAt = StrictInteger(navigation, "startedAt", 0, UInt32.MaxValue);
+        string navigationStatus = StrictCompanionString(navigation, "status", 48);
+        if (!IsKnownCompanionNavigationStatus(navigationStatus)
+            || (!String.IsNullOrEmpty(navigationRegistrationId)
+                && !CompanionRegistrationPattern.IsMatch(navigationRegistrationId))
+            || (!navigationActive && (!String.IsNullOrEmpty(navigationKind)
+                || !String.IsNullOrEmpty(navigationRegistrationId) || navigationNetworkId != 0
+                || distance != -1m || navigationAttempt != 0 || navigationStartedAt != 0
+                || navigationStatus != "idle"))
+            || (navigationActive && navigationKind != "vehicle" && navigationKind != "work"))
+            throw new InvalidOperationException("COMPANION_STATE_INVALID");
+        long distanceCentimeters = distance < 0 ? -1
+            : Decimal.ToInt64(Decimal.Round(distance * 100m, 0, MidpointRounding.AwayFromZero));
+
+        var lastResult = StrictObject(root, "lastResult");
+        bool lastPresent = StrictBoolean(lastResult, "present");
+        string lastRequestId = StrictCompanionString(lastResult, "requestId", 64);
+        string lastCommand = StrictCompanionString(lastResult, "command", 48);
+        bool lastOk = StrictBoolean(lastResult, "ok");
+        string lastCode = StrictCompanionString(lastResult, "code", 64);
+        string lastMessage = StrictCompanionString(lastResult, "message", 256);
+        string lastRegistrationId = StrictCompanionString(lastResult, "registrationId", 40);
+        long lastNetworkId = StrictInteger(lastResult, "networkId", 0, Int32.MaxValue);
+        if (lastPresent && (!OperationTokenPattern.IsMatch(lastRequestId)
+            || !CompanionCommandPattern.IsMatch(lastCommand)
+            || !IsKnownCompanionResultCommand(lastCommand)
+            || !CompanionCodePattern.IsMatch(lastCode)))
+            throw new InvalidOperationException("COMPANION_STATE_INVALID");
+        if (!String.IsNullOrEmpty(lastRegistrationId)
+            && !CompanionRegistrationPattern.IsMatch(lastRegistrationId))
+            throw new InvalidOperationException("COMPANION_STATE_INVALID");
+        if (!lastPresent && (!String.IsNullOrEmpty(lastRequestId)
+            || !String.IsNullOrEmpty(lastCommand) || lastOk || !String.IsNullOrEmpty(lastCode)
+            || !String.IsNullOrEmpty(lastMessage) || !String.IsNullOrEmpty(lastRegistrationId)
+            || lastNetworkId != 0))
+            throw new InvalidOperationException("COMPANION_STATE_INVALID");
+
+        var overlay = StrictObject(root, "overlay");
+        StrictBoolean(overlay, "visible");
+        StrictCompanionString(overlay, "title", 64);
+        StrictCompanionString(overlay, "detail", 256);
+        string overlayTone = StrictCompanionString(overlay, "tone", 16);
+        if (overlayTone != "neutral" && overlayTone != "progress"
+            && overlayTone != "success" && overlayTone != "error")
+            throw new InvalidOperationException("COMPANION_STATE_INVALID");
+
+        return new CompanionState {
+            ResourceVersion = resourceVersion,
+            Epoch = epoch,
+            Token = token,
+            Sequence = StrictInteger(root, "sequence", 0, Int64.MaxValue),
+            Status = status,
+            OpenCargo = openCargo,
+            ServerRegistrationSynchronized = serverRegistrationSynchronized,
+            RegistrationTransactionSupported = true,
+            RegistrationTransactionPending = transactionPending,
+            RegistrationTransactionId = transactionId,
+            RegistrationTransactionPreviousId = transactionPreviousId,
+            RegistrationTransactionStartedAt = transactionStartedAt,
+            RegistrationTransactionExpiresAt = transactionExpiresAt,
+            RegistrationTransactionStatus = transactionStatus,
+            Registered = registered,
+            RegistrationId = registrationId,
+            Plate = plate,
+            Label = label,
+            Model = model,
+            NetworkId = networkId,
+            Available = available,
+            DistanceCentimeters = distanceCentimeters,
+            LastResultPresent = lastPresent,
+            LastRequestId = lastRequestId,
+            LastCommand = lastCommand,
+            LastOk = lastOk,
+            LastCode = lastPresent ? lastCode : "NONE",
+            LastRegistrationId = lastRegistrationId,
+            LastNetworkId = lastNetworkId
+        };
+    }
+
+    private static void ValidateCompanionResponse(string command, string registrationId,
+        CompanionState initial, CompanionState state)
+    {
+        if ((command == "go-vehicle" || command == "open-cargo")
+            && !String.Equals(state.LastRegistrationId, registrationId, StringComparison.Ordinal))
+            throw new InvalidOperationException("COMPANION_RESPONSE_MISMATCH");
+        if (command == "clear-registration"
+            && (!String.IsNullOrEmpty(state.LastRegistrationId) || state.LastNetworkId != 0
+                || state.Registered))
+            throw new InvalidOperationException("COMPANION_RESPONSE_MISMATCH");
+        if ((command == "arm-register" || command == "register-nearby")
+            && (!state.Registered
+                || !String.Equals(state.LastRegistrationId, state.RegistrationId,
+                    StringComparison.Ordinal)
+                || (state.RegistrationTransactionSupported
+                    && (!state.RegistrationTransactionPending
+                        || !String.Equals(state.RegistrationTransactionId,
+                            state.RegistrationId, StringComparison.Ordinal)))))
+            throw new InvalidOperationException("COMPANION_RESPONSE_MISMATCH");
+        if (command == "commit-registration"
+            && (!state.RegistrationTransactionSupported
+                || state.RegistrationTransactionPending || !state.Registered
+                || !String.Equals(state.RegistrationId, registrationId, StringComparison.Ordinal)
+                || !String.Equals(state.LastRegistrationId, registrationId,
+                    StringComparison.Ordinal)))
+            throw new InvalidOperationException("COMPANION_RESPONSE_MISMATCH");
+        if (command == "abort-registration")
+        {
+            string expectedRegistrationId = initial.RegistrationTransactionPending
+                ? initial.RegistrationTransactionPreviousId
+                : initial.Registered ? initial.RegistrationId : "";
+            if (!state.RegistrationTransactionSupported
+                || state.RegistrationTransactionPending
+                || (String.IsNullOrEmpty(expectedRegistrationId)
+                    ? state.Registered
+                    : !state.Registered || !String.Equals(state.RegistrationId,
+                        expectedRegistrationId, StringComparison.Ordinal)))
+                throw new InvalidOperationException("COMPANION_RESPONSE_MISMATCH");
+        }
+    }
+
+    private static bool IsKnownCompanionResultCommand(string command)
+    {
+        return command == "arm-register" || command == "register-nearby"
+            || command == "set-work-anchor" || command == "go-vehicle"
+            || command == "open-cargo" || command == "return-work"
+            || command == "cancel" || command == "clear-registration"
+            || command == "commit-registration" || command == "abort-registration"
+            || command == "capabilities" || command == "status"
+            || command == "ox-target-register" || command == "registration-transaction";
+    }
+
+    private static bool IsKnownCompanionStatus(string status)
+    {
+        return status == "ready" || status == "registration_armed"
+            || status == "registering" || status == "error"
+            || status == "navigating_vehicle" || status == "arrived_vehicle"
+            || status == "returning_work" || status == "arrived_work"
+            || status == "cancelled" || status == "opening_cargo";
+    }
+
+    private static bool IsKnownCompanionNavigationStatus(string status)
+    {
+        return status == "idle" || status == "resolving" || status == "streaming"
+            || status == "moving" || status == "validating_arrival";
+    }
+
+    private static string FormatCompanionStatus(CompanionState state)
+    {
+        string id = state.Registered ? EncodeIdentifier(state.RegistrationId) : "-";
+        string plate = state.Registered ? EncodeIdentifier(state.Plate) : "-";
+        string label = state.Registered ? EncodeIdentifier(state.Label) : "-";
+        return "COMPANION 1 " + state.ResourceVersion + " " + state.Epoch + " "
+            + state.Sequence.ToString(CultureInfo.InvariantCulture) + " " + state.Status + " "
+            + (state.Registered ? "1" : "0") + " " + id + " " + plate + " " + label + " "
+            + state.Model.ToString(CultureInfo.InvariantCulture) + " "
+            + (state.Available ? "1" : "0") + " "
+            + state.DistanceCentimeters.ToString(CultureInfo.InvariantCulture) + " "
+             + SafeCompanionCode(state.LastCode) + " "
+             + (state.RegistrationTransactionSupported ? "1" : "0") + " "
+             + (state.RegistrationTransactionPending ? "1" : "0") + " "
+             + (state.ServerRegistrationSynchronized ? "1" : "0");
+    }
+
+    private static Dictionary<string, object> StrictObject(Dictionary<string, object> source, string key)
+    {
+        object value;
+        if (source == null || !source.TryGetValue(key, out value))
+            throw new InvalidOperationException("COMPANION_STATE_INVALID");
+        var result = value as Dictionary<string, object>;
+        if (result == null)
+            throw new InvalidOperationException("COMPANION_STATE_INVALID");
+        return result;
+    }
+
+    private static bool StrictBoolean(Dictionary<string, object> source, string key)
+    {
+        object value;
+        if (source == null || !source.TryGetValue(key, out value) || !(value is bool))
+            throw new InvalidOperationException("COMPANION_STATE_INVALID");
+        return (bool)value;
+    }
+
+    private static string StrictCompanionString(Dictionary<string, object> source, string key,
+        int maximumLength)
+    {
+        object value;
+        var result = source != null && source.TryGetValue(key, out value) ? value as string : null;
+        if (result == null || result.Length > maximumLength)
+            throw new InvalidOperationException("COMPANION_STATE_INVALID");
+        foreach (char character in result)
+            if (Char.IsControl(character))
+                throw new InvalidOperationException("COMPANION_STATE_INVALID");
+        return result;
+    }
+
+    private static long StrictInteger(Dictionary<string, object> source, string key, long minimum, long maximum)
+    {
+        decimal value = StrictDecimal(source, key, minimum, maximum);
+        if (value != Decimal.Truncate(value))
+            throw new InvalidOperationException("COMPANION_STATE_INVALID");
+        return Decimal.ToInt64(value);
+    }
+
+    private static decimal StrictDecimal(Dictionary<string, object> source, string key,
+        decimal minimum, decimal maximum)
+    {
+        object raw;
+        decimal value;
+        if (source == null || !source.TryGetValue(key, out raw) || raw == null
+            || !IsJsonNumber(raw)
+            || !Decimal.TryParse(Convert.ToString(raw, CultureInfo.InvariantCulture),
+                NumberStyles.Float, CultureInfo.InvariantCulture, out value)
+            || value < minimum || value > maximum)
+            throw new InvalidOperationException("COMPANION_STATE_INVALID");
+        return value;
+    }
+
+    private static bool IsJsonNumber(object value)
+    {
+        return value is Byte || value is SByte || value is Int16 || value is UInt16
+            || value is Int32 || value is UInt32 || value is Int64 || value is UInt64
+            || value is Single || value is Double || value is Decimal;
+    }
+
+    private static string SafeCompanionCode(string value)
+    {
+        string code = String.IsNullOrEmpty(value) ? "NONE" : value.Trim().ToUpperInvariant();
+        return CompanionCodePattern.IsMatch(code)
+            ? code : "INVALID_RESULT";
     }
 
     private static async Task<string> CaptureStorageAsync()
@@ -1426,6 +2134,39 @@ internal static class CdpBridge
             if (httpRequest != null) httpRequest.ReadWriteTimeout = 3000;
             return request;
         }
+    }
+
+    private sealed class CompanionState
+    {
+        public string ResourceVersion;
+        public string Epoch;
+        public string Token;
+        public long Sequence;
+        public string Status;
+        public bool OpenCargo;
+        public bool ServerRegistrationSynchronized;
+        public bool RegistrationTransactionSupported;
+        public bool RegistrationTransactionPending;
+        public string RegistrationTransactionId;
+        public string RegistrationTransactionPreviousId;
+        public long RegistrationTransactionStartedAt;
+        public long RegistrationTransactionExpiresAt;
+        public string RegistrationTransactionStatus;
+        public bool Registered;
+        public string RegistrationId;
+        public string Plate;
+        public string Label;
+        public long Model;
+        public long NetworkId;
+        public bool Available;
+        public long DistanceCentimeters;
+        public bool LastResultPresent;
+        public string LastRequestId;
+        public string LastCommand;
+        public bool LastOk;
+        public string LastCode;
+        public string LastRegistrationId;
+        public long LastNetworkId;
     }
 
     private sealed class RouteStep

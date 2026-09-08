@@ -10,7 +10,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "6.2.0"
+global AppVersion := "7.0.0"
 processId := DllCall("GetCurrentProcessId")
 buttonTemplatePath := A_Temp "\codex-mining-button-" processId ".png"
 windowedButtonTemplatePath := A_Temp "\codex-mining-button-windowed-" processId ".png"
@@ -87,7 +87,9 @@ global Config := {
     vehicleStorageId: ReadTextSetting(settingsPath, "VehicleStorage", "StorageId", ""),
     vehicleStorageType: ReadTextSetting(settingsPath, "VehicleStorage", "StorageType", ""),
     vehicleWorkMode: ReadVehicleWorkMode(settingsPath),
-    vehicleRouteFormat: ReadIntegerSetting(settingsPath, "VehicleStorage", "RouteFormat", 1, 0, 3),
+    vehicleRouteFormat: ReadIntegerSetting(settingsPath, "VehicleStorage", "RouteFormat", 0, 0, 4),
+    vehicleCompanionProtocol: ReadIntegerSetting(settingsPath, "VehicleStorage", "CompanionProtocol", 0, 0, 1),
+    vehicleRegistrationId: ReadTextSetting(settingsPath, "VehicleStorage", "CompanionRegistrationId", ""),
     vehicleOutboundRoute: ReadTextSetting(settingsPath, "VehicleStorage", "OutboundRoute", ""),
     vehicleReturnRoute: ReadTextSetting(settingsPath, "VehicleStorage", "ReturnRoute", ""),
     capacityCheckIntervalMs: ReadIntegerSetting(settingsPath, "VehicleStorage", "CapacityCheckIntervalMs", 3000, 1500, 15000),
@@ -198,19 +200,20 @@ global State := {
     lastStorageProbeResult: "",
     registrationActive: false,
     registrationCancelled: false,
-    registrationOverlay: 0,
-    registrationOverlayTitle: 0,
-    registrationOverlayDetail: 0,
-    registrationOverlayFeedback: 0,
-    registrationOverlayTimer: 0,
-    registrationOverlayFooter: 0,
-    registrationOverlayWatchFn: 0,
-    registrationKeyControls: Map(),
-    registrationViewMask: 0,
-    registrationHotIf: 0,
-    registrationMovementHotIf: 0,
-    registrationMovementBlocked: false,
-    registrationLastMask: -1,
+    companionReady: false,
+    companionEpoch: "",
+    companionResourceVersion: "",
+    companionStatus: "未確認",
+    companionRegistrationAvailable: false,
+    companionRegistrationId: "",
+    companionVehiclePlate: "",
+    companionVehicleLabel: "",
+    companionLastSequence: 0,
+    companionLastCheckAt: 0,
+    companionHealthFailures: 0,
+    companionTransactionSupported: false,
+    companionTransactionPending: false,
+    companionServerRegistrationSynchronized: false,
     page: "overview",
     pages: Map(),
     ui: {},
@@ -220,6 +223,37 @@ global State := {
 ; コンパイル前後の構文・埋め込み画像チェック用です。
 if A_Args.Length && A_Args[1] = "--validate" {
     updaterCapabilities := RunUpdaterCapabilities()
+    testRegistrationId := "YW12X2FhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYQ=="
+    testCompanionResult := "COMPANION 1 1.0.0 ame_aaaaaaaaaaaaaaaa 42 ready 1 "
+        . testRegistrationId . " QUJDMTIz VHJ1Y2s= 123456 1 250 REGISTERED 1 1 1"
+    testCompanionParsed := ParseCompanionStatus(testCompanionResult, &testCompanion)
+    testUnsynchronizedCompanionParsed := ParseCompanionStatus(
+        "COMPANION 1 1.0.0 ame_aaaaaaaaaaaaaaaa 43 ready 0 - - - 0 0 -1 IDLE 1 0 0",
+        &testUnsynchronizedCompanion)
+    testLegacyCompanionRejected := !ParseCompanionStatus(
+        "COMPANION 1 1.0.0 ame_aaaaaaaaaaaaaaaa 43 ready 0 - - - 0 0 -1 IDLE 1 0",
+        &testLegacyCompanion)
+    testCompanionDone := CompanionCommandSucceeded("COMPANION_DONE go-vehicle "
+        . "ARRIVED_VEHICLE " . testRegistrationId . " 123", "go-vehicle",
+        &testDoneId, &testDoneCode, &testDoneNetworkId)
+    testCommitDone := IsCommittedRegistrationResponse(
+        "COMPANION_DONE commit-registration REGISTRATION_COMMITTED "
+        . testRegistrationId . " 123", testRegistrationId)
+    testAbortDone := IsAbortedRegistrationResponse(
+        "COMPANION_DONE abort-registration REGISTRATION_ABORTED - 0")
+    testCancelledCommitRetryBlocked := !CompanionCommitRetryAllowed(
+        "ERROR CANCELLED", false)
+    testUserCancelledCommitRetryBlocked := !CompanionCommitRetryAllowed(
+        "ERROR COMPANION_BUSY", true)
+    testUncertainCommitRetryAllowed := CompanionCommitRetryAllowed(
+        "ERROR COMPANION_REGISTRATION_TRANSACTION_NOT_FOUND", false)
+    testVehicleProfile := {
+        vehicleRegistered: 1, vehicleCompanionProtocol: 1,
+        vehicleRegistrationId: testRegistrationId,
+        vehicleStorageId: "dHJ1bmsxMjM=", vehicleStorageType: "dHJ1bms=",
+        vehicleWorkMode: "mining", vehicleRouteFormat: 4,
+        vehicleOutboundRoute: "", vehicleReturnRoute: ""
+    }
     exitCode := !FileExist(State.buttonTemplates[1].path) ? 11
         : !FileExist(State.buttonTemplates[2].path) ? 12
         : !FileExist(State.hungerTemplatePath) ? 13
@@ -227,7 +261,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
         : !FileExist(State.backgroundBridgePath) ? 15
         : !FileExist(State.updaterPath) ? 16
         : MonotonicMs() <= 0 ? 17
-        : RunBackgroundBridge("capabilities") != "CAPS 6 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HEALTH" ? 18
+        : RunBackgroundBridge("capabilities") != "CAPS 7 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HEALTH COMPANION" ? 18
         : updaterCapabilities != "UPDATE_CAPS 1 CHECK DOWNLOAD APPLY" ? 19
         : !IsSafeConfiguredHotkey("F8") ? 20
         : IsSafeConfiguredHotkey("A") ? 21
@@ -253,22 +287,42 @@ if A_Args.Length && A_Args[1] = "--validate" {
         : IsValidRoute("150:48") ? 41
         : IsValidRoute("150:192") ? 42
         : IsValidRoute("150:256") ? 43
-        : CombineRoutes("150:1", "150:64") != "150:1,150:64" ? 44
-        : RouteViewSegmentCount("150:1,150:64,150:128") != 2 ? 45
-        : AutomationStartAllowed(false, true) ? 46
-        : !AutomationStartAllowed(false, false) ? 47
-        : ReverseRoute("180:1,200:5") != "200:10,180:2" ? 48
-        : VehicleSearchRoutes(180).Length != 20 ? 49
-        : !ParseServerHealth("HEALTH READY YWJjZGVmZ2g", &testEpoch) ? 50
-        : testEpoch != "YWJjZGVmZ2g" ? 51
+        : RouteViewSegmentCount("150:1,150:64,150:128") != 2 ? 44
+        : AutomationStartAllowed(false, true) ? 45
+        : !AutomationStartAllowed(false, false) ? 46
+        : !ParseServerHealth("HEALTH READY YWJjZGVmZ2g", &testEpoch) ? 47
+        : testEpoch != "YWJjZGVmZ2g" ? 48
+        : !testCompanionParsed ? 49
+        : testCompanion.registrationId != testRegistrationId
+            || testCompanion.epoch != "ame_aaaaaaaaaaaaaaaa"
+            || testCompanion.sequence != 42 || !testCompanion.available
+            || !testCompanion.transactionSupported
+            || !testCompanion.transactionPending
+            || !testCompanion.serverRegistrationSynchronized ? 50
+        : !IsValidCompanionRegistrationId(testRegistrationId) ? 51
+        : IsValidCompanionRegistrationId("YWJkZA==") ? 52
+        : !testCompanionDone || testDoneId != testRegistrationId
+            || testDoneCode != "ARRIVED_VEHICLE" || testDoneNetworkId != 123 ? 58
+        : !IsValidVehicleProfile(testVehicleProfile) ? 59
+        : !testCommitDone ? 60
+        : !testAbortDone ? 61
+        : IsCommittedRegistrationResponse(
+            "COMPANION_DONE commit-registration REGISTRATION_COMMITTED "
+            . testRegistrationId . " 0", testRegistrationId) ? 62
+        : !testCancelledCommitRetryBlocked ? 63
+        : !testUserCancelledCommitRetryBlocked ? 64
+        : !testUncertainCommitRetryAllowed ? 65
+        : !testUnsynchronizedCompanionParsed
+            || testUnsynchronizedCompanion.serverRegistrationSynchronized ? 66
+        : !testLegacyCompanionRejected ? 67
         : !CapacityNeedsStorage({weight: 8000, maxWeight: 10000,
-            used: 2, slots: 20}, &testCapacityReason, &testFreeWeight) ? 52
-        : testCapacityReason != "weight" || testFreeWeight != 2000 ? 53
+            used: 2, slots: 20}, &testCapacityReason, &testFreeWeight) ? 53
+        : testCapacityReason != "weight" || testFreeWeight != 2000 ? 54
         : CapacityNeedsStorage({weight: 7999, maxWeight: 10000,
-            used: 2, slots: 20}, &testCapacityReason, &testFreeWeight) ? 54
+            used: 2, slots: 20}, &testCapacityReason, &testFreeWeight) ? 55
         : !CapacityNeedsStorage({weight: 1000, maxWeight: 10000,
-            used: 20, slots: 20}, &testCapacityReason, &testFreeWeight) ? 55
-        : testCapacityReason != "slots" ? 56 : 0
+            used: 20, slots: 20}, &testCapacityReason, &testFreeWeight) ? 56
+        : testCapacityReason != "slots" ? 57 : 0
     if exitCode = 19
         try FileAppend "UPDATER_CAPS=" updaterCapabilities "`r`n",
             State.diagnosticPath, "UTF-8"
@@ -437,7 +491,7 @@ BuildVehiclePage() {
     State.ui.vehicleTitle := AddPageControl("vehicle", gui.AddText("x0 y0 w400 h38", "車両収納"))
     gui.SetFont("s9 w400 c6E6E73", "Segoe UI Variable Text")
     State.ui.vehicleSubtitle := AddPageControl("vehicle", gui.AddText("x0 y0 w480 h36",
-        "容量が少なくなると、登録した車両へ採集品だけを収納します"))
+        "登録車両の現在位置を取得し、荷台まで自動で移動します"))
     State.ui.vehicleSurface := AddPageControl("vehicle",
         gui.AddText("x0 y0 w400 h160 Disabled BackgroundFFFFFF", ""))
     gui.SetFont("s11 w600 c1C1C1E", "Segoe UI Variable Text")
@@ -467,13 +521,13 @@ BuildVehiclePage() {
         gui.AddText("x0 y0 w400 h104 Disabled BackgroundFFFFFF", ""))
     gui.SetFont("s10 w600 c1C1C1E", "Segoe UI Variable Text")
     State.routeStatusLabel := AddPageControl("vehicle",
-        gui.AddText("x0 y0 w400 h28 BackgroundTrans", "往復ルート　未登録"))
+        gui.AddText("x0 y0 w400 h28 BackgroundTrans", "ゲーム内連携　未確認"))
     gui.SetFont("s9 w400 c636366", "Segoe UI Variable Text")
     State.routeDetailLabel := AddPageControl("vehicle", gui.AddText("x0 y0 w400 h48 BackgroundTrans",
-        "作業場所から車両後部までの往路と復路を記録します。"))
+        "正規のFiveM補助リソースへ接続すると、車両を現在位置から追跡できます。"))
     gui.SetFont("s10 w600 c1C1C1E", "Segoe UI Variable Text")
     State.vehicleRegisterButton := AddPageControl("vehicle",
-        gui.AddButton("x0 y0 w240 h48", "車両とルートを登録"))
+        gui.AddButton("x0 y0 w240 h48", "ゲーム内で車両を登録"))
     State.vehicleDeleteButton := AddPageControl("vehicle",
         gui.AddButton("x0 y0 w160 h48", "登録を削除"))
     State.vehicleRegisterButton.OnEvent("Click", BeginVehicleRegistration)
@@ -481,7 +535,7 @@ BuildVehiclePage() {
     gui.SetFont("s9 w400 c636366", "Segoe UI Variable Text")
     State.ui.vehicleHelp := AddPageControl("vehicle", gui.AddText("x0 y0 w460 h72",
         "開始前から持っていた道具・食料・所持品は移動しません。`n"
-        "登録中はW/A/S/Dで移動、矢印で視点を記録します。少しの車両移動は荷台周辺を自動探索します。"))
+        "ゲーム内で車両を見て「AI採掘機に登録」を選びます。車両の現在位置は自動追跡します。"))
 }
 
 BuildSettingsPage() {
@@ -568,9 +622,11 @@ ShowPage(pageName, *) {
             control.Visible := visible
     }
     RefreshNavigationSelection()
-    if pageName = "vehicle"
+    if pageName = "vehicle" {
         RefreshVehicleUi()
-    else if pageName = "update"
+        if !State.running && !State.registrationActive
+            SetTimer CheckCompanionStatusForUi, -30
+    } else if pageName = "update"
         RefreshUpdateUi()
     try {
         State.gui.GetPos(,, &width, &height)
@@ -619,7 +675,7 @@ RunUiSmokeTest() {
             return 59
     }
     for interactive in [State.actionControl, State.mainButton,
-        State.vehicleNameEdit, State.vehicleRegisterButton,
+        State.vehicleNameEdit,
         State.backgroundControl, State.startHotkeyControl,
         State.stopHotkeyControl, State.minimumFreeWeightControl,
         State.settingsButton, State.updateButton] {
@@ -645,24 +701,6 @@ RunUiSmokeTest() {
             if !ControlFitsLayout(control, 520, 640)
                 return 58
         }
-    }
-    try {
-        CreateRegistrationOverlay(State.gui.Hwnd)
-        if State.registrationKeyControls.Count != 8
-            return 44
-        UpdateRegistrationOverlay("車両登録　2/4", "表示テスト", "● 記録中", "info")
-        UpdateRegistrationInputState(81, 1250)
-        if State.registrationKeyControls["w"].control.Text != "W"
-            || State.registrationKeyControls["left"].control.Text != "←"
-            || State.registrationKeyControls["s"].control.Text != "S"
-            return 45
-        ConfigureRegistrationControlKeys(true)
-        ConfigureRegistrationControlKeys(false)
-    } catch as err {
-        WriteDiagnostic("REGISTRATION_UI_SMOKE_ERROR=" err.Message)
-        return 46
-    } finally {
-        CloseRegistrationOverlay()
     }
     ShowPage("overview")
     LayoutMainWindow(State.gui, 0, 820, 640)
@@ -872,7 +910,7 @@ AutomationStartAllowed(running, registrationActive) {
 
 IsMiningActive(*) {
     global State
-    return State.running
+    return State.running || State.registrationActive
 }
 
 ConfigureTrayMenu() {
@@ -1116,6 +1154,8 @@ SaveAllSettingsAtomically() {
         IniWrite Config.vehicleStorageType, temporarySettingsPath, "VehicleStorage", "StorageType"
         IniWrite Config.vehicleWorkMode, temporarySettingsPath, "VehicleStorage", "WorkMode"
         IniWrite Config.vehicleRouteFormat, temporarySettingsPath, "VehicleStorage", "RouteFormat"
+        IniWrite Config.vehicleCompanionProtocol, temporarySettingsPath, "VehicleStorage", "CompanionProtocol"
+        IniWrite Config.vehicleRegistrationId, temporarySettingsPath, "VehicleStorage", "CompanionRegistrationId"
         IniWrite Config.vehicleOutboundRoute, temporarySettingsPath, "VehicleStorage", "OutboundRoute"
         IniWrite Config.vehicleReturnRoute, temporarySettingsPath, "VehicleStorage", "ReturnRoute"
         IniWrite Config.capacityCheckIntervalMs, temporarySettingsPath, "VehicleStorage", "CapacityCheckIntervalMs"
@@ -1141,13 +1181,45 @@ ToggleVehicleStorage(control, *) {
     if requested && !IsValidVehicleProfile(Config) {
         control.Value := 0
         Config.vehicleStorageEnabled := 0
-        State.vehicleStatusLabel.Text := "先に車両と往復ルートを登録してください"
+        State.vehicleStatusLabel.Text := "先にゲーム内で車両を登録してください"
         return
     }
     if requested && !Config.backgroundMode {
         control.Value := 0
         State.vehicleStatusLabel.Text := "設定でバックグラウンド操作をオンにしてください"
         return
+    }
+    if requested {
+        if !QueryCompanionStatus(&companionInfo) {
+            control.Value := 0
+            Config.vehicleStorageEnabled := 0
+            State.vehicleStatusLabel.Text := "FiveM補助連携を確認できません"
+            RefreshVehicleUi()
+            return
+        }
+        if !companionInfo.serverRegistrationSynchronized {
+            control.Value := 0
+            Config.vehicleStorageEnabled := 0
+            RefreshVehicleUi()
+            State.vehicleStatusLabel.Text := "サーバーの車両登録同期が終わるまでお待ちください"
+            return
+        }
+        if companionInfo.transactionPending {
+            control.Value := 0
+            Config.vehicleStorageEnabled := 0
+            State.vehicleStatusLabel.Text := "未確定の車両候補があります。登録し直してください"
+            RefreshVehicleUi()
+            return
+        }
+        if !CompanionProfileMatches(companionInfo) {
+            control.Value := 0
+            Config.vehicleStorageEnabled := 0
+            State.vehicleStatusLabel.Text := companionInfo.transactionSupported
+                ? "FiveM補助連携と登録車両を確認できません"
+                : "FiveM補助リソースを更新してください"
+            RefreshVehicleUi()
+            return
+        }
     }
     Config.vehicleStorageEnabled := requested
     try SaveAllSettingsAtomically()
@@ -1165,39 +1237,285 @@ RefreshVehicleUi(*) {
     if !IsObject(State.vehicleStatusLabel)
         return
     valid := IsValidVehicleProfile(Config)
+    linked := valid && State.companionReady
+        && State.companionTransactionSupported
+        && !State.companionTransactionPending
+        && State.companionServerRegistrationSynchronized
+        && State.companionRegistrationId = Config.vehicleRegistrationId
     State.vehicleEnabledControl.Value := Config.vehicleStorageEnabled && valid
-    State.vehicleEnabledControl.Enabled := valid
+    State.vehicleEnabledControl.Enabled := linked
         && !State.running && !State.registrationActive
     if valid {
         State.vehicleStatusLabel.Text := "登録済み　" Config.vehicleName
-        outSeconds := Round(RouteTotalMs(Config.vehicleOutboundRoute) / 1000, 1)
-        backSeconds := Round(RouteTotalMs(Config.vehicleReturnRoute) / 1000, 1)
-        State.routeStatusLabel.Text := "往路 " outSeconds "秒　復路 " backSeconds "秒"
-        if Config.vehicleRouteFormat >= 3 {
+        if State.companionReady && !State.companionServerRegistrationSynchronized {
+            State.routeStatusLabel.Text := "ゲーム内連携　車両登録を同期中"
+            State.routeDetailLabel.Text := "サーバー同期が完了するまで登録内容を変更しません。"
+        } else if State.companionReady && State.companionTransactionPending {
+            State.routeStatusLabel.Text := "ゲーム内連携　未確定の車両候補あり"
+            State.routeDetailLabel.Text := "「ゲーム内で登録し直す」から候補を破棄し、登録を完了してください。"
+        } else if State.companionReady && !State.companionTransactionSupported {
+            State.routeStatusLabel.Text := "ゲーム内連携　更新が必要"
+            State.routeDetailLabel.Text := "サーバー管理者へai_miner_companionの更新を依頼してください。"
+        } else if linked {
+            State.routeStatusLabel.Text := "ゲーム内連携　接続済み v" State.companionResourceVersion
+            vehicleAvailability := State.companionRegistrationAvailable
+                ? "現在位置を取得できます" : "車両は現在取得範囲外です"
             State.routeDetailLabel.Text := "作業: " ActionModeLabel(Config.vehicleWorkMode)
-                . "　荷台の近距離自動探索: オン"
-            State.vehicleRegisterButton.Text := "車両ルートを登録し直す"
+                . "　·　" vehicleAvailability
         } else {
-            State.routeDetailLabel.Text := "旧ルートです。荷台の再探索を使うには登録し直してください。"
-            State.vehicleRegisterButton.Text := "自動探索対応へ更新"
+            State.routeStatusLabel.Text := "ゲーム内連携　未接続または登録不一致"
+            State.routeDetailLabel.Text := "サーバー側のai_miner_companionを起動し、車両を再確認してください。"
         }
+        State.vehicleRegisterButton.Text := "ゲーム内で登録し直す"
         State.vehicleDeleteButton.Enabled := !State.running && !State.registrationActive
     } else {
-        legacyProfile := Config.vehicleRegistered
-            && Config.vehicleRouteFormat > 0 && Config.vehicleRouteFormat < 3
-        State.vehicleStatusLabel.Text := legacyProfile ? "安全更新が必要　" Config.vehicleName : "未登録"
-        State.routeStatusLabel.Text := legacyProfile ? "旧方式のルートは自動再生しません" : "往復ルート　未登録"
-        State.routeDetailLabel.Text := legacyProfile
-            ? "視点入力方式が変わったため、車両とルートを登録し直してください。"
-            : "作業場所から車両後部までの往路と復路を記録します。"
-        State.vehicleRegisterButton.Text := legacyProfile ? "新方式で登録し直す" : "車両とルートを登録"
+        legacyProfile := Config.vehicleRegistered && Config.vehicleRouteFormat > 0
+            && Config.vehicleRouteFormat < 4
+        State.vehicleStatusLabel.Text := legacyProfile ? "旧ルートは廃止　再登録が必要" : "未登録"
+        if State.companionReady && !State.companionServerRegistrationSynchronized {
+            State.routeStatusLabel.Text := "ゲーム内連携　車両登録を同期中"
+            State.routeDetailLabel.Text := "同期が完了すると車両を登録できます。"
+        } else if State.companionReady && State.companionTransactionPending {
+            State.routeStatusLabel.Text := "ゲーム内連携　未確定の車両候補あり"
+            State.routeDetailLabel.Text := "もう一度登録を開始すると、古い候補を安全に破棄します。"
+        } else if State.companionReady && !State.companionTransactionSupported {
+            State.routeStatusLabel.Text := "ゲーム内連携　更新が必要"
+            State.routeDetailLabel.Text := "サーバー管理者へai_miner_companionの更新を依頼してください。"
+        } else if State.companionReady {
+            State.routeStatusLabel.Text := "ゲーム内連携　接続済み v" State.companionResourceVersion
+            State.routeDetailLabel.Text := "車両を見て、通常のターゲット操作からAI採掘機に登録してください。"
+        } else {
+            State.routeStatusLabel.Text := "ゲーム内連携　未接続"
+            State.routeDetailLabel.Text := "PCへ置くだけでは動きません。サーバー管理者による補助リソースの導入が必要です。"
+        }
+        State.vehicleRegisterButton.Text := "ゲーム内で車両を登録"
         State.vehicleDeleteButton.Enabled := false
     }
     if !State.registrationActive
         State.vehicleNameEdit.Value := Config.vehicleName
-    State.vehicleRegisterButton.Enabled := !State.running && !State.registrationActive
+    State.vehicleRegisterButton.Enabled := State.companionReady
+        && State.companionTransactionSupported
+        && State.companionServerRegistrationSynchronized
+        && !State.running && !State.registrationActive
     State.vehicleNameEdit.Enabled := !State.running && !State.registrationActive
     RefreshCapacityUi()
+}
+
+CheckCompanionStatusForUi(*) {
+    global State
+    if State.running || State.registrationActive
+        return
+    QueryCompanionStatus(&companionInfo)
+    if State.page = "vehicle"
+        RefreshVehicleUi()
+}
+
+QueryCompanionStatus(&companionInfo, expectedEpoch := "", expectedGeneration := -1) {
+    global State
+    companionInfo := 0
+    result := expectedGeneration >= 0
+        ? RunBackgroundBridgeCancelable(expectedGeneration, "companion-status")
+        : RunBackgroundBridge("companion-status")
+    if !ParseCompanionStatus(result, &parsed) {
+        State.companionReady := false
+        if !expectedEpoch
+            State.companionEpoch := ""
+        State.companionResourceVersion := ""
+        State.companionRegistrationAvailable := false
+        State.companionRegistrationId := ""
+        State.companionVehiclePlate := ""
+        State.companionVehicleLabel := ""
+        State.companionTransactionSupported := false
+        State.companionTransactionPending := false
+        State.companionServerRegistrationSynchronized := false
+        State.companionStatus := InStr(result, "NUI_FRAME_NOT_FOUND")
+            ? "補助リソース未接続" : "補助連携を確認できません"
+        WriteDiagnostic("COMPANION_STATUS_ERROR=" result)
+        return false
+    }
+    if expectedEpoch && parsed.epoch != expectedEpoch {
+        State.companionReady := false
+        State.companionStatus := "補助リソースが再起動しました"
+        WriteDiagnostic("COMPANION_EPOCH_CHANGED expected=" expectedEpoch
+            " actual=" parsed.epoch)
+        return false
+    }
+    companionInfo := parsed
+    State.companionReady := true
+    State.companionEpoch := parsed.epoch
+    State.companionResourceVersion := parsed.resourceVersion
+    State.companionRegistrationAvailable := parsed.available
+    State.companionRegistrationId := parsed.registrationId
+    State.companionVehiclePlate := parsed.plate
+    State.companionVehicleLabel := parsed.label
+    State.companionLastSequence := parsed.sequence
+    State.companionLastCheckAt := MonotonicMs()
+    State.companionStatus := parsed.status
+    State.companionTransactionSupported := parsed.transactionSupported
+    State.companionTransactionPending := parsed.transactionPending
+    State.companionServerRegistrationSynchronized := parsed.serverRegistrationSynchronized
+    return true
+}
+
+ParseCompanionStatus(result, &info) {
+    info := 0
+    parts := StrSplit(Trim(result), " ")
+    if parts.Length != 17 || parts[1] != "COMPANION" || parts[2] != "1"
+        return false
+    if !RegExMatch(parts[3], "^\d+\.\d+\.\d+$")
+        || !RegExMatch(parts[4], "^[a-z0-9_]{16,128}$")
+        || !RegExMatch(parts[6], "^[a-z][a-z0-9_]{0,47}$")
+        || (parts[7] != "0" && parts[7] != "1")
+        || (parts[12] != "0" && parts[12] != "1")
+        || !RegExMatch(parts[14], "^[A-Z0-9_]{1,64}$")
+        || (parts[15] != "0" && parts[15] != "1")
+        || (parts[16] != "0" && parts[16] != "1")
+        || (parts[17] != "0" && parts[17] != "1")
+        return false
+    try {
+        sequence := Integer(parts[5])
+        model := Integer(parts[11])
+        distanceCm := Integer(parts[13])
+    } catch {
+        return false
+    }
+    if sequence < 0 || model < 0 || distanceCm < -1
+        return false
+    registered := parts[7] = "1"
+    transactionSupported := parts[15] = "1"
+    transactionPending := parts[16] = "1"
+    serverRegistrationSynchronized := parts[17] = "1"
+    if transactionPending && (!transactionSupported || !registered)
+        return false
+    if registered {
+        if !IsValidCompanionRegistrationId(parts[8]) || !IsValidBase64Token(parts[9])
+            || !IsValidBase64Token(parts[10]) || model = 0
+            return false
+    } else if parts[8] != "-" || parts[9] != "-" || parts[10] != "-"
+        return false
+    info := {
+        resourceVersion: parts[3], epoch: parts[4], sequence: sequence,
+        status: parts[6], registered: registered,
+        registrationId: registered ? parts[8] : "",
+        plate: registered ? parts[9] : "",
+        label: registered ? parts[10] : "", model: model,
+        available: parts[12] = "1", distanceCm: distanceCm,
+        lastCode: parts[14], transactionSupported: transactionSupported,
+        transactionPending: transactionPending,
+        serverRegistrationSynchronized: serverRegistrationSynchronized
+    }
+    return true
+}
+
+CompanionProfileMatches(info) {
+    global Config
+    return IsObject(info) && info.registered
+        && info.transactionSupported && !info.transactionPending
+        && info.serverRegistrationSynchronized
+        && IsValidVehicleProfile(Config)
+        && info.registrationId = Config.vehicleRegistrationId
+}
+
+RunCompanionCommand(command, registrationId := "") {
+    args := [command]
+    if registrationId
+        args.Push(registrationId)
+    return RunBackgroundBridge("companion-command", args*)
+}
+
+RunCompanionCommandCancelable(expectedGeneration, command, registrationId := "") {
+    args := [command]
+    if registrationId
+        args.Push(registrationId)
+    return RunBackgroundBridgeCancelable(expectedGeneration, "companion-command", args*)
+}
+
+CompanionCommandSucceeded(result, command, &registrationId := "", &resultCode := "",
+    &networkId := 0) {
+    registrationId := ""
+    resultCode := ""
+    networkId := 0
+    if !RegExMatch(result,
+        "^COMPANION_DONE ([a-z][a-z0-9_-]{0,47}) ([A-Z0-9_]{1,64}) ([-A-Za-z0-9+/=]+) (\d+)$", &parts)
+        return false
+    if parts[1] != command
+        return false
+    if parts[3] != "-" {
+        if !IsValidCompanionRegistrationId(parts[3])
+            return false
+        registrationId := parts[3]
+    }
+    try networkId := Integer(parts[4])
+    catch
+        return false
+    if networkId < 0 || networkId > 2147483647
+        return false
+    resultCode := parts[2]
+    return true
+}
+
+IsValidCompanionRegistrationId(value) {
+    value := String(value)
+    ; serverの `amv_` + 36桁hexをbridgeがUTF-8/Base64化した固定長です。
+    return StrLen(value) = 56 && RegExMatch(value, "^[A-Za-z0-9+/]{54}==$")
+}
+
+CompanionFailureMessage(result, fallback) {
+    code := RegExMatch(result, "^ERROR COMPANION_([A-Z0-9_]{1,64})$", &parts)
+        ? parts[1] : ""
+    return code = "OWNERSHIP_ADAPTER_NOT_CONFIGURED"
+        ? "サーバー側の車両所有確認が未設定です"
+        : code = "INCOMPATIBLE"
+            ? "FiveM補助リソースが古いため、管理者による更新が必要です"
+        : code = "VEHICLE_NOT_OWNED" || code = "OWNERSHIP_ACE_DENIED"
+            ? "この車両の所有権を確認できません"
+        : code = "VEHICLE_TOO_FAR" ? "登録車両が遠すぎるため停止しました"
+        : code = "VEHICLE_UNAVAILABLE" ? "登録車両が現在存在しないため停止しました"
+        : code = "VEHICLE_MATCH_AMBIGUOUS" ? "同じ車両候補が複数あるため停止しました"
+        : code = "NAVIGATION_STUCK" ? "経路が塞がれているため停止しました"
+        : code = "RETURN_STUCK" ? "作業地点へ戻る経路が塞がれているため停止しました"
+        : code = "NAVIGATION_TIMEOUT" || code = "RETURN_TIMEOUT"
+            ? "自動移動が時間切れになったため停止しました"
+        : code = "VEHICLE_UNSTREAMED" ? "移動中に登録車両を見失ったため停止しました"
+        : code = "VEHICLE_MOVED_AFTER_ARRIVAL"
+            ? "到着確認中に車両が移動したため停止しました"
+        : code = "PLAYER_CANNOT_NAVIGATE"
+            ? "徒歩で安全に移動できる状態ではないため停止しました"
+        : code = "MANUAL_OVERRIDE" ? "手動操作を検知したため自動移動を停止しました"
+        : code = "VEHICLE_SELECTION_AMBIGUOUS" ? "車両を1台だけ画面中央に合わせてください"
+        : code = "VEHICLE_NOT_AIMED" ? "登録する車両を画面中央に合わせてください"
+        : code = "REGISTRATION_TIMEOUT" ? "車両登録が時間切れになりました"
+        : code = "REGISTRATION_CANCELLED" ? "車両登録を中止しました"
+        : code = "REGISTRATION_TRANSACTION_EXPIRED"
+            ? "車両登録候補の有効時間が切れました。もう一度登録してください"
+        : code = "REGISTRATION_TRANSACTION_NOT_FOUND"
+            ? "車両登録候補が見つかりません。もう一度登録してください"
+        : code = "REGISTRATION_TRANSACTION_PENDING"
+            ? "別の未確定車両候補があります。登録画面からやり直してください"
+        : code = "REGISTRATION_ID_INVALID"
+            ? "車両登録候補IDが不正なため確定しませんでした"
+        : code = "SERVER_REGISTRATION_SYNC_PENDING"
+            ? "サーバーの車両登録同期が終わるまでお待ちください"
+        : code = "REGISTRATION_CANDIDATE_MISMATCH"
+            ? "別の車両登録候補へ切り替わったため確定しませんでした"
+        : code = "REGISTRATION_COMMIT_REJECTED"
+            ? "サーバー側が車両登録の確定を拒否しました"
+        : code = "REGISTRATION_COMMIT_FAILED"
+            ? "サーバー側で車両登録を確定できませんでした"
+        : code = "REGISTRATION_ABORT_FAILED"
+            ? "サーバー側で車両登録候補を破棄できませんでした"
+        : code = "REGISTRATION_NOT_PENDING"
+            ? "車両登録候補はすでに確定または破棄されています"
+        : code = "BUSY" ? "ゲーム内連携が別の操作を実行中です"
+        : code = "WORK_ANCHOR_UNSAFE" ? "徒歩で停止して作業対象の前に立ってください"
+        : code = "CARGO_TOO_FAR" ? "荷台から離れたため収納を開始できません"
+        : code = "CARGO_PROVIDER_UNAVAILABLE" ? "サーバーの荷台連携が利用できません"
+        : code = "CARGO_OPEN_ERROR" || code = "CARGO_OPEN_REJECTED"
+            ? "登録車両の荷台を開けませんでした"
+        : code = "REGISTRATION_NOT_FOUND" ? "登録車両がサーバー側に存在しません"
+        : code = "MANUAL_INPUT" ? "手動操作を検知したため自動移動を停止しました"
+        : code = "COMPANION_SESSION_CHANGED" ? "補助リソースの再起動を検知しました"
+        : fallback
 }
 
 RefreshCapacityUi(*) {
@@ -1273,110 +1591,253 @@ BeginVehicleRegistration(*) {
         WriteDiagnostic("REGISTRATION_PREFLIGHT_ERROR=" healthResult)
         return
     }
+    if !QueryCompanionStatus(&initialCompanion) {
+        State.vehicleStatusLabel.Text := "FiveM補助リソースへ接続できません"
+        RefreshVehicleUi()
+        return
+    }
+    if !initialCompanion.serverRegistrationSynchronized {
+        RefreshVehicleUi()
+        State.vehicleStatusLabel.Text := "サーバーの車両登録同期が終わるまでお待ちください"
+        return
+    }
+    if !initialCompanion.transactionSupported {
+        State.vehicleStatusLabel.Text := "FiveM補助リソースを更新してから登録してください"
+        RefreshVehicleUi()
+        return
+    }
+
+    ; サーバー上の候補を変更する前に、確定済みローカル設定を丸ごと退避します。
+    oldProfile := SnapshotVehicleProfile()
+    if initialCompanion.transactionPending {
+        staleEpoch := initialCompanion.epoch
+        staleCandidateId := initialCompanion.registrationId
+        State.vehicleStatusLabel.Text := "前回の未確定候補を安全に破棄しています"
+        if !AbortStaleCandidateRegistration(staleCandidateId, staleEpoch,
+            &restoredCompanion, &staleAbortDiagnostic) {
+            State.vehicleStatusLabel.Text := "前回の未確定候補を安全に破棄できませんでした"
+            WriteDiagnostic("REGISTRATION_STALE_ABORT_ERROR=" staleAbortDiagnostic)
+            RefreshVehicleUi()
+            return
+        }
+        initialCompanion := restoredCompanion
+    }
+    if initialCompanion.status = "registration_armed"
+        || initialCompanion.status = "registering"
+        || initialCompanion.status = "navigating_vehicle"
+        || initialCompanion.status = "returning_work"
+        || initialCompanion.status = "opening_cargo" {
+        resetEpoch := initialCompanion.epoch
+        cancelResult := RunCompanionCommand("cancel")
+        if !CompanionCommandSucceeded(cancelResult, "cancel", &cancelId,
+            &cancelCode, &cancelNetworkId) || cancelCode != "CANCELLED"
+            || !QueryCompanionStatus(&initialCompanion, resetEpoch) {
+            State.vehicleStatusLabel.Text := "前のゲーム内操作を安全に終了できませんでした"
+            WriteDiagnostic("REGISTRATION_RESET_ERROR=" cancelResult)
+            RefreshVehicleUi()
+            return
+        }
+    }
+    ; cancelとstatus取得の間に候補確定が届いた場合も、arm前に明示的に破棄します。
+    if initialCompanion.transactionPending {
+        staleEpoch := initialCompanion.epoch
+        staleCandidateId := initialCompanion.registrationId
+        if !AbortStaleCandidateRegistration(staleCandidateId, staleEpoch,
+            &restoredCompanion, &staleAbortDiagnostic) {
+            State.vehicleStatusLabel.Text := "競合した未確定候補を安全に破棄できませんでした"
+            WriteDiagnostic("REGISTRATION_RACED_ABORT_ERROR=" staleAbortDiagnostic)
+            RefreshVehicleUi()
+            return
+        }
+        initialCompanion := restoredCompanion
+    }
+    if !initialCompanion.transactionSupported || initialCompanion.transactionPending
+        || !initialCompanion.serverRegistrationSynchronized {
+        State.vehicleStatusLabel.Text := "車両登録トランザクションを開始できません"
+        RefreshVehicleUi()
+        return
+    }
+    if !ReconcileVehicleProfileWithCompanion(initialCompanion,
+        &profileReconciled, &reconcileDiagnostic) {
+        RefreshVehicleUi()
+        State.vehicleStatusLabel.Text := "ローカル車両設定を安全な状態へ修復できませんでした"
+        WriteDiagnostic("REGISTRATION_RECONCILE_ERROR=" reconcileDiagnostic)
+        return
+    }
+    if profileReconciled {
+        ; candidate保存後のクラッシュでは旧trunk ID/typeを復元できないため、
+        ; 不一致データは再利用せず、未登録状態を以後のrollback基準にします。
+        oldProfile := SnapshotVehicleProfile()
+    }
+    ; stale候補のabortと前操作のcancelが完了した後のサーバー確定状態を基準にします。
+    previousCompanionRegistration := {
+        registered: initialCompanion.registered,
+        registrationId: initialCompanion.registrationId
+    }
     vehicleName := Trim(StrReplace(StrReplace(State.vehicleNameEdit.Value, "`r", " "), "`n", " "))
     if !vehicleName
         vehicleName := "登録車両"
     if StrLen(vehicleName) > 40
         vehicleName := SubStr(vehicleName, 1, 40)
 
+    candidateId := ""
+    candidateCommitted := false
+    candidateAbortAttempted := false
+    candidateAbortConfirmed := false
+    candidateConfigApplied := false
+    commitAttempted := false
+    registrationSucceeded := false
+    finalStatus := ""
     State.registrationActive := true
     State.registrationCancelled := false
-    State.registrationViewMask := 0
-    ; 実際のルート記録中以外は移動を通さず、未記録の位置ずれを防ぎます。
-    State.registrationMovementBlocked := true
     State.targetHwnd := targetHwnd
     State.targetPid := targetPid
     State.serverEpoch := registrationEpoch
+    State.companionEpoch := initialCompanion.epoch
+    State.companionHealthFailures := 0
     RefreshVehicleUi()
     try {
-        ConfigureRegistrationControlKeys(true)
         State.gui.Hide()
         try WinRestore "ahk_id " targetHwnd
         try WinActivate "ahk_id " targetHwnd
         if !WinWaitActive("ahk_id " targetHwnd,, 3)
             throw Error("FiveMを前面にできませんでした。最小化を解除してやり直してください。")
-        CreateRegistrationOverlay(targetHwnd)
-        UpdateRegistrationOverlay("車両登録　1/4", "現在の作業ボタンを検出しています…",
-            "● 確認中", "info")
-        if !WaitRegistration(450)
-            throw Error("登録を中止しました")
-        if !ConfirmRegistrationStart(Config.actionMode)
-            throw Error("ここでは「" ActionModeLabel(Config.actionMode) "」を確認できません。作業場所に立ってやり直してください。")
 
-        outboundRoute := RecordMovementRoute("車両登録　2/4",
-            "W/A/S/Dで車両後部へ移動し、矢印キーで荷台が見える視点へ合わせます")
+        State.vehicleStatusLabel.Text := "ゲーム内で登録する車両を選んでください"
+        armResult := RunCompanionCommandCancelable(0, "arm-register")
+        if !CompanionCommandSucceeded(armResult, "arm-register", &armedId, &armCode)
+            throw Error(CompanionFailureMessage(armResult, "ゲーム内の車両登録を開始できませんでした"))
+        if armCode != "ARMED" && armCode != "REGISTERED"
+            throw Error("ゲーム内の車両登録を開始できませんでした（" armCode "）")
 
-        if !CaptureStorageWithGuidedAdjustment(&outboundRoute, &storageId, &storageType)
-            throw Error("車両後部の「ストレージを開く」を確認できませんでした。")
+        if !WaitForCompanionRegistration(initialCompanion.sequence,
+            initialCompanion.epoch, registrationEpoch, &candidateCompanion,
+            &registrationFailure)
+            throw Error(CompanionFailureMessage(registrationFailure,
+                "ゲーム内で車両を登録できませんでした"))
+        candidateId := candidateCompanion.registrationId
+        if !IsValidCompanionRegistrationId(candidateId)
+            throw Error("補助リソースから安全な車両候補IDを取得できませんでした。")
+
+        State.vehicleStatusLabel.Text := "候補車両の現在位置へ移動しています"
+        goResult := RunCompanionCommandCancelable(0, "go-vehicle", candidateId)
+        if !CompanionCommandSucceeded(goResult, "go-vehicle", &goId, &goCode,
+            &goNetworkId) || goCode != "ARRIVED_VEHICLE"
+            || goId != candidateId || goNetworkId <= 0
+            throw Error(CompanionFailureMessage(goResult,
+                "候補車両の荷台へ移動できませんでした"))
+        if !ValidateRegistrationEpochs(registrationEpoch, initialCompanion.epoch)
+            throw Error("登録中のサーバー再起動または再接続を検知しました。")
+
+        State.vehicleStatusLabel.Text := "候補車両の荷台を確認しています"
+        if !OpenCompanionCargoAndCapture(candidateId, 0, &storageId, &storageType,
+            &cargoFailure)
+            throw Error(CompanionFailureMessage(cargoFailure,
+                "候補車両のtrunkインベントリを確認できませんでした"))
         registrationReleased := ReleaseBackgroundTarget(true)
         registrationCloseResult := RunBackgroundBridge("close-inventory")
         if registrationCloseResult != "CLOSED" || !registrationReleased
-            throw Error("荷台画面を安全に閉じられないため、復路の記録を開始しません。")
-        if !WaitRegistration(500)
-            throw Error("登録を中止しました")
+            throw Error("荷台画面を安全に閉じられませんでした。")
+        if !QueryCompanionStatus(&confirmedCandidate, initialCompanion.epoch, 0)
+            || !confirmedCandidate.registered
+            || !confirmedCandidate.transactionSupported
+            || !confirmedCandidate.transactionPending
+            || !confirmedCandidate.serverRegistrationSynchronized
+            || confirmedCandidate.registrationId != candidateId
+            throw Error("保存直前に候補車両との接続を確認できませんでした。")
+        if !ValidateRegistrationEpochs(registrationEpoch, initialCompanion.epoch)
+            throw Error("保存直前にサーバー再起動または再接続を検知しました。")
 
-        returnRoute := RecordMovementRoute("車両登録　4/4",
-            "W/A/S/Dで元の位置へ戻し、矢印キーで作業対象へ視点を合わせます")
-        if !ConfirmWorkWithGuidedAdjustment(&returnRoute, Config.actionMode)
-            throw Error("復路の終点で作業ボタンを確認できません。往復ルートを登録し直してください。")
-        VerifyVehicleRegistration(outboundRoute, returnRoute, storageId, storageType,
-            Config.actionMode)
-
-        oldProfile := {
-            enabled: Config.vehicleStorageEnabled,
-            registered: Config.vehicleRegistered,
-            name: Config.vehicleName,
-            id: Config.vehicleStorageId,
-            type: Config.vehicleStorageType,
-            mode: Config.vehicleWorkMode,
-            routeFormat: Config.vehicleRouteFormat,
-            outbound: Config.vehicleOutboundRoute,
-            inbound: Config.vehicleReturnRoute
-        }
         Config.vehicleName := vehicleName
         Config.vehicleStorageId := storageId
         Config.vehicleStorageType := storageType
         Config.vehicleWorkMode := Config.actionMode
-        Config.vehicleRouteFormat := 3
-        Config.vehicleOutboundRoute := outboundRoute
-        Config.vehicleReturnRoute := returnRoute
+        Config.vehicleCompanionProtocol := 1
+        Config.vehicleRegistrationId := candidateId
+        Config.vehicleRouteFormat := 4
+        Config.vehicleOutboundRoute := ""
+        Config.vehicleReturnRoute := ""
         Config.vehicleRegistered := 1
         Config.vehicleStorageEnabled := 1
+        candidateConfigApplied := true
         if !IsValidVehicleProfile(Config)
-            throw Error("登録データの検証に失敗しました。")
-        try SaveAllSettingsAtomically()
-        catch as err {
-            Config.vehicleStorageEnabled := oldProfile.enabled
-            Config.vehicleRegistered := oldProfile.registered
-            Config.vehicleName := oldProfile.name
-            Config.vehicleStorageId := oldProfile.id
-            Config.vehicleStorageType := oldProfile.type
-            Config.vehicleWorkMode := oldProfile.mode
-            Config.vehicleRouteFormat := oldProfile.routeFormat
-            Config.vehicleOutboundRoute := oldProfile.outbound
-            Config.vehicleReturnRoute := oldProfile.inbound
-            throw err
+            throw Error("候補の登録データ検証に失敗しました。")
+        SaveAllSettingsAtomically()
+
+        State.vehicleStatusLabel.Text := "候補車両の登録を確定しています"
+        commitAttempted := true
+        if !CommitCandidateRegistration(candidateId, initialCompanion.epoch,
+            &commitApplied, &commitFailure) {
+            candidateCommitted := commitApplied
+            throw Error(CompanionFailureMessage(commitFailure,
+                "候補車両の登録を確定できませんでした"))
         }
+        candidateCommitted := true
+        if !ValidateRegistrationEpochs(registrationEpoch, initialCompanion.epoch)
+            throw Error("登録は確定しましたが、直後に接続状態が変わりました。")
+
         State.lastStorageResult := "登録完了"
-        State.vehicleStatusLabel.Text := "登録が完了しました"
+        finalStatus := "登録が完了しました"
+        registrationSucceeded := true
     } catch as err {
-        if State.registrationCancelled
-            State.vehicleStatusLabel.Text := "登録を中止しました"
-        else
-            State.vehicleStatusLabel.Text := err.Message
+        finalStatus := State.registrationCancelled
+            ? "登録を中止しました" : err.Message
         WriteDiagnostic("VEHICLE_REGISTER=" err.Message)
     } finally {
-        try SetRegistrationViewMask(0)
-        ConfigureRegistrationControlKeys(false)
+        CancelActiveBridgeProcess()
+        if candidateId && !candidateCommitted {
+            candidateAbortAttempted := true
+            candidateAbortConfirmed := AbortCandidateRegistration(candidateId,
+                initialCompanion.epoch, previousCompanionRegistration,
+                &abortDiagnostic)
+            if !candidateAbortConfirmed {
+                WriteDiagnostic("REGISTRATION_ABORT_ERROR=" abortDiagnostic)
+                finalStatus .= (finalStatus ? " / " : "")
+                    . "候補登録の破棄を確認できませんでした"
+            }
+            if candidateConfigApplied {
+                if candidateAbortConfirmed || !commitAttempted {
+                    RestoreVehicleProfile(oldProfile)
+                    try SaveAllSettingsAtomically()
+                    catch as rollbackError {
+                        WriteDiagnostic("REGISTRATION_CONFIG_ROLLBACK_ERROR="
+                            rollbackError.Message)
+                        finalStatus .= (finalStatus ? " / " : "")
+                            . "旧設定の保存復元に失敗しました"
+                    }
+                } else {
+                    ; commit結果とabort結果をどちらも確認できない場合、server commit済みを
+                    ; 旧設定で上書きしません。候補ID/typeを保持し、自動収納だけ停止します。
+                    Config.vehicleStorageEnabled := 0
+                    try SaveAllSettingsAtomically()
+                    catch as uncertainSaveError
+                        WriteDiagnostic("REGISTRATION_UNCERTAIN_CONFIG_ERROR="
+                            uncertainSaveError.Message)
+                    finalStatus .= (finalStatus ? " / " : "")
+                        . "登録状態が不明なため自動収納をオフにしました"
+                }
+            }
+        } else if !candidateId && !registrationSucceeded {
+            cancelResult := RunCompanionCommand("cancel")
+            if !CompanionCommandSucceeded(cancelResult, "cancel", &cancelId,
+                &cancelCode, &cancelNetworkId) || cancelCode != "CANCELLED"
+                WriteDiagnostic("REGISTRATION_CANCEL_ERROR=" cancelResult)
+        }
+        WriteDiagnostic("REGISTRATION_TRANSACTION candidate="
+            (candidateId ? candidateId : "-") " committed="
+            (candidateCommitted ? 1 : 0) " abortAttempted="
+            (candidateAbortAttempted ? 1 : 0) " abortConfirmed="
+            (candidateAbortConfirmed ? 1 : 0))
         ReleaseBackgroundTarget(true)
         RunBackgroundBridge("close-inventory")
-        CloseRegistrationOverlay()
         State.registrationActive := false
         State.registrationCancelled := false
         State.targetHwnd := 0
         State.targetPid := 0
         State.serverEpoch := ""
         RefreshVehicleUi()
+        if finalStatus
+            State.vehicleStatusLabel.Text := finalStatus
         ShowPage("vehicle")
         ShowMainWindow()
     }
@@ -1387,566 +1848,382 @@ CancelVehicleRegistration(*) {
     State.registrationCancelled := true
 }
 
-CreateRegistrationOverlay(targetHwnd) {
-    global State
-    WinGetClientPos(&gameX, &gameY, &gameW, &gameH, "ahk_id " targetHwnd)
-    overlayW := Min(680, Max(240, gameW - 24))
-    overlayX := gameX + Floor((gameW - overlayW) / 2)
-    overlayY := gameY + 20
-    overlay := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x20")
-    overlay.BackColor := "111318"
-    overlay.MarginX := 0
-    overlay.MarginY := 0
-    brandW := Min(150, Max(82, Floor((overlayW - 54) * 0.45)))
-    feedbackX := 30 + brandW
-    feedbackW := Max(82, overlayW - feedbackX - 18)
-    overlay.SetFont("s9 w600 c8E8E93", "Segoe UI Variable Text")
-    overlay.AddText("x18 y10 w" brandW " h20 0x200", "AI採掘機  /  ROUTE")
-    overlay.SetFont("s9 w600 c4CC9F0", "Segoe UI Variable Text")
-    feedbackLabel := overlay.AddText("x" feedbackX " y10 w" feedbackW
-        . " h20 Right 0x200", "準備中")
-    overlay.SetFont("s15 w600 cFFFFFF", "Segoe UI Variable Text")
-    titleLabel := overlay.AddText("x18 y34 w" (overlayW - 36) " h28 0x200", "車両ルートを登録")
-    overlay.SetFont("s9 w400 cC7C7CC", "Segoe UI Variable Text")
-    detailLabel := overlay.AddText("x18 y65 w" (overlayW - 36) " h34 0x200", "準備しています…")
-
-    moveCenter := Floor(overlayW / 2)
-    State.registrationKeyControls := Map()
-    AddRegistrationKeyControl(overlay, "w", "W", 1, moveCenter - 91, 105)
-    AddRegistrationKeyControl(overlay, "a", "A", 4, moveCenter - 43, 105)
-    AddRegistrationKeyControl(overlay, "s", "S", 2, moveCenter + 5, 105)
-    AddRegistrationKeyControl(overlay, "d", "D", 8, moveCenter + 53, 105)
-    AddRegistrationKeyControl(overlay, "up", "↑", 16, moveCenter - 91, 137)
-    AddRegistrationKeyControl(overlay, "left", "←", 64, moveCenter - 43, 137)
-    AddRegistrationKeyControl(overlay, "down", "↓", 32, moveCenter + 5, 137)
-    AddRegistrationKeyControl(overlay, "right", "→", 128, moveCenter + 53, 137)
-
-    overlay.SetFont("s9 w600 cE5E5EA", "Segoe UI Variable Text")
-    timerLabel := overlay.AddText("x18 y171 w" (overlayW - 36) " h20 Center 0x200",
-        "待機中  ·  WASD 移動  ·  矢印 視点")
-    overlay.SetFont("s8 w400 c8E8E93", "Segoe UI Variable Text")
-    footerLabel := overlay.AddText("x18 y196 w" (overlayW - 36) " h18 Center",
-        "Enter  決定      Esc  中止")
-    overlay.Show("NA x" overlayX " y" overlayY " w" overlayW " h220")
-    WinSetTransparent 248, "ahk_id " overlay.Hwnd
-    ApplyRoundedWindowCorners(overlay.Hwnd)
-    ApplyRoundedControlCorners(overlay.Hwnd, 16)
-    State.registrationOverlay := overlay
-    State.registrationOverlayTitle := titleLabel
-    State.registrationOverlayDetail := detailLabel
-    State.registrationOverlayFeedback := feedbackLabel
-    State.registrationOverlayTimer := timerLabel
-    State.registrationOverlayFooter := footerLabel
-    State.registrationOverlayWatchFn := MaintainRegistrationOverlayVisibility
-    State.registrationLastMask := -1
-    SetTimer State.registrationOverlayWatchFn, 250
-    UpdateRegistrationInputState(0, 0)
-}
-
-UpdateRegistrationFooter(text) {
-    global State
-    if IsObject(State.registrationOverlayFooter)
-        State.registrationOverlayFooter.Text := text
-}
-
-AddRegistrationKeyControl(overlay, keyName, label, bit, x, y) {
-    global State
-    overlay.SetFont("s10 w600 cC7C7CC", "Segoe UI Variable Text")
-    control := overlay.AddText("x" x " y" y " w38 h28 Center Border 0x200", label)
-    State.registrationKeyControls[keyName] := {control: control, label: label, bit: bit}
-}
-
-UpdateRegistrationOverlay(title, detail := "", feedback := "", feedbackKind := "info") {
-    global State
-    if IsObject(State.registrationOverlayTitle)
-        State.registrationOverlayTitle.Text := title
-    if IsObject(State.registrationOverlayDetail)
-        State.registrationOverlayDetail.Text := detail
-    if IsObject(State.registrationOverlayFeedback) {
-        color := feedbackKind = "success" ? "30D158"
-            : feedbackKind = "error" ? "FF453A"
-            : feedbackKind = "warning" ? "FF9F0A" : "4CC9F0"
-        State.registrationOverlayFeedback.Opt("c" color)
-        State.registrationOverlayFeedback.Text := feedback
-    }
-    if State.registrationMovementBlocked && IsObject(State.registrationOverlayTimer) {
-        phaseText := RegExReplace(feedback, "^[●\s]+", "")
-        State.registrationOverlayTimer.Text := (phaseText ? phaseText : "待機中")
-            . "  ·  入力待ち"
+SnapshotVehicleProfile() {
+    global Config
+    return {
+        enabled: Config.vehicleStorageEnabled,
+        registered: Config.vehicleRegistered,
+        name: Config.vehicleName,
+        id: Config.vehicleStorageId,
+        type: Config.vehicleStorageType,
+        mode: Config.vehicleWorkMode,
+        protocol: Config.vehicleCompanionProtocol,
+        registrationId: Config.vehicleRegistrationId,
+        routeFormat: Config.vehicleRouteFormat,
+        outbound: Config.vehicleOutboundRoute,
+        inbound: Config.vehicleReturnRoute
     }
 }
 
-UpdateRegistrationInputState(mask, elapsedMs := 0) {
-    global State
-    if IsObject(State.registrationKeyControls) && mask != State.registrationLastMask {
-        for _, info in State.registrationKeyControls {
-            active := (mask & info.bit) != 0
-            info.control.SetFont(active ? "s10 w700 c4CC9F0" : "s10 w600 cC7C7CC",
-                "Segoe UI Variable Text")
-        }
-        State.registrationLastMask := mask
-    }
-    if IsObject(State.registrationOverlayTimer) {
-        if State.registrationMovementBlocked {
-            State.registrationOverlayTimer.Text := "待機中  ·  入力はまだ記録されません"
-        } else {
-            moving := (mask & 15) ? "移動中" : "停止"
-            looking := (mask & 240) ? "視点調整中" : "視点停止"
-            State.registrationOverlayTimer.Text := "記録 " Round(elapsedMs / 1000, 1)
-                . "秒  ·  " moving "  ·  " looking
-        }
-    }
+RestoreVehicleProfile(profile) {
+    global Config
+    Config.vehicleStorageEnabled := profile.enabled
+    Config.vehicleRegistered := profile.registered
+    Config.vehicleName := profile.name
+    Config.vehicleStorageId := profile.id
+    Config.vehicleStorageType := profile.type
+    Config.vehicleWorkMode := profile.mode
+    Config.vehicleCompanionProtocol := profile.protocol
+    Config.vehicleRegistrationId := profile.registrationId
+    Config.vehicleRouteFormat := profile.routeFormat
+    Config.vehicleOutboundRoute := profile.outbound
+    Config.vehicleReturnRoute := profile.inbound
 }
 
-CloseRegistrationOverlay() {
-    global State
-    if IsObject(State.registrationOverlayWatchFn)
-        try SetTimer State.registrationOverlayWatchFn, 0
-    if IsObject(State.registrationOverlay) {
-        try State.registrationOverlay.Destroy()
-    }
-    State.registrationOverlay := 0
-    State.registrationOverlayTitle := 0
-    State.registrationOverlayDetail := 0
-    State.registrationOverlayFeedback := 0
-    State.registrationOverlayTimer := 0
-    State.registrationOverlayFooter := 0
-    State.registrationOverlayWatchFn := 0
-    State.registrationKeyControls := Map()
-    State.registrationLastMask := -1
-}
-
-MaintainRegistrationOverlayVisibility(*) {
-    global State
-    if !State.registrationActive || !IsObject(State.registrationOverlay)
-        return
-    visible := DllCall("user32\IsWindowVisible", "Ptr", State.registrationOverlay.Hwnd, "Int") != 0
-    if WinActive("ahk_id " State.targetHwnd) {
-        if !visible
-            ShowRegistrationOverlayAtTarget()
-    } else if visible
-        try State.registrationOverlay.Hide()
-}
-
-ShowRegistrationOverlayAtTarget() {
-    global State
-    if !IsObject(State.registrationOverlay) || !State.targetHwnd
+ReconcileVehicleProfileWithCompanion(companionInfo, &changed, &diagnostic) {
+    global Config
+    changed := false
+    diagnostic := ""
+    if !IsObject(companionInfo) || !companionInfo.transactionSupported
+        || companionInfo.transactionPending
+        || !companionInfo.serverRegistrationSynchronized {
+        diagnostic := "companion state is not stable"
         return false
-    try {
-        WinGetClientPos(&gameX, &gameY, &gameW, &gameH, "ahk_id " State.targetHwnd)
-        State.registrationOverlay.GetPos(,, &overlayW, &overlayH)
-        overlayX := gameX + Floor((gameW - overlayW) / 2)
-        overlayY := gameY + 18
-        State.registrationOverlay.Show("NA x" overlayX " y" overlayY)
+    }
+    if IsValidVehicleProfile(Config) && companionInfo.registered
+        && Config.vehicleRegistrationId = companionInfo.registrationId
         return true
-    } catch
-        return false
-}
 
-ConfigureRegistrationControlKeys(enabled) {
-    global State
-    keyNames := ["Left", "Right", "Up", "Down", "Enter", "Esc",
-        "LShift", "RShift", "LControl", "RControl", "Space"]
-    movementKeys := ["w", "s", "a", "d"]
-    if enabled {
-        State.registrationHotIf := IsVehicleRegistrationInputActive
-        State.registrationMovementHotIf := IsVehicleRegistrationMovementBlocked
-        registeredKeys := []
-        registeredMovementKeys := []
-        try {
-            HotIf State.registrationHotIf
-            for keyName in keyNames {
-                callback := keyName = "Esc" ? CancelVehicleRegistration : BlockRegistrationControlKey
-                Hotkey "$*" keyName, callback, "On"
-                registeredKeys.Push(keyName)
-            }
-            HotIf State.registrationMovementHotIf
-            for keyName in movementKeys {
-                Hotkey "$*" keyName, BlockRegistrationControlKey, "On"
-                registeredMovementKeys.Push(keyName)
-            }
-        } catch as err {
-            HotIf State.registrationHotIf
-            for keyName in registeredKeys
-                try Hotkey "$*" keyName, "Off"
-            HotIf State.registrationMovementHotIf
-            for keyName in registeredMovementKeys
-                try Hotkey "$*" keyName, "Off"
-            throw Error("登録用キーを準備できませんでした: " err.Message)
-        } finally {
-            HotIf
-        }
-        return
-    }
-    try {
-        if IsObject(State.registrationHotIf)
-            HotIf State.registrationHotIf
-        for keyName in keyNames
-            try Hotkey "$*" keyName, "Off"
-        if IsObject(State.registrationMovementHotIf)
-            HotIf State.registrationMovementHotIf
-        for keyName in movementKeys
-            try Hotkey "$*" keyName, "Off"
-    } finally {
-        HotIf
-        State.registrationHotIf := 0
-        State.registrationMovementHotIf := 0
-        State.registrationMovementBlocked := false
-    }
-}
-
-IsVehicleRegistrationInputActive(*) {
-    global State
-    return State.registrationActive && State.targetHwnd
-        && WinActive("ahk_id " State.targetHwnd)
-}
-
-IsVehicleRegistrationMovementBlocked(*) {
-    global State
-    return IsVehicleRegistrationInputActive() && State.registrationMovementBlocked
-}
-
-BlockRegistrationControlKey(*) {
-    ; 矢印はDevConのdirect-lookへ変換します。未記録区間の移動と、
-    ; 再生距離を変えるShift/Ctrl/Spaceも登録中だけゲームへ通しません。
-}
-
-WaitRegistration(delayMs) {
-    global State
-    endAt := MonotonicMs() + Max(1, delayMs)
-    while MonotonicMs() < endAt {
-        if State.registrationCancelled || !State.targetHwnd
-            || !WinExist("ahk_id " State.targetHwnd)
-            return false
-        Sleep Min(30, Max(1, endAt - MonotonicMs()))
-    }
-    return !State.registrationCancelled
-}
-
-RecordMovementRoute(title, instruction, requireMovement := true, showCountdown := true) {
-    global State
-    State.registrationMovementBlocked := true
-    if showCountdown {
-        UpdateRegistrationFooter("Enter 記録開始 / 到着確定　　　Esc 中止")
-        while GetKeyState("Enter", "P") {
-            if !WaitRegistration(20)
-                throw Error("登録を中止しました")
-        }
-        UpdateRegistrationOverlay(title,
-            instruction "`nキーをすべて離し、Enterで記録を開始してください。",
-            "● 開始待ち", "info")
-        loop {
-            if !WaitRegistration(25)
-                throw Error("登録を中止しました")
-            if !WinActive("ahk_id " State.targetHwnd)
-                continue
-            preStartMask := CurrentPhysicalRouteMask()
-            unsupportedKey := CurrentUnsupportedRegistrationKey()
-            UpdateRegistrationInputState(preStartMask, 0)
-            if GetKeyState("Enter", "P") {
-                if preStartMask || unsupportedKey {
-                    UpdateRegistrationOverlay(title,
-                        "W/A/S/D・矢印・Shift/Ctrl/Spaceをすべて離してから、Enterで開始してください。",
-                        "キーを離してください", "warning")
-                } else {
-                    break
-                }
-            }
-        }
-        ; Enterを押したまま次の移動キーを押しても、そのdownはゲーム側へ
-        ; 届いていません。全キーのreleaseを確認してから新しい押下で始めます。
-        while GetKeyState("Enter", "P") || CurrentPhysicalRouteMask()
-            || CurrentUnsupportedRegistrationKey() {
-            if !WaitRegistration(20)
-                throw Error("登録を中止しました")
-        }
-    } else {
-        UpdateRegistrationFooter("W/A/S/D 位置   矢印 視点   Enter 確定   Esc 中止")
-        UpdateRegistrationOverlay(title,
-            instruction "`nキーをすべて離すと調整記録を開始します。",
-            "● 入力待ち", "info")
-        while GetKeyState("Enter", "P") || CurrentPhysicalRouteMask()
-            || CurrentUnsupportedRegistrationKey() {
-            if !WaitRegistration(20)
-                throw Error("登録を中止しました")
-        }
-    }
-    State.registrationMovementBlocked := false
-    UpdateRegistrationOverlay(title,
-        instruction "`n到着後にキーをすべて離し、Enterで確定してください。",
-        "● 記録中", "info")
-    segments := []
-    previousMask := 0
-    segmentStartedAt := MonotonicMs()
-    routeStartedAt := segmentStartedAt
-    movementObserved := false
-    inputObserved := false
-    enterWasDown := false
-    lastUiAt := 0
-    pausedAt := 0
-    try {
-        loop {
-            if !WaitRegistration(25)
-                throw Error("登録を中止しました")
-            now := MonotonicMs()
-            if !WinActive("ahk_id " State.targetHwnd) {
-                ; 復帰キーや他アプリで押したWを未記録のままFiveMへ通さないよう、
-                ; フォーカスが戻る前から移動を遮断して全キーreleaseを待ちます。
-                State.registrationMovementBlocked := true
-                if previousMask {
-                    AppendRouteSegments(segments, now - segmentStartedAt, previousMask)
-                    previousMask := 0
-                }
-                SetRegistrationViewMask(0)
-                UpdateRegistrationInputState(0, now - routeStartedAt)
-                UpdateRegistrationOverlay(title,
-                    "記録を一時停止しました。キーを離してFiveMへ戻ると再開します。",
-                    "一時停止", "warning")
-                try State.registrationOverlay.Hide()
-                pausedAt := now
-                while !WinActive("ahk_id " State.targetHwnd) {
-                    if !WaitRegistration(50)
-                        throw Error("登録を中止しました")
-                }
-                while CurrentPhysicalRouteMask() || GetKeyState("Enter", "P")
-                    || CurrentUnsupportedRegistrationKey() {
-                    UpdateRegistrationInputState(CurrentPhysicalRouteMask(), now - routeStartedAt)
-                    if !WaitRegistration(25)
-                        throw Error("登録を中止しました")
-                }
-                resumedAt := MonotonicMs()
-                ShowRegistrationOverlayAtTarget()
-                routeStartedAt += resumedAt - pausedAt
-                segmentStartedAt := resumedAt
-                enterWasDown := false
-                State.registrationMovementBlocked := false
-                UpdateRegistrationOverlay(title,
-                    instruction "`n到着後にキーをすべて離し、Enterで確定してください。",
-                    "● 記録中", "info")
-                continue
-            }
-            mask := CurrentPhysicalRouteMask()
-            if (mask & 3) = 3 || (mask & 12) = 12
-                || (mask & 48) = 48 || (mask & 192) = 192
-                throw Error("反対方向のキーが同時に押されました。キーを一方向ずつ使ってください。")
-            requestedViewMask := (mask >> 4) & 15
-            if requestedViewMask != State.registrationViewMask {
-                if !SetRegistrationViewMask(requestedViewMask)
-                    throw Error("FiveMの視点入力へ接続できませんでした。")
-                now := MonotonicMs()
-            }
-            maskChanged := mask != previousMask
-            if maskChanged {
-                duration := now - segmentStartedAt
-                if duration >= 25 && (previousMask || inputObserved) {
-                    ; 中間停止は慣性を止める分だけ残し、考えていた長い待ち時間は圧縮します。
-                    recordedDuration := previousMask ? duration : Min(duration, 300)
-                    AppendRouteSegments(segments, recordedDuration, previousMask)
-                }
-                previousMask := mask
-                segmentStartedAt := now
-                UpdateRegistrationOverlay(title,
-                    instruction "`n到着後にキーをすべて離し、Enterで確定してください。",
-                    "● 記録中", "info")
-            }
-            if mask {
-                inputObserved := true
-                if mask & 15
-                    movementObserved := true
-            }
-            if now - lastUiAt >= 100 || maskChanged {
-                UpdateRegistrationInputState(mask, now - routeStartedAt)
-                lastUiAt := now
-            }
-
-            enterDown := GetKeyState("Enter", "P")
-            if enterDown && !enterWasDown {
-                if mask {
-                    UpdateRegistrationOverlay(title,
-                        "先にW/A/S/Dをすべて離してから、Enterを押してください。",
-                        "キーを離してください", "warning")
-                } else if requireMovement && !movementObserved {
-                    UpdateRegistrationOverlay(title, instruction,
-                        "● W/A/S/Dの移動がまだありません", "error")
-                } else {
-                    break
-                }
-            }
-            enterWasDown := enterDown
-            if now - routeStartedAt >= 60000
-                throw Error("1区間の記録が60秒を超えたため中止しました。車両を近くへ停めてください。")
-        }
-    } finally {
-        ; 検出・確認・保存前テスト中に未記録の移動が入らないよう、
-        ; 記録ループを抜けた瞬間からW/A/S/Dを再び遮断します。
-        State.registrationMovementBlocked := true
-        SetRegistrationViewMask(0)
-        UpdateRegistrationInputState(0, MonotonicMs() - routeStartedAt)
-    }
-
-    ; Enter確定時の無操作時間は再生しません。
-    if previousMask
-        AppendRouteSegments(segments, MonotonicMs() - segmentStartedAt, previousMask)
-    route := ""
-    for index, step in segments
-        route .= (index > 1 ? "," : "") step
-    while GetKeyState("Enter", "P") || CurrentPhysicalRouteMask()
-        || CurrentUnsupportedRegistrationKey() {
-        if !WaitRegistration(20)
-            throw Error("登録を中止しました")
-    }
-    if !route && !requireMovement
-        return ""
-    if !IsValidRoute(route, requireMovement, requireMovement ? 150 : 25)
-        throw Error(requireMovement ? "移動が短すぎるか、ルートを正しく記録できませんでした。"
-            : "立ち位置の調整を正しく記録できませんでした。")
-    return route
-}
-
-ConfirmRegistrationStart(actionMode) {
-    loop 8 {
-        UpdateRegistrationOverlay("車両登録　1/4", "現在の作業ボタンを検出しています…",
-            "● 再検出中", "info")
-        if ProbeWorkTarget(actionMode) {
-            UpdateRegistrationOverlay("1/4  作業場所を確認", "作業ボタンを認識しました。",
-                "● 作業ボタンを検出", "success")
-            return WaitRegistration(650)
-        }
-        UpdateRegistrationOverlay("車両登録　1/4",
-            "まだ見つかりません。W/A/S/Dで立ち位置、矢印キーで視点を調整してください。",
-            "作業ボタン未検出", "warning")
-        ; ここでの調整後の位置・視点が往路の起点になるため、調整断片自体は保存しません。
-        RecordMovementRoute("車両登録　1/4",
-            "作業ボタンが画面内に入るよう開始位置を調整します", false, false)
-    }
-    return false
-}
-
-CaptureStorageWithGuidedAdjustment(&route, &storageId, &storageType) {
-    global State
-    loop 8 {
-        UpdateRegistrationOverlay("車両登録　3/4", "「ストレージを開く」を検出しています…",
-            "● 再検出中", "info")
-        if OpenStorageAndCapture(&storageId, &storageType) {
-            UpdateRegistrationOverlay("車両登録　3/4", "車両とストレージを確認しました。",
-                "● ストレージを検出", "success")
-            return WaitRegistration(650)
-        }
-        UpdateRegistrationOverlay("車両登録　3/4",
-            "まだ見つかりません。車両後部へ寄り、矢印キーで下向きに合わせてください。",
-            "荷台ターゲット未検出", "warning")
-        adjustment := RecordMovementRoute("車両登録　3/4",
-            "ストレージが画面内に入るよう微調整します", false, false)
-        route := CombineRoutes(route, adjustment)
-        if !IsValidRoute(route)
-            throw Error("往路が長すぎるか、調整データを保存できませんでした。")
-    }
-    return false
-}
-
-ConfirmWorkWithGuidedAdjustment(&route, actionMode) {
-    global State
-    loop 8 {
-        UpdateRegistrationOverlay("車両登録　4/4", "元の作業ボタンを検出しています…",
-            "● 再検出中", "info")
-        if ProbeWorkTarget(actionMode) {
-            UpdateRegistrationOverlay("車両登録　4/4", "作業場所を確認しました。続いて往復テストを行います。",
-                "● 作業ボタンを検出", "success")
-            return WaitRegistration(650)
-        }
-        UpdateRegistrationOverlay("車両登録　4/4",
-            "まだ見つかりません。W/A/S/Dで立ち位置、矢印キーで視点を調整してください。",
-            "作業ボタン未検出", "warning")
-        adjustment := RecordMovementRoute("車両登録　4/4",
-            "作業ボタンが画面内に入るよう微調整します", false, false)
-        route := CombineRoutes(route, adjustment)
-        if !IsValidRoute(route)
-            throw Error("復路が長すぎるか、調整データを保存できませんでした。")
-    }
-    return false
-}
-
-VerifyVehicleRegistration(outboundRoute, returnRoute, storageId, storageType, actionMode) {
-    UpdateRegistrationFooter("往復テスト中は操作しないでください　　　Esc 中止")
-    UpdateRegistrationOverlay("確認テスト", "記録した移動で車両へ向かいます。操作せずお待ちください。",
-        "● 往路を再生", "info")
-    if !PlayRegistrationRoute(outboundRoute)
-        throw Error("保存前テストで車両まで移動できませんでした。ルートを登録し直してください。")
-
-    UpdateRegistrationOverlay("保存前の往復テスト", "登録した車両ストレージを照合しています…",
-        "● 車両を確認", "info")
-    if !OpenStorageAndCapture(&testStorageId, &testStorageType) {
-        ReleaseBackgroundTarget(true)
-        RunBackgroundBridge("close-inventory")
-        throw Error("保存前テストで車両ストレージを検出できませんでした。安全のため自動復路は再生しません。手動で作業場所へ戻ってください。")
-    }
-    if testStorageId != storageId || testStorageType != storageType {
-        ReleaseBackgroundTarget(true)
-        RunBackgroundBridge("close-inventory")
-        throw Error("保存前テストで別のストレージを検出しました。安全のため自動復路は再生しません。手動で作業場所へ戻ってください。")
-    }
-    verificationReleased := ReleaseBackgroundTarget(true)
-    verificationCloseResult := RunBackgroundBridge("close-inventory")
-    if verificationCloseResult != "CLOSED" || !verificationReleased
-        throw Error("保存前テストで荷台画面を閉じられませんでした。自動復路は再生しません。手動で作業場所へ戻ってください。")
-
-    UpdateRegistrationOverlay("保存前の往復テスト", "記録した復路と視点で作業場所へ戻ります。",
-        "● 復路を再生", "info")
-    if !PlayRegistrationRoute(returnRoute)
-        throw Error("保存前テストで作業場所へ戻れませんでした。入力を解除しました。")
-
-    UpdateRegistrationOverlay("保存前の往復テスト", "復帰先の作業ボタンを照合しています…",
-        "● 作業場所を確認", "info")
-    if !ProbeWorkTarget(actionMode)
-        throw Error("保存前テストの復帰位置で作業ボタンを検出できませんでした。")
-    UpdateRegistrationOverlay("登録完了", "往路・車両・復路・作業場所の実動作を確認しました。",
-        "● 往復テスト成功", "success")
-    if !WaitRegistration(850)
-        throw Error("登録を中止しました")
-}
-
-PlayRegistrationRoute(route) {
-    global State, Config
-    if !IsValidRoute(route) || !State.registrationActive || State.registrationCancelled
-        return false
-    if !EnsureDevConPort()
-        return false
-    port := State.lastDevConPort
-    routeStartedAt := MonotonicMs()
-    result := RunBackgroundBridgeCancelable(0,
-        "play-route-health", port, route, State.serverEpoch)
-    elapsedMs := MonotonicMs() - routeStartedAt
-    if !RegExMatch(result, "^ROUTE (29200|29300) (\d+)$", &parts)
-        return false
-    totalMs := parts[2] + 0
-    return totalMs = RouteTotalMs(route) && elapsedMs + 250 >= totalMs
-        && WaitRegistration(Config.routeSettleMs)
-}
-
-SetRegistrationViewMask(mask) {
-    global State
-    mask := Integer(mask)
-    if mask < 0 || mask > 15 || (mask & 3) = 3 || (mask & 12) = 12
-        return false
-    if mask = State.registrationViewMask
+    hasLocalRegistration := Config.vehicleStorageEnabled || Config.vehicleRegistered
+        || Config.vehicleStorageId != "" || Config.vehicleStorageType != ""
+        || Config.vehicleCompanionProtocol != 0 || Config.vehicleRegistrationId != ""
+        || Config.vehicleRouteFormat != 0 || Config.vehicleOutboundRoute != ""
+        || Config.vehicleReturnRoute != ""
+    if !hasLocalRegistration
         return true
-    if !EnsureDevConPort()
-        return false
-    port := State.lastDevConPort
-    result := RunBridgeForContext(0, "set-view", port, mask)
-    if result != "VIEW " port " " mask {
-        WriteDiagnostic("REGISTRATION_VIEW_ERROR=" result)
-        releaseResult := RunBackgroundBridge("deactivate-" port)
-        if releaseResult != "RELEASED" {
-            Sleep 75
-            releaseResult := RunBackgroundBridge("deactivate-" port)
-        }
-        WriteDiagnostic("REGISTRATION_VIEW_RELEASE=" releaseResult)
-        State.registrationViewMask := 0
+
+    previousProfile := SnapshotVehicleProfile()
+    Config.vehicleStorageEnabled := 0
+    Config.vehicleRegistered := 0
+    Config.vehicleStorageId := ""
+    Config.vehicleStorageType := ""
+    Config.vehicleCompanionProtocol := 0
+    Config.vehicleRegistrationId := ""
+    Config.vehicleRouteFormat := 0
+    Config.vehicleOutboundRoute := ""
+    Config.vehicleReturnRoute := ""
+    try SaveAllSettingsAtomically()
+    catch as err {
+        RestoreVehicleProfile(previousProfile)
+        diagnostic := err.Message
         return false
     }
-    State.registrationViewMask := mask
+    changed := true
+    WriteDiagnostic("REGISTRATION_LOCAL_RECONCILED serverRegistered="
+        (companionInfo.registered ? 1 : 0))
     return true
+}
+
+CommitCandidateRegistration(candidateId, expectedEpoch, &commitApplied,
+    &failureResult) {
+    global State
+    commitApplied := false
+    failureResult := "ERROR COMPANION_REGISTRATION_COMMIT_FAILED"
+    if !IsValidCompanionRegistrationId(candidateId)
+        return false
+
+    firstResult := RunCompanionCommandCancelable(0,
+        "commit-registration", candidateId)
+    failureResult := firstResult
+    firstAccepted := IsCommittedRegistrationResponse(firstResult, candidateId)
+    if firstAccepted {
+        commitApplied := true
+        if WaitForCommittedRegistrationStatus(candidateId, expectedEpoch, 3500)
+            return true
+        failureResult := "ERROR COMPANION_COMMIT_STATUS_UNCONFIRMED"
+        return false
+    }
+
+    ; ユーザーが中止したcommitは再送しません。最初の要求がserverへ届いていた
+    ; 可能性だけ、同epochの確定済みstatusを読み取って解決します。
+    if !CompanionCommitRetryAllowed(firstResult, State.registrationCancelled) {
+        if WaitForCommittedRegistrationStatus(candidateId, expectedEpoch, 1400) {
+            commitApplied := true
+            return true
+        }
+        return false
+    }
+
+    ; DONEだけを失った可能性をstatusで解決してから、同じ候補を一度だけ再送します。
+    if WaitForCommittedRegistrationStatus(candidateId, expectedEpoch, 1400) {
+        commitApplied := true
+        return true
+    }
+    if !CompanionCommitRetryAllowed(firstResult, State.registrationCancelled)
+        return false
+    retryResult := RunCompanionCommand("commit-registration", candidateId)
+    failureResult := retryResult
+    if IsCommittedRegistrationResponse(retryResult, candidateId)
+        commitApplied := true
+    if WaitForCommittedRegistrationStatus(candidateId, expectedEpoch, 3500) {
+        commitApplied := true
+        return true
+    }
+    if commitApplied
+        failureResult := "ERROR COMPANION_COMMIT_STATUS_UNCONFIRMED"
+    else
+        failureResult .= " retry_after=" firstResult
+    return false
+}
+
+CompanionCommitRetryAllowed(firstResult, registrationCancelled) {
+    return !registrationCancelled && Trim(firstResult) != "ERROR CANCELLED"
+}
+
+IsCommittedRegistrationResponse(result, candidateId) {
+    return CompanionCommandSucceeded(result, "commit-registration", &commitId,
+        &commitCode, &commitNetworkId)
+        && commitCode = "REGISTRATION_COMMITTED"
+        && commitId = candidateId && commitNetworkId > 0
+}
+
+WaitForCommittedRegistrationStatus(candidateId, expectedEpoch, timeoutMs) {
+    deadline := MonotonicMs() + timeoutMs
+    loop {
+        if QueryCompanionStatus(&companionInfo, expectedEpoch)
+            && companionInfo.registered && companionInfo.status = "ready"
+            && companionInfo.transactionSupported
+            && !companionInfo.transactionPending
+            && companionInfo.serverRegistrationSynchronized
+            && companionInfo.registrationId = candidateId
+            && companionInfo.lastCode = "REGISTRATION_COMMITTED"
+            return true
+        if MonotonicMs() >= deadline
+            return false
+        Sleep 180
+    }
+}
+
+AbortCandidateRegistration(candidateId, expectedEpoch, previousRegistration,
+    &diagnostic) {
+    diagnostic := ""
+    if !IsValidCompanionRegistrationId(candidateId) {
+        diagnostic := "invalid candidate id"
+        return false
+    }
+    firstResult := RunCompanionCommand("abort-registration", candidateId)
+    firstAccepted := IsAbortedRegistrationResponse(firstResult)
+    if WaitForAbortedRegistrationStatus(expectedEpoch, previousRegistration,
+        firstAccepted ? 3500 : 1400)
+        return true
+    if firstAccepted {
+        diagnostic := "abort status was not confirmed after " firstResult
+        return false
+    }
+
+    ; 応答だけを失った場合に限り、idempotentなabortを同じ候補で一度再送します。
+    retryResult := RunCompanionCommand("abort-registration", candidateId)
+    retryAccepted := IsAbortedRegistrationResponse(retryResult)
+    if WaitForAbortedRegistrationStatus(expectedEpoch, previousRegistration, 3500)
+        return true
+    diagnostic := retryAccepted
+        ? "abort status was not confirmed after retry"
+        : retryResult " retry_after=" firstResult
+    return false
+}
+
+IsAbortedRegistrationResponse(result) {
+    return CompanionCommandSucceeded(result, "abort-registration", &abortId,
+        &abortCode, &abortNetworkId) && abortCode = "REGISTRATION_ABORTED"
+}
+
+AbortStaleCandidateRegistration(candidateId, expectedEpoch, &restoredInfo,
+    &diagnostic) {
+    restoredInfo := 0
+    diagnostic := ""
+    if !IsValidCompanionRegistrationId(candidateId) {
+        diagnostic := "invalid stale candidate id"
+        return false
+    }
+    firstResult := RunCompanionCommand("abort-registration", candidateId)
+    firstAccepted := IsAbortedRegistrationResponse(firstResult)
+    if WaitForStaleAbortedRegistrationStatus(expectedEpoch,
+        firstAccepted ? 3500 : 1400, &restoredInfo)
+        return true
+    if firstAccepted {
+        diagnostic := "stale abort status was not confirmed after " firstResult
+        return false
+    }
+
+    ; DONEを失った不確定状態だけ、同じ候補IDを一度だけ再送して解決します。
+    retryResult := RunCompanionCommand("abort-registration", candidateId)
+    retryAccepted := IsAbortedRegistrationResponse(retryResult)
+    if WaitForStaleAbortedRegistrationStatus(expectedEpoch, 3500, &restoredInfo)
+        return true
+    diagnostic := retryAccepted
+        ? "stale abort status was not confirmed after retry"
+        : retryResult " retry_after=" firstResult
+    return false
+}
+
+WaitForStaleAbortedRegistrationStatus(expectedEpoch, timeoutMs, &restoredInfo) {
+    restoredInfo := 0
+    deadline := MonotonicMs() + timeoutMs
+    loop {
+        if QueryCompanionStatus(&live, expectedEpoch)
+            && live.transactionSupported && !live.transactionPending
+            && live.serverRegistrationSynchronized
+            && live.status = "ready" && live.lastCode = "REGISTRATION_ABORTED" {
+            restoredInfo := live
+            return true
+        }
+        if MonotonicMs() >= deadline
+            return false
+        Sleep 180
+    }
+}
+
+WaitForAbortedRegistrationStatus(expectedEpoch, previousRegistration, timeoutMs) {
+    deadline := MonotonicMs() + timeoutMs
+    loop {
+        if QueryCompanionStatus(&restoredCompanion, expectedEpoch)
+            && restoredCompanion.status = "ready"
+            && restoredCompanion.transactionSupported
+            && !restoredCompanion.transactionPending
+            && restoredCompanion.serverRegistrationSynchronized
+            && restoredCompanion.lastCode = "REGISTRATION_ABORTED" {
+            if previousRegistration.registered {
+                if restoredCompanion.registered
+                    && restoredCompanion.registrationId = previousRegistration.registrationId
+                    return true
+            } else if !restoredCompanion.registered {
+                return true
+            }
+        }
+        if MonotonicMs() >= deadline
+            return false
+        Sleep 180
+    }
+}
+
+WaitForCompanionRegistration(initialSequence, expectedCompanionEpoch, expectedServerEpoch,
+    &companionInfo, &failureResult) {
+    global State
+    companionInfo := 0
+    failureResult := "ERROR COMPANION_REGISTRATION_TIMEOUT"
+    deadline := MonotonicMs() + 40000
+    nextServerCheckAt := 0
+    statusFailures := 0
+    loop {
+        if State.registrationCancelled {
+            failureResult := "ERROR COMPANION_REGISTRATION_CANCELLED"
+            return false
+        }
+        if !State.targetHwnd || !State.targetPid || !IsTargetIdentityAlive() {
+            failureResult := "ERROR TARGET_CLOSED"
+            return false
+        }
+        now := MonotonicMs()
+        if now >= deadline
+            return false
+        if now >= nextServerCheckAt {
+            healthResult := RunBackgroundBridgeCancelable(0, "health")
+            if !ParseServerHealth(healthResult, &liveServerEpoch)
+                || liveServerEpoch != expectedServerEpoch {
+                failureResult := "ERROR COMPANION_SESSION_CHANGED"
+                return false
+            }
+            nextServerCheckAt := MonotonicMs() + 2500
+        }
+        if QueryCompanionStatus(&live, expectedCompanionEpoch, 0) {
+            statusFailures := 0
+            if !live.serverRegistrationSynchronized {
+                failureResult := "ERROR COMPANION_SERVER_REGISTRATION_SYNC_PENDING"
+                return false
+            }
+            if live.sequence > initialSequence && live.registered
+                && live.transactionSupported && live.transactionPending
+                && live.serverRegistrationSynchronized
+                && live.status = "ready" && live.lastCode = "REGISTERED" {
+                companionInfo := live
+                return true
+            }
+            if live.sequence > initialSequence
+                && (live.status = "cancelled" || live.status = "error") {
+                failureResult := "ERROR COMPANION_" live.lastCode
+                return false
+            }
+        } else {
+            statusFailures += 1
+            if statusFailures >= 3 {
+                failureResult := "ERROR COMPANION_SESSION_CHANGED"
+                return false
+            }
+        }
+        Sleep 180
+    }
+}
+
+ValidateRegistrationEpochs(expectedServerEpoch, expectedCompanionEpoch) {
+    healthResult := RunBackgroundBridgeCancelable(0, "health")
+    if !ParseServerHealth(healthResult, &serverEpoch) || serverEpoch != expectedServerEpoch
+        return false
+    return QueryCompanionStatus(&companionInfo, expectedCompanionEpoch, 0)
+        && companionInfo.serverRegistrationSynchronized
+}
+
+CaptureCompanionStorage(&storageId, &storageType, expectedGeneration) {
+    global State
+    storageId := ""
+    storageType := ""
+    deadline := MonotonicMs() + 5000
+    while MonotonicMs() < deadline {
+        if !IsBridgeOperationContextValid(expectedGeneration)
+            return false
+        captureResult := RunBridgeForContext(expectedGeneration, "capture-storage")
+        State.lastStorageProbeResult := captureResult
+        if ParseStorageCapture(captureResult, &storageInfo) {
+            storageId := storageInfo.id
+            storageType := storageInfo.type
+            return true
+        }
+        Sleep 140
+    }
+    return false
+}
+
+OpenCompanionCargoAndCapture(registrationId, expectedGeneration, &storageId,
+    &storageType, &failureResult) {
+    global State
+    storageId := ""
+    storageType := ""
+    failureResult := ""
+    cargoResult := RunCompanionCommandCancelable(expectedGeneration,
+        "open-cargo", registrationId)
+    if CompanionCommandSucceeded(cargoResult, "open-cargo", &cargoId, &cargoCode,
+        &cargoNetworkId) {
+        if (cargoCode != "CARGO_READY" && cargoCode != "CARGO_OPENED"
+            && cargoCode != "CARGO_OPEN_REQUESTED")
+            || cargoId != registrationId || cargoNetworkId <= 0 {
+            failureResult := "ERROR COMPANION_PROTOCOL"
+            return false
+        }
+        if CaptureCompanionStorage(&storageId, &storageType, expectedGeneration)
+            return true
+        failureResult := "ERROR COMPANION_CARGO_CAPTURE"
+        return false
+    }
+    if Trim(cargoResult) = "ERROR COMPANION_UNSUPPORTED" {
+        ; arrival_only構成だけは、companionが所有権確認済みの登録車両後端へ
+        ; 到着した後に限り、既存の構造化target操作で荷台を開きます。
+        if OpenStorageAndCapture(&storageId, &storageType, expectedGeneration)
+            return true
+        failureResult := State.lastStorageProbeResult
+            ? State.lastStorageProbeResult : cargoResult
+        return false
+    }
+    failureResult := cargoResult
+    return false
 }
 
 CurrentPhysicalMovementMask() {
@@ -1981,22 +2258,6 @@ CurrentUnsupportedRegistrationKey() {
             return keyName
     }
     return ""
-}
-
-AppendRouteSegments(segments, duration, mask) {
-    duration := Round(duration)
-    while duration > 3000 {
-        segments.Push("3000:" mask)
-        duration -= 3000
-    }
-    if duration >= 25
-        segments.Push(duration ":" mask)
-}
-
-CombineRoutes(firstRoute, secondRoute) {
-    firstRoute := Trim(String(firstRoute), " ,")
-    secondRoute := Trim(String(secondRoute), " ,")
-    return !firstRoute ? secondRoute : !secondRoute ? firstRoute : firstRoute "," secondRoute
 }
 
 ProbeWorkTarget(actionMode, expectedGeneration := 0) {
@@ -2139,10 +2400,29 @@ DeleteVehicleRegistration(*) {
         return
     }
     ResetVehicleDeleteConfirmation()
+    State.vehicleStatusLabel.Text := "ゲーム内の車両登録を削除しています…"
+    if !QueryCompanionStatus(&companionInfo)
+        || companionInfo.epoch = "" || !CompanionProfileMatches(companionInfo) {
+        RefreshVehicleUi()
+        State.vehicleStatusLabel.Text := "補助リソース上の同じ登録車両を確認できないため削除しませんでした"
+        return
+    }
+    clearResult := RunCompanionCommand("clear-registration", Config.vehicleRegistrationId)
+    if !CompanionCommandSucceeded(clearResult, "clear-registration", &clearedId,
+        &clearCode, &clearNetworkId) || clearCode != "REGISTRATION_CLEARED"
+        || clearedId != "" || clearNetworkId != 0 {
+        WriteDiagnostic("VEHICLE_CLEAR_ERROR=" clearResult)
+        RefreshVehicleUi()
+        State.vehicleStatusLabel.Text := CompanionFailureMessage(clearResult,
+            "ゲーム内の車両登録を削除できませんでした")
+        return
+    }
     Config.vehicleStorageEnabled := 0
     Config.vehicleRegistered := 0
     Config.vehicleStorageId := ""
     Config.vehicleStorageType := ""
+    Config.vehicleCompanionProtocol := 0
+    Config.vehicleRegistrationId := ""
     Config.vehicleRouteFormat := 0
     Config.vehicleOutboundRoute := ""
     Config.vehicleReturnRoute := ""
@@ -2152,6 +2432,7 @@ DeleteVehicleRegistration(*) {
         return
     }
     State.lastStorageResult := "登録なし"
+    QueryCompanionStatus(&clearedCompanion, companionInfo.epoch)
     RefreshVehicleUi()
 }
 
@@ -2652,12 +2933,12 @@ StartMining(*) {
             return
         }
         if !IsValidVehicleProfile(Config) {
-            State.statusLabel.Text := "車両と往復ルートを登録してから開始してください"
+            State.statusLabel.Text := "ゲーム内連携から車両を登録してから開始してください"
             ShowPage("vehicle")
             return
         }
         if Config.vehicleWorkMode != Config.actionMode {
-            State.statusLabel.Text := "この作業用の車両ルートを登録し直してください"
+            State.statusLabel.Text := "この作業用に車両を登録し直してください"
             ShowPage("vehicle")
             return
         }
@@ -2682,6 +2963,32 @@ StartMining(*) {
         State.connectionLabel.Text := "FiveM　サーバー未接続"
         WriteDiagnostic("SERVER_PREFLIGHT_ERROR=" preflightHealth)
         return
+    }
+    companionEpoch := ""
+    if Config.vehicleStorageEnabled {
+        if !QueryCompanionStatus(&preflightCompanion) {
+            State.statusLabel.Text := "●  登録車両のゲーム内連携を確認できないため開始しません"
+            ShowPage("vehicle")
+            return
+        }
+        if !preflightCompanion.serverRegistrationSynchronized {
+            State.statusLabel.Text := "●  サーバーの車両登録同期が終わるまでお待ちください"
+            ShowPage("vehicle")
+            return
+        }
+        if preflightCompanion.transactionPending {
+            State.statusLabel.Text := "●  未確定の車両候補があります。車両画面で登録し直してください"
+            ShowPage("vehicle")
+            return
+        }
+        if !CompanionProfileMatches(preflightCompanion) {
+            State.statusLabel.Text := preflightCompanion.transactionSupported
+                ? "●  登録車両がサーバー側と一致しないため開始しません"
+                : "●  FiveM補助リソースの更新が必要です"
+            ShowPage("vehicle")
+            return
+        }
+        companionEpoch := preflightCompanion.epoch
     }
 
     Critical "On"
@@ -2717,6 +3024,8 @@ StartMining(*) {
     State.capacityProbeFailures := 0
     State.serverEpoch := serverEpoch
     State.serverHealthFailures := 0
+    State.companionEpoch := companionEpoch
+    State.companionHealthFailures := 0
     State.nextServerHealthAt := MonotonicMs() + Config.serverHealthIntervalMs
     State.lastInventoryWeight := 0
     State.lastInventoryMaxWeight := 0
@@ -2755,6 +3064,30 @@ StartMining(*) {
     }
 
     if Config.vehicleStorageEnabled && IsCurrentRun(runGeneration) {
+        State.statusLabel.Text := "現在の作業地点をゲーム内連携へ登録しています"
+        if !ProbeWorkTarget(State.runMode, runGeneration) {
+            StopMining()
+            State.statusLabel.Text := "作業ボタンを確認できないため開始しませんでした"
+            ShowPage("vehicle")
+            return
+        }
+        anchorResult := RunCompanionCommandCancelable(runGeneration, "set-work-anchor")
+        if !CompanionCommandSucceeded(anchorResult, "set-work-anchor", &anchorId,
+            &anchorCode, &anchorNetworkId) || anchorCode != "WORK_ANCHOR_SET"
+            || anchorId != Config.vehicleRegistrationId || anchorNetworkId <= 0 {
+            WriteDiagnostic("WORK_ANCHOR_ERROR=" anchorResult)
+            StopMining()
+            State.statusLabel.Text := CompanionFailureMessage(anchorResult,
+                "作業地点を登録できないため開始しませんでした")
+            ShowPage("vehicle")
+            return
+        }
+        if !ValidateAutomationEpochCheckpoint(runGeneration, "work_anchor") {
+            StopMining()
+            State.statusLabel.Text := "作業地点の登録中に接続が変わったため開始しませんでした"
+            ShowPage("vehicle")
+            return
+        }
         State.statusLabel.Text := "開始時の所持品を保護しています"
         snapshotResult := RunBackgroundBridge("inventory-snapshot")
         if !ParseInventorySnapshot(snapshotResult, &inventoryInfo) {
@@ -2795,7 +3128,13 @@ StartMining(*) {
 StopMining(*) {
     global State
 
+    if State.registrationActive && !State.running {
+        CancelVehicleRegistration()
+        return
+    }
+
     previousPhase := State.automationPhase
+    cancelCompanion := State.companionReady || State.companionEpoch
     State.running := false
     State.generation += 1
     State.automationPhase := "stopped"
@@ -2813,11 +3152,15 @@ StopMining(*) {
     State.timerFn := 0
 
     CancelActiveBridgeProcess()
+    if cancelCompanion
+        RunCompanionCommand("cancel")
     ReleaseAllInputs()
     ReleaseBackgroundTarget(true)
     ; 収納中の停止はUIを閉じ、bridge側の次スタック処理もfail-closedさせます。
     if previousPhase = "depositing"
         RunBackgroundBridge("close-inventory")
+    State.companionEpoch := ""
+    State.companionHealthFailures := 0
     State.mainButton.Text := "自動操作を開始"
     State.actionControl.Enabled := true
     SetConfigurationEnabled(true)
@@ -2885,6 +3228,26 @@ ValidateServerEpochCheckpoint(expectedGeneration, checkpoint) {
     return true
 }
 
+ValidateCompanionEpochCheckpoint(expectedGeneration, checkpoint) {
+    global State, Config
+    if !Config.vehicleStorageEnabled
+        return true
+    if !IsCurrentRun(expectedGeneration) || !State.companionEpoch
+        return false
+    if !QueryCompanionStatus(&companionInfo, State.companionEpoch,
+        expectedGeneration) || !CompanionProfileMatches(companionInfo) {
+        WriteDiagnostic("COMPANION_CHECKPOINT_ERROR point=" checkpoint
+            " expected=" State.companionEpoch " status=" State.companionStatus)
+        return false
+    }
+    return true
+}
+
+ValidateAutomationEpochCheckpoint(expectedGeneration, checkpoint) {
+    return ValidateServerEpochCheckpoint(expectedGeneration, checkpoint)
+        && ValidateCompanionEpochCheckpoint(expectedGeneration, checkpoint)
+}
+
 IsTargetIdentityAlive() {
     global State
     if !State.targetHwnd || !State.targetPid || !WinExist("ahk_id " State.targetHwnd)
@@ -2918,6 +3281,32 @@ MaybeHandleServerHealth(expectedGeneration) {
         }
         State.serverEpoch := epoch
         State.serverHealthFailures := 0
+        if Config.vehicleStorageEnabled {
+            if QueryCompanionStatus(&companionInfo, State.companionEpoch,
+                expectedGeneration) {
+                State.companionHealthFailures := 0
+                if !CompanionProfileMatches(companionInfo) {
+                    WriteDiagnostic("COMPANION_PROFILE_CHANGED status=" companionInfo.status)
+                    StopAutomationWithFault("登録車両の連携状態が変わったため自動停止しました",
+                        "vehicle")
+                    return true
+                }
+            } else {
+                State.companionHealthFailures += 1
+                State.nextServerHealthAt := now + 900
+                WriteDiagnostic("COMPANION_HEALTH_ERROR attempt="
+                    State.companionHealthFailures " status=" State.companionStatus)
+                if State.companionHealthFailures >= 3 {
+                    StopAutomationWithFault("補助リソースの再起動または切断を検知したため自動停止しました",
+                        "vehicle")
+                    return true
+                }
+                State.statusLabel.Text := "ゲーム内連携を再確認中（"
+                    State.companionHealthFailures "/3）"
+                ScheduleNext(expectedGeneration, 1000)
+                return true
+            }
+        }
         State.nextServerHealthAt := now + Config.serverHealthIntervalMs
         State.connectionLabel.Text := "FiveM　サーバー接続中"
         State.automationPhase := "working"
@@ -2979,16 +3368,16 @@ MaybeHandleVehicleCapacity(expectedGeneration) {
         " weight=" inventoryInfo.weight " max=" inventoryInfo.maxWeight
         " free=" freeWeight " used=" inventoryInfo.used " slots=" inventoryInfo.slots)
     if !ProbeWorkTarget(State.runMode, expectedGeneration) {
-        ; 再出現待ちや洗浄・砂金の位置ずれ中に、登録起点前提のルートを
-        ; 再生しません。容量不足中は追加採集も止めたまま再確認します。
+        ; 再出現待ちや洗浄・砂金の位置ずれ中には車両移動を始めません。
+        ; 容量不足中は追加採集も止めたまま作業対象を再確認します。
         State.workpointProbeFailures += 1
         State.nextCapacityCheckAt := 0
         State.automationPhase := "verify_workpoint"
-        State.statusLabel.Text := "収納前に登録した作業位置を確認中（"
+        State.statusLabel.Text := "収納前に現在の作業位置を確認中（"
             State.workpointProbeFailures "/10）"
         WriteDiagnostic("VEHICLE_WORKPOINT_PENDING attempt=" State.workpointProbeFailures)
         if State.workpointProbeFailures >= 10 {
-            StopAutomationWithFault("登録した作業位置を確認できないため安全停止しました", "vehicle")
+            StopAutomationWithFault("現在の作業位置を確認できないため安全停止しました", "vehicle")
             return true
         }
         ScheduleNext(expectedGeneration, 850)
@@ -3142,52 +3531,59 @@ InventorySpecToRows(spec) {
 
 RunVehicleStorageCycle(expectedGeneration) {
     global State, Config
-    State.automationPhase := "route_to_vehicle"
-    State.statusLabel.Text := "車両へ移動しています"
+    State.automationPhase := "navigate_vehicle"
+    State.statusLabel.Text := "登録車両の現在位置へ移動しています"
     WriteDiagnostic("VEHICLE_TRIP_START trip=" (State.storageTrips + 1))
-    if !PlayRegisteredRoute(Config.vehicleOutboundRoute, expectedGeneration, "車両へ移動中") {
-        if IsCurrentRun(expectedGeneration)
-            StopAutomationWithFault("車両への移動を完了できないため安全停止しました", "vehicle")
+    if !ValidateAutomationEpochCheckpoint(expectedGeneration, "vehicle_departure") {
+        StopAutomationWithFault("移動前の接続状態が変わったため安全停止しました", "vehicle")
         return
     }
-    if !ValidateServerEpochCheckpoint(expectedGeneration, "vehicle_arrival") {
-        StopAutomationWithFault("移動中のサーバー再起動または切断を検知したため自動停止しました", "vehicle")
+
+    goResult := RunCompanionCommandCancelable(expectedGeneration,
+        "go-vehicle", Config.vehicleRegistrationId)
+    if !CompanionCommandSucceeded(goResult, "go-vehicle", &goId, &goCode,
+        &goNetworkId) || goCode != "ARRIVED_VEHICLE"
+        || goId != Config.vehicleRegistrationId || goNetworkId <= 0 {
+        if IsCurrentRun(expectedGeneration)
+            StopAutomationWithFault(CompanionFailureMessage(goResult,
+                "登録車両の現在位置へ移動できないため安全停止しました"), "vehicle")
+        return
+    }
+    if !ValidateAutomationEpochCheckpoint(expectedGeneration, "vehicle_arrival") {
+        StopAutomationWithFault("移動中のサーバー再起動または再接続を検知したため自動停止しました",
+            "vehicle")
         return
     }
 
     storageOpened := false
     depositOk := false
     failureMessage := ""
-    storageReturnCorrection := ""
-    locatorFailure := ""
     inventoryCloseResult := ""
     inputReleaseOk := false
     try {
         if !IsCurrentRun(expectedGeneration)
             return
-        State.automationPhase := "locate_storage"
-        State.statusLabel.Text := "車両後部の荷台ターゲットを探索しています"
-        if !LocateRegisteredStorage(&storageId, &storageType,
-            &storageReturnCorrection, &locatorFailure, expectedGeneration) {
-            failureMessage := locatorFailure = "wrong_storage"
-                ? "別の車両ストレージを検出したため何も収納しませんでした"
-                : locatorFailure = "ambiguous"
-                    ? "荷台候補が複数あるため安全停止しました"
-                : locatorFailure = "route_error"
-                    ? "荷台探索中の位置を保証できないため安全停止しました"
-                    : "登録車両の荷台を安全に特定できませんでした"
+        State.automationPhase := "open_vehicle_cargo"
+        State.statusLabel.Text := "登録車両の荷台を開いています"
+        if !OpenCompanionCargoAndCapture(Config.vehicleRegistrationId,
+            expectedGeneration, &storageId, &storageType, &cargoFailure) {
+            failureMessage := CompanionFailureMessage(cargoFailure,
+                "登録車両の荷台を安全に開けませんでした")
+            WriteDiagnostic("VEHICLE_CARGO_ERROR=" cargoFailure)
+        } else if storageId != Config.vehicleStorageId
+            || storageType != Config.vehicleStorageType {
+            failureMessage := "登録済みとは異なるストレージを検出したため何も収納しませんでした"
+            WriteDiagnostic("VEHICLE_CARGO_MISMATCH id=" storageId " type=" storageType)
         } else {
             storageOpened := true
-            if !ValidateServerEpochCheckpoint(expectedGeneration, "before_deposit") {
-                failureMessage := "収納直前にサーバー再起動または切断を検知したため停止しました"
-                locatorFailure := "server_session"
+            if !ValidateAutomationEpochCheckpoint(expectedGeneration, "before_deposit") {
+                failureMessage := "収納直前に接続状態が変わったため停止しました"
             } else {
                 State.automationPhase := "depositing"
                 State.statusLabel.Text := "今回増えた採集品だけを収納しています"
                 depositResult := RunBackgroundBridgeCancelable(expectedGeneration,
-                    "deposit-delta",
-                    Config.vehicleStorageId, Config.vehicleStorageType,
-                    State.inventoryBaseline)
+                    "deposit-delta", Config.vehicleStorageId,
+                    Config.vehicleStorageType, State.inventoryBaseline)
                 if RegExMatch(depositResult, "^DEPOSITED (\d+) (\d+)$", &depositParts)
                     && depositParts[1] + 0 > 0 {
                     postDepositResult := RunBackgroundBridgeCancelable(expectedGeneration,
@@ -3198,8 +3594,6 @@ RunVehicleStorageCycle(expectedGeneration) {
                         failureMessage := "収納後の所持品を確認できなかったため停止します"
                         WriteDiagnostic("VEHICLE_DEPOSIT_VERIFY_ERROR=" postDepositResult)
                     } else {
-                        ; 消費済みの開始時アイテムを将来の採集品と取り違えないよう、
-                        ; 正常収納後の残量を次回の保護基準にします。
                         State.inventoryBaseline := postDepositInfo.items
                         UpdateInventoryCapacityState(postDepositInfo)
                         depositOk := true
@@ -3215,8 +3609,6 @@ RunVehicleStorageCycle(expectedGeneration) {
         }
     } catch as err {
         failureMessage := "収納処理でエラーが発生しました"
-        if !storageOpened
-            locatorFailure := "route_error"
         WriteDiagnostic("VEHICLE_CYCLE_ERROR=" err.Message)
     } finally {
         inputReleaseOk := ReleaseBackgroundTarget(true)
@@ -3234,32 +3626,28 @@ RunVehicleStorageCycle(expectedGeneration) {
         StopAutomationWithFault("荷台操作の入力解除を確認できないため安全停止しました", "vehicle")
         return
     }
-    if storageOpened && !ValidateServerEpochCheckpoint(expectedGeneration, "after_deposit") {
-        StopAutomationWithFault("収納中のサーバー再起動または切断を検知したため自動停止しました", "vehicle")
+    if !ValidateAutomationEpochCheckpoint(expectedGeneration, "after_cargo") {
+        StopAutomationWithFault("収納中のサーバー再起動または再接続を検知したため自動停止しました",
+            "vehicle")
         return
     }
-    if locatorFailure {
-        StopAutomationWithFault(failureMessage, "vehicle")
+
+    State.automationPhase := "return_work"
+    State.statusLabel.Text := "登録した作業地点へ戻っています"
+    returnResult := RunCompanionCommandCancelable(expectedGeneration, "return-work")
+    if !CompanionCommandSucceeded(returnResult, "return-work", &returnId,
+        &returnCode, &returnNetworkId) || returnCode != "ARRIVED_WORK"
+        || returnId != Config.vehicleRegistrationId || returnNetworkId <= 0 {
+        StopAutomationWithFault(CompanionFailureMessage(returnResult,
+            "登録した作業地点へ戻れないため安全停止しました"), "vehicle")
         return
     }
-    if storageReturnCorrection {
-        State.automationPhase := "return_to_route_anchor"
-        State.statusLabel.Text := "探索位置から登録ルートへ戻しています"
-        if !PlayRegisteredRoute(storageReturnCorrection, expectedGeneration,
-            "荷台探索のずれを戻しています") {
-            StopAutomationWithFault("荷台探索位置から戻れないため安全停止しました", "vehicle")
-            return
-        }
-    }
-    State.automationPhase := "route_to_work"
-    State.statusLabel.Text := "作業場所へ戻っています"
-    returned := PlayRegisteredRoute(Config.vehicleReturnRoute, expectedGeneration, "作業場所へ復帰中")
-    if !IsCurrentRun(expectedGeneration)
-        return
-    if !returned {
-        StopAutomationWithFault("作業場所へ戻れないため安全停止しました", "vehicle")
+    if !ValidateAutomationEpochCheckpoint(expectedGeneration, "work_return") {
+        StopAutomationWithFault("復帰中のサーバー再起動または再接続を検知したため自動停止しました",
+            "vehicle")
         return
     }
+
     State.automationPhase := "verify_workpoint"
     State.statusLabel.Text := "作業位置を確認しています"
     if !ProbeWorkTarget(State.runMode, expectedGeneration) {
@@ -3267,7 +3655,8 @@ RunVehicleStorageCycle(expectedGeneration) {
         return
     }
     if !depositOk {
-        StopAutomationWithFault(failureMessage ? failureMessage : "収納できなかったため停止しました", "vehicle")
+        StopAutomationWithFault(failureMessage
+            ? failureMessage : "収納できなかったため停止しました", "vehicle")
         return
     }
 
@@ -3285,187 +3674,6 @@ RunVehicleStorageCycle(expectedGeneration) {
     State.statusLabel.Text := "収納完了。作業を再開します"
     WriteDiagnostic("VEHICLE_TRIP_COMPLETE trip=" State.storageTrips)
     ScheduleNext(expectedGeneration, 900)
-}
-
-LocateRegisteredStorage(&storageId, &storageType, &returnCorrection,
-    &failureCode, expectedGeneration) {
-    global State, Config
-    storageId := ""
-    storageType := ""
-    returnCorrection := ""
-    failureCode := ""
-
-    if OpenStorageAndCapture(&candidateId, &candidateType, expectedGeneration) {
-        if candidateId = Config.vehicleStorageId
-            && candidateType = Config.vehicleStorageType {
-            storageId := candidateId
-            storageType := candidateType
-            WriteDiagnostic("VEHICLE_SEARCH anchor=matched")
-            return true
-        }
-        WriteDiagnostic("VEHICLE_SEARCH anchor=wrong_storage")
-        if !CloseInventoryAfterStorageFailure("WRONG STORAGE") {
-            failureCode := "route_error"
-            return false
-        }
-        failureCode := "wrong_storage"
-        return false
-    }
-    initialProbeFailure := StorageProbeFailureCode()
-    if initialProbeFailure {
-        failureCode := initialProbeFailure
-        WriteDiagnostic("VEHICLE_SEARCH anchor_probe=" State.lastStorageProbeResult)
-        return false
-    }
-
-    searchRoutes := VehicleSearchRoutes(Config.vehicleSearchPulseMs)
-    for index, correctionRoute in searchRoutes {
-        if !IsCurrentRun(expectedGeneration)
-            return false
-        inverseRoute := ReverseRoute(correctionRoute)
-        if !inverseRoute {
-            failureCode := "route_error"
-            return false
-        }
-        State.statusLabel.Text := "荷台ターゲットを再探索中（" index "/" searchRoutes.Length "）"
-        if !PlayRegisteredRoute(correctionRoute, expectedGeneration,
-            "車両後部を探索中") {
-            failureCode := "route_error"
-            return false
-        }
-
-        matched := false
-        openedCandidate := OpenStorageAndCapture(&candidateId, &candidateType,
-            expectedGeneration)
-        if openedCandidate {
-            if candidateId = Config.vehicleStorageId
-                && candidateType = Config.vehicleStorageType {
-                matched := true
-                storageId := candidateId
-                storageType := candidateType
-                returnCorrection := inverseRoute
-                WriteDiagnostic("VEHICLE_SEARCH matched_attempt=" index)
-            } else {
-                WriteDiagnostic("VEHICLE_SEARCH wrong_storage_attempt=" index)
-                if !CloseInventoryAfterStorageFailure("WRONG STORAGE") {
-                    failureCode := "route_error"
-                    return false
-                }
-                if !PlayRegisteredRoute(inverseRoute, expectedGeneration,
-                    "探索位置を戻しています") {
-                    failureCode := "route_error"
-                    return false
-                }
-                failureCode := "wrong_storage"
-                return false
-            }
-        } else {
-            probeFailure := StorageProbeFailureCode()
-            if probeFailure {
-                if !CloseInventoryAfterStorageFailure(State.lastStorageProbeResult) {
-                    failureCode := "route_error"
-                    return false
-                }
-                if !PlayRegisteredRoute(inverseRoute, expectedGeneration,
-                    "探索位置を戻しています") {
-                    failureCode := "route_error"
-                    return false
-                }
-                failureCode := probeFailure
-                WriteDiagnostic("VEHICLE_SEARCH probe_stop=" State.lastStorageProbeResult)
-                return false
-            }
-        }
-        if matched
-            return true
-        if !PlayRegisteredRoute(inverseRoute, expectedGeneration,
-            "探索位置を戻しています") {
-            failureCode := "route_error"
-            return false
-        }
-    }
-    failureCode := "not_found"
-    WriteDiagnostic("VEHICLE_SEARCH exhausted=" searchRoutes.Length)
-    return false
-}
-
-StorageProbeFailureCode() {
-    global State
-    if State.lastStorageProbeResult = "AMBIGUOUS STORAGE"
-        return "ambiguous"
-    if InStr(State.lastStorageProbeResult, "ERROR ") = 1
-        return "route_error"
-    return ""
-}
-
-VehicleSearchRoutes(pulseMs) {
-    pulseMs := Min(350, Max(150, Round(pulseMs)))
-    longerMs := Min(500, pulseMs + 140)
-    routes := []
-    ; 原点から毎回短く出て必ず戻るため、探索のたびに位置ずれを累積しません。
-    ; まず立ち位置を探し、その後だけdirect-lookを組み合わせて、車両位置と
-    ; カメラ方向の小さなずれを両方カバーします。登録ID一致までは収納しません。
-    for mask in [1, 2, 4, 8, 5, 9, 6, 10]
-        routes.Push(pulseMs ":" mask)
-    for mask in [17, 34, 68, 136, 65, 129, 66, 130]
-        routes.Push(pulseMs ":" mask)
-    for mask in [1, 2, 4, 8]
-        routes.Push(longerMs ":" mask)
-    return routes
-}
-
-ReverseRoute(route) {
-    if !IsValidRoute(route, false, 25)
-        return ""
-    steps := StrSplit(route, ",")
-    reversed := ""
-    loop steps.Length {
-        step := steps[steps.Length - A_Index + 1]
-        if !RegExMatch(step, "^(\d{2,4}):(\d{1,3})$", &parts)
-            return ""
-        mask := parts[2] + 0
-        inverseMask := 0
-        if mask & 1
-            inverseMask |= 2
-        if mask & 2
-            inverseMask |= 1
-        if mask & 4
-            inverseMask |= 8
-        if mask & 8
-            inverseMask |= 4
-        if mask & 16
-            inverseMask |= 32
-        if mask & 32
-            inverseMask |= 16
-        if mask & 64
-            inverseMask |= 128
-        if mask & 128
-            inverseMask |= 64
-        reversed .= (reversed ? "," : "") parts[1] ":" inverseMask
-    }
-    return IsValidRoute(reversed, false, 25) ? reversed : ""
-}
-
-PlayRegisteredRoute(route, expectedGeneration, statusText) {
-    global State, Config
-    if !IsValidRoute(route) || !IsCurrentRun(expectedGeneration)
-        return false
-    if !EnsureDevConPort()
-        return false
-    port := State.lastDevConPort
-    State.statusLabel.Text := statusText
-    routeStartedAt := MonotonicMs()
-    routeResult := RunBackgroundBridgeCancelable(expectedGeneration,
-        "play-route-health", port, route, State.serverEpoch)
-    routeElapsedMs := MonotonicMs() - routeStartedAt
-    if !RegExMatch(routeResult, "^ROUTE (29200|29300) (\d+)$", &parts)
-        return false
-    totalMs := parts[2] + 0
-    if totalMs != RouteTotalMs(route)
-        return false
-    if routeElapsedMs + 250 < totalMs
-        return false
-    return WaitWhileBackgroundReady(Config.routeSettleMs, expectedGeneration)
 }
 
 EnsureDevConPort() {
@@ -4266,6 +4474,7 @@ RunBackgroundBridgeCancelable(expectedGeneration, mode, bridgeArgs*) {
         State.activeBridgeOperationToken := operationToken
         Critical "Off"
 
+        longCompanionCommand := false
         if InStr(mode, "play-route") && bridgeArgs.Length >= 2 {
             routeDurationMs := RouteTotalMs(bridgeArgs[2])
             if mode = "play-route-health" {
@@ -4278,10 +4487,18 @@ RunBackgroundBridgeCancelable(expectedGeneration, mode, bridgeArgs*) {
             } else {
                 timeoutMs := Min(125000, Max(9000, routeDurationMs + 5000))
             }
+        } else if mode = "companion-command" && bridgeArgs.Length >= 1 {
+            companionCommand := bridgeArgs[1]
+            longCompanionCommand := companionCommand = "go-vehicle"
+                || companionCommand = "return-work"
+            timeoutMs := longCompanionCommand ? 125000
+                : companionCommand = "open-cargo" ? 28000 : 18000
         } else {
             timeoutMs := mode = "deposit-delta" ? 50000 : 9000
         }
         deadline := MonotonicMs() + timeoutMs
+        nextCompanionEpochCheckAt := longCompanionCommand
+            ? MonotonicMs() + 6000 : 0
         while helperPid && ProcessExist(helperPid) {
             if !IsBridgeOperationContextValid(expectedGeneration) {
                 CancelBridgeProcess(helperPid, mode, operationToken)
@@ -4299,6 +4516,14 @@ RunBackgroundBridgeCancelable(expectedGeneration, mode, bridgeArgs*) {
                 ReleaseBackgroundTarget(true)
                 State.lastStorageResult := "手動の移動・視点入力を検知して中止"
                 return "ERROR MANUAL_INPUT"
+            }
+            if longCompanionCommand && MonotonicMs() >= nextCompanionEpochCheckAt {
+                if !ValidateActiveCompanionCommandEpochs(expectedGeneration) {
+                    CancelBridgeProcess(helperPid, mode, operationToken)
+                    ReleaseBackgroundTarget(true)
+                    return "ERROR COMPANION_SESSION_CHANGED"
+                }
+                nextCompanionEpochCheckAt := MonotonicMs() + 6000
             }
             if MonotonicMs() >= deadline {
                 CancelBridgeProcess(helperPid, mode, operationToken)
@@ -4322,6 +4547,36 @@ RunBackgroundBridgeCancelable(expectedGeneration, mode, bridgeArgs*) {
         Critical "Off"
         try FileDelete resultPath
     }
+}
+
+ValidateActiveCompanionCommandEpochs(expectedGeneration) {
+    global State
+    if !IsBridgeOperationContextValid(expectedGeneration)
+        return false
+    healthResult := RunBackgroundBridge("health")
+    if !ParseServerHealth(healthResult, &serverEpoch)
+        || !State.serverEpoch || serverEpoch != State.serverEpoch {
+        WriteDiagnostic("COMPANION_LONG_SERVER_EPOCH_ERROR result=" healthResult)
+        return false
+    }
+    companionResult := RunBackgroundBridge("companion-status")
+    if !ParseCompanionStatus(companionResult, &companionInfo)
+        || !State.companionEpoch || companionInfo.epoch != State.companionEpoch {
+        WriteDiagnostic("COMPANION_LONG_RESOURCE_EPOCH_ERROR result=" companionResult)
+        return false
+    }
+    if !companionInfo.serverRegistrationSynchronized {
+        WriteDiagnostic("COMPANION_LONG_SERVER_REGISTRATION_NOT_SYNCHRONIZED")
+        return false
+    }
+    ; 通常runでは途中で未確定候補へ切り替わった時点で停止します。
+    ; expectedGeneration=0は登録候補へ移動中なのでpending=trueが正しい状態です。
+    if expectedGeneration && !CompanionProfileMatches(companionInfo) {
+        WriteDiagnostic("COMPANION_LONG_REGISTRATION_CHANGED pending="
+            (companionInfo.transactionPending ? 1 : 0))
+        return false
+    }
+    return true
 }
 
 IsBridgeOperationContextValid(expectedGeneration) {
@@ -4354,6 +4609,11 @@ CancelBridgeProcess(processId, mode := "", operationToken := "") {
         RunBackgroundBridge("cancel-operation", operationToken)
         RunBackgroundBridge("close-inventory")
         try ProcessWaitClose processId, 6
+    }
+    if mode = "companion-command" {
+        ; 別bridgeプロセスからresourceへ中止を通知してから、待機中helperを閉じます。
+        RunBackgroundBridge("companion-command", "cancel")
+        try ProcessWaitClose processId, 2
     }
     if ProcessExist(processId)
         StopOwnedBridgeProcess(processId)
@@ -5152,7 +5412,11 @@ Cleanup(*) {
     StopUpdatePollTimer()
     if !State.updateApplying
         CleanupUpdateStage()
+    cancelCompanion := State.companionReady || State.companionEpoch
+        || State.registrationActive
     CancelActiveBridgeProcess()
+    if cancelCompanion
+        RunCompanionCommand("cancel")
     ReleaseAllInputs()
     ReleaseBackgroundTarget(true)
     if previousPhase = "depositing"
@@ -5254,13 +5518,15 @@ ReadVehicleWorkMode(settingsFile) {
 
 IsValidVehicleProfile(config) {
     return config.vehicleRegistered = 1
+        && config.vehicleCompanionProtocol = 1
+        && IsValidCompanionRegistrationId(config.vehicleRegistrationId)
         && IsValidBase64Token(config.vehicleStorageId)
         && config.vehicleStorageType = "dHJ1bms="
         && (config.vehicleWorkMode = "mining" || config.vehicleWorkMode = "washing"
             || config.vehicleWorkMode = "gold")
-        && config.vehicleRouteFormat = 3
-        && IsValidRoute(config.vehicleOutboundRoute)
-        && IsValidRoute(config.vehicleReturnRoute)
+        && config.vehicleRouteFormat = 4
+        && config.vehicleOutboundRoute = ""
+        && config.vehicleReturnRoute = ""
 }
 
 IsValidBase64Token(value) {

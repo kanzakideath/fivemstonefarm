@@ -20,6 +20,11 @@ $distRoot = Join-Path $repoRoot 'dist'
 $mainSource = Join-Path $sourceRoot 'mining-auto.ahk'
 $bridgeSource = Join-Path $sourceRoot 'background-bridge\CdpBridge.cs'
 $updaterSource = Join-Path $sourceRoot 'updater\Updater.cs'
+$rootReadme = Join-Path $repoRoot 'README.md'
+$sourceReadme = Join-Path $sourceRoot 'README.md'
+$usageGuide = Join-Path $repoRoot 'docs\AI採掘機_使い方.txt'
+$configTemplate = Join-Path $repoRoot 'config\AI採掘機.ini'
+$companionValidation = Join-Path $repoRoot 'fivem-resource\ai_miner_companion\tests\Validate-Resource.ps1'
 $toolRoot = Join-Path $repoRoot 'tools\AutoHotkey'
 $autoHotkey = Join-Path $toolRoot 'AutoHotkey64.exe'
 $ahk2Exe = Join-Path $toolRoot 'Compiler\Ahk2Exe.exe'
@@ -30,11 +35,14 @@ if (-not $SkipToolBootstrap) {
     & (Join-Path $PSScriptRoot 'Bootstrap-Tools.ps1')
 }
 
-foreach ($requiredFile in @($mainSource, $bridgeSource, $updaterSource, $autoHotkey, $ahk2Exe)) {
+foreach ($requiredFile in @($mainSource, $bridgeSource, $updaterSource, $rootReadme,
+        $sourceReadme, $usageGuide, $configTemplate, $companionValidation, $autoHotkey, $ahk2Exe)) {
     if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
         throw "Required build input is missing: $requiredFile"
     }
 }
+
+& $companionValidation
 
 $mainText = Get-Content -LiteralPath $mainSource -Raw
 $versionMatch = [regex]::Match(
@@ -46,6 +54,36 @@ if (-not $versionMatch.Success) {
 }
 if ($versionMatch.Groups['version'].Value -ne $Version) {
     throw "Source AppVersion '$($versionMatch.Groups['version'].Value)' does not match requested version '$Version'."
+}
+
+function Assert-EmbeddedReleaseVersion {
+    param(
+        [Parameter(Mandatory)] [string]$Path,
+        [Parameter(Mandatory)] [string]$ExpectedVersion
+    )
+
+    $text = Get-Content -LiteralPath $Path -Raw
+    $matches = [regex]::Matches(
+        $text,
+        '(?<![0-9])(?<version>[0-9]+\.[0-9]+\.[0-9]+)(?![0-9])'
+    )
+    if ($matches.Count -eq 0) {
+        throw "Release version marker was not found: $Path"
+    }
+
+    $mismatches = @(
+        $matches |
+            ForEach-Object { $_.Groups['version'].Value } |
+            Where-Object { $_ -ne $ExpectedVersion } |
+            Sort-Object -Unique
+    )
+    if ($mismatches.Count -ne 0) {
+        throw "Embedded version in '$Path' does not match '$ExpectedVersion': $($mismatches -join ', ')"
+    }
+}
+
+foreach ($versionedDocument in @($rootReadme, $sourceReadme, $usageGuide, $configTemplate)) {
+    Assert-EmbeddedReleaseVersion -Path $versionedDocument -ExpectedVersion $Version
 }
 
 if (Test-Path -LiteralPath $stageRoot) {
@@ -88,6 +126,7 @@ function Invoke-CSharpBuild {
         '/platform:anycpu',
         '/optimize+',
         '/debug-',
+        '/warnaserror+',
         "/out:$Output",
         '/reference:System.dll',
         '/reference:System.Core.dll',
@@ -130,7 +169,7 @@ $bridgeOutput = Join-Path $stageRoot 'AI採掘機_Background.exe'
 $updaterOutput = Join-Path $stageRoot 'AI採掘機_Updater.exe'
 Invoke-CSharpBuild -Source $bridgeSource -Output $bridgeOutput
 Invoke-CSharpBuild -Source $updaterSource -Output $updaterOutput
-Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'CAPS 6 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HEALTH'
+Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'CAPS 7 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HEALTH COMPANION'
 Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'SELFTEST OK' -Mode 'self-test'
 & (Join-Path $PSScriptRoot 'Test-BackgroundBridge.ps1') -Bridge $bridgeOutput
 Invoke-CapabilitySmokeTest -Executable $updaterOutput -Expected 'UPDATE_CAPS 1 CHECK DOWNLOAD APPLY'

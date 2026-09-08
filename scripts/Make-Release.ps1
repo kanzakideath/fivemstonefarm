@@ -19,6 +19,8 @@ $artifactRoot = Join-Path $repoRoot ("artifacts\$tag")
 $packageRoot = Join-Path $repoRoot ("build\package-$tag")
 $directExecutable = Join-Path $artifactRoot 'ai-miner-win-x64.exe'
 $zipPath = Join-Path $artifactRoot ("AI-Miner-$tag.zip")
+$companionZipPath = Join-Path $artifactRoot ("AI-Miner-Companion-$tag.zip")
+$companionSource = Join-Path $repoRoot 'fivem-resource\ai_miner_companion'
 $manifestPath = Join-Path $artifactRoot 'update-manifest.json'
 $signaturePath = Join-Path $artifactRoot 'update-manifest.sig'
 $sumsPath = Join-Path $artifactRoot 'SHA256SUMS.txt'
@@ -58,6 +60,9 @@ Copy-Item -LiteralPath (Join-Path $repoRoot 'config\AI採掘機.ini') -Destinati
 Copy-Item -LiteralPath (Join-Path $repoRoot 'docs\AI採掘機_使い方.txt') -Destination $packageRoot -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination $packageRoot -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot 'THIRD_PARTY_NOTICES.md') -Destination $packageRoot -Force
+$serverResourceRoot = Join-Path $packageRoot 'server-resource'
+New-Item -ItemType Directory -Path $serverResourceRoot -Force | Out-Null
+Copy-Item -LiteralPath $companionSource -Destination $serverResourceRoot -Recurse -Force
 
 $autoHotkeyLicense = Join-Path $repoRoot 'tools\AutoHotkey\license.txt'
 if (-not (Test-Path -LiteralPath $autoHotkeyLicense -PathType Leaf)) {
@@ -96,6 +101,39 @@ try {
 finally {
     $zip.Dispose()
     $zipStream.Dispose()
+}
+
+# Ship the server-admin component separately as well. Its archive keeps the
+# required resource folder name so it can be extracted directly below
+# resources/[local]/ without copying any desktop binaries to the server.
+$companionZipStream = [System.IO.File]::Open($companionZipPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::ReadWrite)
+$companionZip = [System.IO.Compression.ZipArchive]::new(
+    $companionZipStream,
+    [System.IO.Compression.ZipArchiveMode]::Create,
+    $false,
+    [System.Text.Encoding]::UTF8
+)
+try {
+    $fixedTimestamp = $publishedDate.ToUniversalTime()
+    if ($fixedTimestamp.Year -lt 1980) { $fixedTimestamp = [DateTimeOffset]::new(1980, 1, 1, 0, 0, 0, [TimeSpan]::Zero) }
+
+    $companionFiles = Get-ChildItem -LiteralPath $companionSource -Recurse -File | Sort-Object FullName
+    foreach ($file in $companionFiles) {
+        $relative = [System.IO.Path]::GetRelativePath((Split-Path -Parent $companionSource), $file.FullName).Replace('\', '/')
+        $entry = $companionZip.CreateEntry($relative, [System.IO.Compression.CompressionLevel]::Optimal)
+        $entry.LastWriteTime = $fixedTimestamp
+        $entryStream = $entry.Open()
+        $inputStream = $file.OpenRead()
+        try { $inputStream.CopyTo($entryStream) }
+        finally {
+            $inputStream.Dispose()
+            $entryStream.Dispose()
+        }
+    }
+}
+finally {
+    $companionZip.Dispose()
+    $companionZipStream.Dispose()
 }
 
 $exeItem = Get-Item -LiteralPath $directExecutable
@@ -212,7 +250,7 @@ finally {
     $signingKeyText = $null
 }
 
-$sumAssets = @($directExecutable, $zipPath, $manifestPath, $signaturePath)
+$sumAssets = @($directExecutable, $zipPath, $companionZipPath, $manifestPath, $signaturePath)
 $sumLines = foreach ($path in $sumAssets) {
     $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
     "$hash  $([System.IO.Path]::GetFileName($path))"

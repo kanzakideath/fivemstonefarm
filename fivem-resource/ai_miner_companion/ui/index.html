@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AI Miner Companion Bridge</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <pre id="ai-miner-companion-state" aria-hidden="true">{"protocol":"ai-miner-companion","protocolVersion":1,"resource":"ai_miner_companion","resourceVersion":"1.1.0","epoch":"","sequence":0,"token":"","status":"loading","capabilities":{"dynamicVehicleRegistration":true,"transactionalRegistration":true,"registrationCommit":true,"dynamicVehicleNavigation":true,"workAnchor":true,"returnToWork":true,"cancel":true,"cargoArrival":true,"serverRegistrationSync":false,"oxTarget":false,"openCargo":false,"maxVehicleDistance":250,"maxTrackedVehicleSpeed":2.5},"registration":{"registered":false,"id":"","plate":"","model":0,"label":"","networkId":0,"lastSeen":0,"available":false,"availabilityCode":""},"registrationTransaction":{"pending":false,"id":"","previousId":"","startedAt":0,"expiresAt":0,"status":"idle"},"workAnchor":{"set":false,"x":0,"y":0,"z":0,"heading":0,"cameraHeading":0,"cameraPitch":0},"navigation":{"active":false,"kind":"","registrationId":"","networkId":0,"distance":-1,"attempt":0,"startedAt":0,"status":"idle"},"lastResult":{"present":false,"requestId":"","command":"","ok":false,"code":"","message":"","registrationId":"","networkId":0},"overlay":{"visible":false,"title":"","detail":"","tone":"neutral"}}</pre>
+
+    <aside id="companion-hud" class="companion-hud" aria-live="polite" aria-hidden="true">
+        <div class="accent" aria-hidden="true"></div>
+        <div class="content">
+            <div id="hud-kicker" class="kicker">AI採掘機</div>
+            <div id="hud-title" class="title"></div>
+            <div id="hud-detail" class="detail"></div>
+        </div>
+        <div id="hud-progress" class="progress" aria-hidden="true"></div>
+    </aside>
+
+    <script src="app.js"></script>
+</body>
+</html>
