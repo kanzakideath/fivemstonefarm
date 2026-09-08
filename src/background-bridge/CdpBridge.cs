@@ -16,15 +16,20 @@ internal static class CdpBridge
     private const string TargetsUrl = "http://127.0.0.1:13172/json";
     private const string TargetFramePart = "cfx-nui-ox_target/web/index.html";
     private const string InventoryFramePart = "cfx-nui-ox_inventory/web/build/index.html";
-    private const string Capabilities = "CAPS 5 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW";
+    private const string Capabilities = "CAPS 6 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HEALTH";
     private const int MaximumRouteSteps = 240;
     private const int MaximumRouteMilliseconds = 90000;
+    private const int RouteHealthIntervalMilliseconds = 2500;
     private const int MaximumMetadataBytes = 8192;
     private const int MaximumMetadataTokenLength = 10923;
+    private const string TestPortEnvironmentVariable = "AI_MINER_BRIDGE_TEST_PORT";
+    private const string TestTokenEnvironmentVariable = "AI_MINER_BRIDGE_TEST_TOKEN";
     private static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = 1024 * 1024 };
     private static readonly Regex ItemNamePattern = new Regex("^[A-Za-z0-9_-]{1,64}$", RegexOptions.CultureInvariant);
     private static readonly Regex Base64Pattern = new Regex("^[A-Za-z0-9+/]+={0,2}$", RegexOptions.CultureInvariant);
     private static readonly Regex OperationTokenPattern = new Regex("^[A-Za-z0-9_-]{1,64}$", RegexOptions.CultureInvariant);
+    private static readonly Regex TestTokenPattern = new Regex("^[a-f0-9]{64}$", RegexOptions.CultureInvariant);
+    private static readonly Regex ServerEpochPattern = new Regex("^[A-Za-z0-9_-]{8,512}$", RegexOptions.CultureInvariant);
     private static readonly Regex JsonNumberPattern = new Regex("^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$", RegexOptions.CultureInvariant);
     private static readonly Regex BaselineEntryPattern = new Regex(
         "^(?<slot>[0-9]{4})\\.(?<name>[A-Za-z0-9_-]{1,64})\\.(?<meta>[A-Za-z0-9_-]{2," + MaximumMetadataTokenLength + "})=(?<count>[0-9]{1,10})$",
@@ -44,18 +49,21 @@ internal static class CdpBridge
             || mode == "probe-gold" || mode == "click-gold"
             || mode == "probe-storage" || mode == "click-storage"
             || mode == "inventory-snapshot" || mode == "capture-storage"
+            || mode == "health"
             || mode == "close-inventory"
             || mode == "try-mining" || mode == "try-probe-mining"
             || mode == "try-washing" || mode == "try-gold"
             || mode == "activate" || mode == "deactivate"
             || mode == "deactivate-29200" || mode == "deactivate-29300");
-        bool nudgeMode = args.Length == 4 && mode == "nudge-forward";
-        bool routeMode = args.Length == 4 && mode == "play-route";
-        bool viewMode = args.Length == 4 && mode == "set-view";
+        bool nudgeMode = (args.Length == 4 || args.Length == 5) && mode == "nudge-forward";
+        bool routeMode = (args.Length == 4 || args.Length == 5) && mode == "play-route";
+        bool routeHealthMode = args.Length == 5 && mode == "play-route-health";
+        bool viewMode = (args.Length == 4 || args.Length == 5) && mode == "set-view";
+        bool testDeactivateMode = args.Length == 4 && mode == "deactivate-test";
         bool depositMode = args.Length == 6 && mode == "deposit-delta";
         bool cancelOperationMode = args.Length == 3 && mode == "cancel-operation";
-        if (!twoArgumentMode && !nudgeMode && !routeMode && !viewMode
-            && !depositMode && !cancelOperationMode)
+        if (!twoArgumentMode && !nudgeMode && !routeMode && !routeHealthMode && !viewMode
+            && !testDeactivateMode && !depositMode && !cancelOperationMode)
             return 64;
 
         string result;
@@ -74,16 +82,29 @@ internal static class CdpBridge
             {
                 int port;
                 int milliseconds;
-                if (!TryParseDevConPort(args[2], out port)
+                bool testPortAuthorized;
+                string testToken = args.Length == 5 ? args[4] : null;
+                if (!TryParseDevConPort(args[2], testToken, out port, out testPortAuthorized)
                     || !Int32.TryParse(args[3], NumberStyles.None, CultureInfo.InvariantCulture, out milliseconds)
                     || milliseconds < 50 || milliseconds > 250)
                     return 64;
                 result = NudgeForward(port, milliseconds);
             }
+            else if (routeHealthMode)
+            {
+                int port;
+                if (!TryParseProductionDevConPort(args[2], out port)
+                    || !IsValidServerEpoch(args[4]))
+                    return 64;
+                List<RouteStep> steps = ParseRoute(args[3]);
+                result = PlayRouteWithHealth(port, steps, args[4]);
+            }
             else if (routeMode)
             {
                 int port;
-                if (!TryParseDevConPort(args[2], out port))
+                bool testPortAuthorized;
+                string testToken = args.Length == 5 ? args[4] : null;
+                if (!TryParseDevConPort(args[2], testToken, out port, out testPortAuthorized))
                     return 64;
                 List<RouteStep> steps = ParseRoute(args[3]);
                 result = PlayRoute(port, steps);
@@ -92,7 +113,9 @@ internal static class CdpBridge
             {
                 int port;
                 int mask;
-                if (!TryParseDevConPort(args[2], out port)
+                bool testPortAuthorized;
+                string testToken = args.Length == 5 ? args[4] : null;
+                if (!TryParseDevConPort(args[2], testToken, out port, out testPortAuthorized)
                     || !Int32.TryParse(args[3], NumberStyles.None, CultureInfo.InvariantCulture, out mask)
                     || !IsValidViewMask(mask))
                     return 64;
@@ -102,7 +125,7 @@ internal static class CdpBridge
             {
                 string storageId = DecodeIdentifier(args[2]);
                 string storageType = DecodeIdentifier(args[3]).ToLowerInvariant();
-                if (storageType != "trunk" && storageType != "glovebox")
+                if (storageType != "trunk")
                     throw new ArgumentException();
                 Dictionary<string, int> baseline = ParseBaseline(args[4]);
                 string operationToken = args[5];
@@ -120,6 +143,17 @@ internal static class CdpBridge
             {
                 result = ActivateAsync().GetAwaiter().GetResult();
             }
+            else if (testDeactivateMode)
+            {
+                int selectedPort;
+                bool testPortAuthorized;
+                if (!TryParseDevConPort(args[2], args[3], out selectedPort, out testPortAuthorized)
+                    || !testPortAuthorized)
+                    return 64;
+                if (!SendRelease(selectedPort, true))
+                    throw new InvalidOperationException("INPUT_RELEASE_UNAVAILABLE");
+                result = "RELEASED";
+            }
             else if (mode.StartsWith("deactivate", StringComparison.Ordinal))
             {
                 int selectedPort = mode.EndsWith("29200", StringComparison.Ordinal) ? 29200
@@ -135,6 +169,10 @@ internal static class CdpBridge
             else if (mode == "inventory-snapshot")
             {
                 result = InventorySnapshotAsync().GetAwaiter().GetResult();
+            }
+            else if (mode == "health")
+            {
+                result = HealthAsync().GetAwaiter().GetResult();
             }
             else if (mode == "capture-storage")
             {
@@ -182,6 +220,7 @@ internal static class CdpBridge
             || result.StartsWith("NUDGED ", StringComparison.Ordinal)
             || result.StartsWith("ROUTE ", StringComparison.Ordinal)
             || result.StartsWith("VIEW ", StringComparison.Ordinal)
+            || result.StartsWith("HEALTH READY ", StringComparison.Ordinal)
             || result.StartsWith("SNAPSHOT ", StringComparison.Ordinal)
             || result.StartsWith("STORAGE ", StringComparison.Ordinal)
             || result.StartsWith("DEPOSITED ", StringComparison.Ordinal)
@@ -201,6 +240,7 @@ internal static class CdpBridge
         const string exponentMetadata = "{\"ratio\":1e-7}";
         Dictionary<string, int> exponentBaseline = ParseBaseline(
             "0004.ore." + EncodeBase64Url(exponentMetadata) + "=2");
+        string serverEpoch = EncodeBase64Url("target-frame\ninventory-frame");
         var routeCommand = new StringBuilder(InputReleaseCommand());
         AppendRoutePresses(routeCommand, 65);
         var viewCommand = new StringBuilder(ViewReleaseCommand());
@@ -210,14 +250,19 @@ internal static class CdpBridge
             || !RouteIsRejected("150:48") || !RouteIsRejected("150:192")
             || !RouteIsRejected("150:256")
             || routeCommand.ToString().IndexOf(";+move_up_only", StringComparison.Ordinal) < 0
-            || routeCommand.ToString().IndexOf(";+look_left_only", StringComparison.Ordinal) < 0
-            || viewCommand.ToString().IndexOf(";+look_down_only", StringComparison.Ordinal) < 0
-            || viewCommand.ToString().IndexOf(";+look_right_only", StringComparison.Ordinal) < 0
+            || routeCommand.ToString().IndexOf(";+look_left", StringComparison.Ordinal) < 0
+            || viewCommand.ToString().IndexOf(";+look_down", StringComparison.Ordinal) < 0
+            || viewCommand.ToString().IndexOf(";+look_right", StringComparison.Ordinal) < 0
             || !baseline.TryGetValue("1\nore\n{}", out count) || count != 10
             || !canonicalBaseline.TryGetValue("2\nore\n" + canonicalMetadata, out count) || count != 3
             || largeToken.Length <= 8192 || largeToken.Length > MaximumMetadataTokenLength
             || !largeBaseline.TryGetValue("3\nore\n" + largeMetadata, out count) || count != 7
             || !exponentBaseline.TryGetValue("4\nore\n" + exponentMetadata, out count) || count != 2
+            || !IsValidServerEpoch(serverEpoch)
+            || IsValidServerEpoch(EncodeBase64Url("target-frame"))
+            || IsValidServerEpoch(EncodeBase64Url("target\ninventory\nextra"))
+            || IsValidServerEpoch(EncodeBase64Url("target\r\ninventory"))
+            || IsValidServerEpoch("invalid+epoch")
             || !BaselineMetadataIsRejected("not-json")
             || DecodeIdentifier(EncodeIdentifier("trunk-test")) != "trunk-test"
             || DecodeBase64Url(EncodeBase64Url("{\"quality\":100}")) != "{\"quality\":100}")
@@ -258,13 +303,20 @@ internal static class CdpBridge
         bool goldMode = mode.EndsWith("gold", StringComparison.Ordinal);
         bool storageMode = mode.EndsWith("storage", StringComparison.Ordinal);
         string targetLabel = washingMode ? "石を洗う"
-            : goldMode ? "砂金採りトレイ"
-            : storageMode ? "ストレージを開く" : "鉱石を採掘する";
+            : goldMode ? "砂金採りトレイ" : "鉱石を採掘する";
         string actionToken = washingMode ? "WASH" : goldMode ? "GOLD" : storageMode ? "STORAGE" : "MINE";
         bool exactOnly = washingMode || goldMode || storageMode;
 
         using (var session = await CdpSession.OpenAsync(TargetFramePart, TimeSpan.FromSeconds(4)).ConfigureAwait(false))
         {
+            if (storageMode)
+            {
+                string storageState = await session.EvaluateStringAsync(
+                    clickMode ? ClickStorageExpression() : ProbeStorageExpression(), clickMode).ConfigureAwait(false);
+                if (clickMode && storageState == "CLICKED")
+                    await Task.Delay(300, session.Token).ConfigureAwait(false);
+                return storageState + " STORAGE";
+            }
             bool value = await session.EvaluateBooleanAsync(
                 clickMode ? ClickExpression(targetLabel, exactOnly) : ProbeExpression(targetLabel, exactOnly),
                 clickMode).ConfigureAwait(false);
@@ -285,7 +337,8 @@ internal static class CdpBridge
         int port = 0;
         try
         {
-            SendRelease(0);
+            if (!SendRelease(0))
+                throw new InvalidOperationException("INPUT_RELEASE_UNAVAILABLE");
             port = ActivatePort();
             using (var session = await CdpSession.OpenAsync(TargetFramePart, TimeSpan.FromSeconds(5)).ConfigureAwait(false))
             {
@@ -318,8 +371,8 @@ internal static class CdpBridge
         }
         finally
         {
-            if (port != 0) SendRelease(port);
-            else SendRelease(0);
+            if (!(port != 0 ? SendRelease(port) : SendRelease(0)))
+                throw new InvalidOperationException("INPUT_RELEASE_UNAVAILABLE");
         }
     }
 
@@ -331,13 +384,14 @@ internal static class CdpBridge
             + "const left=inv&&inv.leftInventory;if(!left||String(left.type||'').toLowerCase()!=='player')return 'ERROR INVENTORY_UNAVAILABLE';"
             + "const meta=v=>{if(v===undefined||v===null)return '{}';try{if(typeof v!=='object')return JSON.stringify(v);"
             + "const clean=x=>{if(x===null||typeof x!=='object')return x;if(Array.isArray(x))return x.map(clean);const o=Object.create(null);for(const k of Object.keys(x).sort())o[k]=clean(x[k]);return o;};return JSON.stringify(clean(v));}catch(e){return ''}};"
-            + "const items=Array.isArray(left.items)?left.items:[],entries=[];let weight=0,used=0;"
+            + "const items=Array.isArray(left.items)?left.items:[],entries=[];let calculatedWeight=0,used=0;"
             + "for(const item of items){if(!item||!item.name||num(item.count)<=0)continue;"
             + "const name=String(item.name),count=Math.trunc(num(item.count));if(!/^[A-Za-z0-9_-]{1,64}$/.test(name))return 'ERROR UNSUPPORTED_ITEM_NAME';"
             + "if(count<=0||count>2147483647)return 'ERROR INVALID_INVENTORY';const metadata=meta(item.metadata);if(!metadata)return 'ERROR INVALID_METADATA';"
             + "const slot=Math.trunc(num(item.slot));if(slot<1||slot>1000)return 'ERROR INVALID_INVENTORY';"
-            + "entries.push({slot:slot,name:name,count:count,meta:metadata});weight+=Math.max(0,num(item.weight));used++;}"
-            + "return 'SNAPSHOT_DETAIL '+JSON.stringify({weight:whole(weight),max:whole(left.maxWeight),used:used,slots:whole(left.slots),items:entries});})()";
+            + "entries.push({slot:slot,name:name,count:count,meta:metadata});calculatedWeight+=Math.max(0,num(item.weight));used++;}"
+            + "const serverWeight=Number(left.weight),hasServerWeight=left.weight!==undefined&&left.weight!==null&&Number.isFinite(serverWeight)&&serverWeight>=0;"
+            + "return 'SNAPSHOT_DETAIL '+JSON.stringify({weight:whole(hasServerWeight?serverWeight:calculatedWeight),max:whole(left.maxWeight),used:used,slots:whole(left.slots),items:entries});})()";
         string raw = await EvaluateInventoryStringAsync(expression, TimeSpan.FromSeconds(5), false).ConfigureAwait(false);
         if (!raw.StartsWith("SNAPSHOT_DETAIL ", StringComparison.Ordinal))
             return raw;
@@ -393,6 +447,23 @@ internal static class CdpBridge
             + IntegerField(detail, "slots") + " " + baseline;
     }
 
+    private static async Task<string> HealthAsync()
+    {
+        using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(4)))
+        using (var socket = new ClientWebSocket())
+        {
+            await socket.ConnectAsync(new Uri(FindRootSocketUrl()), timeout.Token).ConfigureAwait(false);
+            var response = await CommandAsync(socket, "Page.getFrameTree", null, timeout.Token).ConfigureAwait(false);
+            var frameTree = GetObject(GetObject(response, "result"), "frameTree");
+            string targetFrameId = FindFrame(frameTree, TargetFramePart);
+            string inventoryFrameId = FindFrame(frameTree, InventoryFramePart);
+            if (String.IsNullOrEmpty(targetFrameId) || String.IsNullOrEmpty(inventoryFrameId))
+                return "ERROR SERVER_SESSION_UNAVAILABLE";
+            string epoch = EncodeBase64Url(targetFrameId + "\n" + inventoryFrameId);
+            return "HEALTH READY " + epoch;
+        }
+    }
+
     private static async Task<string> CaptureStorageAsync()
     {
         string expression = "(() => {" + InventoryPrelude()
@@ -400,10 +471,11 @@ internal static class CdpBridge
             + "let inv;try{inv=store.getState().inventory;}catch(e){return 'ERROR INVENTORY_UNAVAILABLE';}"
             + "const right=inv&&inv.rightInventory,type=String(right&&right.type||'').toLowerCase();"
             + "if(!right||right.id===undefined||right.id===null||String(right.id).length===0)return 'ERROR STORAGE_UNAVAILABLE';"
-            + "if(type!=='trunk'&&type!=='glovebox')return 'ERROR NOT_VEHICLE_STORAGE';"
-            + "const items=Array.isArray(right.items)?right.items:[];let weight=0,used=0;for(const item of items){"
-            + "if(!item||!item.name||num(item.count)<=0)continue;weight+=Math.max(0,num(item.weight));used++;}"
-            + "return 'CAPTURE '+JSON.stringify({id:String(right.id),type:type,weight:whole(weight),max:whole(right.maxWeight),used:used,slots:whole(right.slots)});})()";
+            + "if(type!=='trunk')return 'ERROR NOT_REAR_STORAGE';"
+            + "const items=Array.isArray(right.items)?right.items:[];let calculatedWeight=0,used=0;for(const item of items){"
+            + "if(!item||!item.name||num(item.count)<=0)continue;calculatedWeight+=Math.max(0,num(item.weight));used++;}"
+            + "const serverWeight=Number(right.weight),hasServerWeight=right.weight!==undefined&&right.weight!==null&&Number.isFinite(serverWeight)&&serverWeight>=0;"
+            + "return 'CAPTURE '+JSON.stringify({id:String(right.id),type:type,weight:whole(hasServerWeight?serverWeight:calculatedWeight),max:whole(right.maxWeight),used:used,slots:whole(right.slots)});})()";
         string raw = await EvaluateInventoryStringAsync(expression, TimeSpan.FromSeconds(5), false).ConfigureAwait(false);
         if (!raw.StartsWith("CAPTURE ", StringComparison.Ordinal))
             return raw;
@@ -412,7 +484,7 @@ internal static class CdpBridge
             return "ERROR STORAGE_UNAVAILABLE";
         string id = GetString(capture, "id");
         string type = GetString(capture, "type");
-        if (String.IsNullOrEmpty(id) || (type != "trunk" && type != "glovebox"))
+        if (String.IsNullOrEmpty(id) || type != "trunk")
             return "ERROR STORAGE_UNAVAILABLE";
         return "STORAGE " + EncodeIdentifier(id) + " " + EncodeIdentifier(type) + " "
             + IntegerField(capture, "weight") + " " + IntegerField(capture, "max") + " "
@@ -458,7 +530,8 @@ internal static class CdpBridge
             + "for(const row of rows){const base=baselineBySlot[row.slot];if(!base||base.name!==row.name)continue;const reserve=Math.min(row.count,base.count);row.protected+=reserve;if(base.key===row.key)protect[row.key]=Math.max(0,num(protect[row.key])-reserve);protectNames[row.name]=Math.max(0,num(protectNames[row.name])-reserve);}"
             + "for(const row of rows){if(!protect[row.key])continue;const reserve=Math.min(row.count-row.protected,protect[row.key]);row.protected+=reserve;protect[row.key]-=reserve;protectNames[row.name]=Math.max(0,num(protectNames[row.name])-reserve);}"
             + "for(const row of rows){if(!protectNames[row.name])continue;const reserve=Math.min(row.count-row.protected,protectNames[row.name]);row.protected+=reserve;protectNames[row.name]-=reserve;}"
-            + "let rightWeight=0,addWeight=0;for(const item of rightItems)if(item&&item.name&&num(item.count)>0)rightWeight+=Math.max(0,num(item.weight));"
+            + "let calculatedRightWeight=0,addWeight=0;for(const item of rightItems)if(item&&item.name&&num(item.count)>0)calculatedRightWeight+=Math.max(0,num(item.weight));"
+            + "const serverRightWeight=Number(right.weight),rightWeight=right.weight!==undefined&&right.weight!==null&&Number.isFinite(serverRightWeight)&&serverRightWeight>=0?serverRightWeight:calculatedRightWeight;"
             + "const sources=[];let totalUnits=0;for(const row of rows){const take=row.count-row.protected;if(take<=0)continue;"
             + "if(row.metadata&&row.metadata.container!==undefined)return 'ERROR UNSAFE_ITEM';const per=row.count>0?row.weight/row.count:0;addWeight+=per*take;"
             + "sources.push({slot:row.slot,name:row.name,count:take,stackable:row.stackable,metadata:row.metadata,meta:row.meta});totalUnits+=take;}if(totalUnits<=0)return 'ERROR NO_DELTA';"
@@ -532,7 +605,8 @@ internal static class CdpBridge
 
     private static async Task<string> ActivateAsync()
     {
-        SendRelease(0);
+        if (!SendRelease(0))
+            throw new InvalidOperationException("INPUT_RELEASE_UNAVAILABLE");
         int port = ActivatePort();
         await Task.Delay(180).ConfigureAwait(false);
         return "ACTIVATED " + port.ToString(CultureInfo.InvariantCulture);
@@ -546,9 +620,9 @@ internal static class CdpBridge
         throw new InvalidOperationException("ACTIVATION_UNAVAILABLE");
     }
 
-    private static bool SendRelease(int selectedPort)
+    private static bool SendRelease(int selectedPort, bool testPortAuthorized = false)
     {
-        if (selectedPort == 29200 || selectedPort == 29300)
+        if (selectedPort == 29200 || selectedPort == 29300 || testPortAuthorized)
         {
             bool targetReleased = TrySendDevCon(selectedPort, "-ox_target");
             bool inputReleased = SendInputRelease(selectedPort);
@@ -608,6 +682,70 @@ internal static class CdpBridge
         }
     }
 
+    private static string PlayRouteWithHealth(int port, List<RouteStep> steps,
+        string expectedEpoch)
+    {
+        int total = 0;
+        int lastHealthAt = 0;
+        string result = null;
+        Exception pendingFailure = null;
+        try
+        {
+            VerifyRouteHealth(port, expectedEpoch);
+            foreach (RouteStep step in steps)
+            {
+                var command = new StringBuilder(InputReleaseCommand());
+                AppendRoutePresses(command, step.Mask);
+                if (!TrySendDevCon(port, command.ToString(), 0))
+                    throw new InvalidOperationException("MOVEMENT_UNAVAILABLE");
+                total += step.Duration;
+                Thread.Sleep(step.Duration);
+
+                if (total - lastHealthAt >= RouteHealthIntervalMilliseconds)
+                {
+                    VerifyRouteHealth(port, expectedEpoch);
+                    lastHealthAt = total;
+                }
+            }
+            if (lastHealthAt != total)
+                VerifyRouteHealth(port, expectedEpoch);
+            result = "ROUTE " + port.ToString(CultureInfo.InvariantCulture) + " "
+                + total.ToString(CultureInfo.InvariantCulture);
+        }
+        catch (Exception ex)
+        {
+            pendingFailure = ex;
+        }
+        finally
+        {
+            if (!SendInputRelease(port) && pendingFailure == null)
+                pendingFailure = new InvalidOperationException("INPUT_RELEASE_UNAVAILABLE");
+        }
+
+        if (pendingFailure != null)
+            throw pendingFailure;
+        return result;
+    }
+
+    private static void VerifyRouteHealth(int port, string expectedEpoch)
+    {
+        if (!SendInputRelease(port))
+            throw new InvalidOperationException("INPUT_RELEASE_UNAVAILABLE");
+
+        string healthResult;
+        try
+        {
+            healthResult = HealthAsync().GetAwaiter().GetResult();
+        }
+        catch (Exception)
+        {
+            throw new InvalidOperationException("SERVER_SESSION_CHANGED");
+        }
+        if (!String.Equals(healthResult, "HEALTH READY " + expectedEpoch,
+                StringComparison.Ordinal))
+            throw new InvalidOperationException("SERVER_SESSION_CHANGED");
+    }
+
     private static string SetViewInput(int port, int mask)
     {
         var command = new StringBuilder(ViewReleaseCommand());
@@ -626,7 +764,10 @@ internal static class CdpBridge
 
     private static string ViewReleaseCommand()
     {
-        return "-look_up_only;-look_down_only;-look_left_only;-look_right_only";
+        return "-look_up_only;-look_down_only;-look_left_only;-look_right_only;"
+            + "-look_up;-look_down;-look_left;-look_right;"
+            + "-scaled_look_up_only;-scaled_look_down_only;"
+            + "-scaled_look_left_only;-scaled_look_right_only";
     }
 
     private static void AppendRoutePresses(StringBuilder command, int mask)
@@ -640,10 +781,13 @@ internal static class CdpBridge
 
     private static void AppendViewPresses(StringBuilder command, int mask)
     {
-        if ((mask & 1) != 0) command.Append(";+look_up_only");
-        if ((mask & 2) != 0) command.Append(";+look_down_only");
-        if ((mask & 4) != 0) command.Append(";+look_left_only");
-        if ((mask & 8) != 0) command.Append(";+look_right_only");
+        // The *_ONLY controls have no keyboard default and did not move the camera
+        // on supported production clients. The direct look controls are the same
+        // controls used by mouse look, while still being releasable through DevCon.
+        if ((mask & 1) != 0) command.Append(";+look_up");
+        if ((mask & 2) != 0) command.Append(";+look_down");
+        if ((mask & 4) != 0) command.Append(";+look_left");
+        if ((mask & 8) != 0) command.Append(";+look_right");
     }
 
     private static bool IsValidViewMask(int mask)
@@ -683,10 +827,67 @@ internal static class CdpBridge
         return steps;
     }
 
-    private static bool TryParseDevConPort(string value, out int port)
+    private static bool TryParseProductionDevConPort(string value, out int port)
     {
         return Int32.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out port)
             && (port == 29200 || port == 29300);
+    }
+
+    private static bool IsValidServerEpoch(string value)
+    {
+        if (!ServerEpochPattern.IsMatch(value ?? String.Empty))
+            return false;
+        try
+        {
+            string decoded = DecodeBase64Url(value);
+            int separator = decoded.IndexOf('\n');
+            if (separator <= 0 || separator != decoded.LastIndexOf('\n')
+                || separator >= decoded.Length - 1)
+                return false;
+            for (int index = 0; index < decoded.Length; index++)
+                if (index != separator && Char.IsControl(decoded[index]))
+                    return false;
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryParseDevConPort(string value, string testToken, out int port,
+        out bool testPortAuthorized)
+    {
+        testPortAuthorized = false;
+        if (!Int32.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out port))
+            return false;
+        if (port == 29200 || port == 29300)
+            return String.IsNullOrEmpty(testToken);
+        if (port < 1024 || port > 65535 || !TestTokenPattern.IsMatch(testToken ?? String.Empty))
+            return false;
+
+        int configuredPort;
+        string configuredPortText = Environment.GetEnvironmentVariable(TestPortEnvironmentVariable);
+        string configuredToken = Environment.GetEnvironmentVariable(TestTokenEnvironmentVariable);
+        if (!Int32.TryParse(configuredPortText, NumberStyles.None, CultureInfo.InvariantCulture,
+                out configuredPort)
+            || configuredPort != port
+            || !TestTokenPattern.IsMatch(configuredToken ?? String.Empty)
+            || !FixedTimeEquals(configuredToken, testToken))
+            return false;
+
+        testPortAuthorized = true;
+        return true;
+    }
+
+    private static bool FixedTimeEquals(string left, string right)
+    {
+        if (left == null || right == null || left.Length != right.Length)
+            return false;
+        int difference = 0;
+        for (int index = 0; index < left.Length; index++)
+            difference |= left[index] ^ right[index];
+        return difference == 0;
     }
 
     private static bool TrySendDevCon(int port, string command, int postWriteDelayMs = 75)
@@ -1086,6 +1287,35 @@ internal static class CdpBridge
             + "return match(t)&&![...e.children].some(c=>match(n(c.textContent)));});"
             + "if(matches.length!==1)return false;const e=matches[0],s=getComputedStyle(e),r=e.getBoundingClientRect();"
             + "return s.visibility!=='hidden'&&s.display!=='none'&&r.width>0&&r.height>0;})()";
+    }
+
+    private static string ProbeStorageExpression()
+    {
+        return StorageTargetExpression(false);
+    }
+
+    private static string ClickStorageExpression()
+    {
+        return StorageTargetExpression(true);
+    }
+
+    private static string StorageTargetExpression(bool click)
+    {
+        // ox_inventoryの標準ラベルに加え、同じ車両用途で使われる日本語表記だけを
+        // 許可します。候補が複数なら何も押さないことで、近接車両を誤操作しません。
+        return "(() => {"
+            + "const qs=['ストレージを開く','トランクを開く','荷台を開く'],n=s=>String(s||'').replace(/\\s+/g,' ').trim(),body=document.body;"
+            + "if(!body||getComputedStyle(body).visibility!=='visible')return 'MISSING';"
+            + "const root=document.querySelector('#options-wrapper');if(!root)return 'MISSING';"
+            + "const match=t=>qs.includes(t),matches=[...root.querySelectorAll('*')].filter(e=>{const t=n(e.textContent);"
+            + "return match(t)&&![...e.children].some(c=>match(n(c.textContent)));});"
+            + "if(matches.length>1)return 'AMBIGUOUS';if(matches.length!==1)return 'MISSING';const leaf=matches[0],s=getComputedStyle(leaf),r=leaf.getBoundingClientRect();"
+            + "if(s.visibility==='hidden'||s.display==='none'||s.pointerEvents==='none'||Number(s.opacity)<=0||r.width<=0||r.height<=0)return 'MISSING';"
+            + (click
+                ? "let hit=leaf.closest('.option-container,li,button,[role=button]')||leaf.closest('a')||leaf;"
+                    + "const hs=getComputedStyle(hit),hr=hit.getBoundingClientRect();if(!root.contains(hit)||!hit.isConnected||hs.visibility==='hidden'||hs.display==='none'||hs.pointerEvents==='none'||Number(hs.opacity)<=0||hr.width<=0||hr.height<=0||hit.matches(':disabled')||hit.getAttribute('aria-disabled')==='true')return 'MISSING';hit.click();return 'CLICKED';"
+                : "return 'PRESENT';")
+            + "})()";
     }
 
     private static string ClickExpression(string targetLabel, bool exactOnly)

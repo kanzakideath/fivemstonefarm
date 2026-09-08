@@ -24,6 +24,7 @@ $toolRoot = Join-Path $repoRoot 'tools\AutoHotkey'
 $autoHotkey = Join-Path $toolRoot 'AutoHotkey64.exe'
 $ahk2Exe = Join-Path $toolRoot 'Compiler\Ahk2Exe.exe'
 $outputExe = Join-Path $distRoot 'ai-miner-win-x64.exe'
+$appIcon = Join-Path $buildRoot 'AI採掘機.ico'
 
 if (-not $SkipToolBootstrap) {
     & (Join-Path $PSScriptRoot 'Bootstrap-Tools.ps1')
@@ -55,6 +56,10 @@ if (Test-Path -LiteralPath $distRoot) {
 }
 New-Item -ItemType Directory -Path $stageRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $distRoot -Force | Out-Null
+& (Join-Path $PSScriptRoot 'Build-AppIcon.ps1') -Output $appIcon | Out-Null
+if (-not (Test-Path -LiteralPath $appIcon -PathType Leaf)) {
+    throw 'Application icon generation failed.'
+}
 
 Copy-Item -Path (Join-Path $sourceRoot '*') -Destination $stageRoot -Recurse -Force
 $assetRoot = Join-Path $sourceRoot 'assets'
@@ -125,7 +130,7 @@ $bridgeOutput = Join-Path $stageRoot 'AI採掘機_Background.exe'
 $updaterOutput = Join-Path $stageRoot 'AI採掘機_Updater.exe'
 Invoke-CSharpBuild -Source $bridgeSource -Output $bridgeOutput
 Invoke-CSharpBuild -Source $updaterSource -Output $updaterOutput
-Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'CAPS 5 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW'
+Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'CAPS 6 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HEALTH'
 Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'SELFTEST OK' -Mode 'self-test'
 & (Join-Path $PSScriptRoot 'Test-BackgroundBridge.ps1') -Bridge $bridgeOutput
 Invoke-CapabilitySmokeTest -Executable $updaterOutput -Expected 'UPDATE_CAPS 1 CHECK DOWNLOAD APPLY'
@@ -136,8 +141,10 @@ try {
     $quotedMain = '"' + $stagedMain + '"'
     $quotedOutput = '"' + $outputExe + '"'
     $quotedBase = '"' + $autoHotkey + '"'
+    $quotedIcon = '"' + $appIcon + '"'
     $compilerProcess = Start-Process -FilePath $ahk2Exe `
-        -ArgumentList @('/in', $quotedMain, '/out', $quotedOutput, '/base', $quotedBase, '/compress', '0') `
+        -ArgumentList @('/in', $quotedMain, '/out', $quotedOutput, '/base', $quotedBase,
+            '/icon', $quotedIcon, '/compress', '0') `
         -PassThru -Wait -WindowStyle Hidden
     if ($compilerProcess.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $outputExe -PathType Leaf)) {
         throw 'Ahk2Exe compilation failed.'

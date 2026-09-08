@@ -10,7 +10,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "6.1.0"
+global AppVersion := "6.2.0"
 processId := DllCall("GetCurrentProcessId")
 buttonTemplatePath := A_Temp "\codex-mining-button-" processId ".png"
 windowedButtonTemplatePath := A_Temp "\codex-mining-button-windowed-" processId ".png"
@@ -87,19 +87,21 @@ global Config := {
     vehicleStorageId: ReadTextSetting(settingsPath, "VehicleStorage", "StorageId", ""),
     vehicleStorageType: ReadTextSetting(settingsPath, "VehicleStorage", "StorageType", ""),
     vehicleWorkMode: ReadVehicleWorkMode(settingsPath),
-    vehicleRouteFormat: ReadIntegerSetting(settingsPath, "VehicleStorage", "RouteFormat", 1, 0, 2),
+    vehicleRouteFormat: ReadIntegerSetting(settingsPath, "VehicleStorage", "RouteFormat", 1, 0, 3),
     vehicleOutboundRoute: ReadTextSetting(settingsPath, "VehicleStorage", "OutboundRoute", ""),
     vehicleReturnRoute: ReadTextSetting(settingsPath, "VehicleStorage", "ReturnRoute", ""),
     capacityCheckIntervalMs: ReadIntegerSetting(settingsPath, "VehicleStorage", "CapacityCheckIntervalMs", 3000, 1500, 15000),
     minimumFreeWeight: ReadIntegerSetting(settingsPath, "VehicleStorage", "MinimumFreeWeight", 2000, 250, 20000),
     routeIdleFinishMs: ReadIntegerSetting(settingsPath, "VehicleStorage", "RouteIdleFinishMs", 1200, 700, 3000),
-    routeSettleMs: ReadIntegerSetting(settingsPath, "VehicleStorage", "RouteSettleMs", 700, 200, 3000)
+    routeSettleMs: ReadIntegerSetting(settingsPath, "VehicleStorage", "RouteSettleMs", 700, 200, 3000),
+    vehicleSearchPulseMs: ReadIntegerSetting(settingsPath, "VehicleStorage", "SearchPulseMs", 180, 120, 350),
+    serverHealthIntervalMs: ReadIntegerSetting(settingsPath, "Safety", "ServerHealthIntervalMs", 3500, 1500, 10000)
 }
 
 if StrLen(Config.vehicleName) > 40
     Config.vehicleName := SubStr(Config.vehicleName, 1, 40)
 if !IsValidVehicleProfile(Config)
-    Config.vehicleRegistered := 0
+    Config.vehicleStorageEnabled := 0
 
 ; v5.1以前の「未設定なので無効」という仮設定だけを、安全な署名付き更新へ移行します。
 needsUpdateSettingsMigration := Config.updateSettingsSchema < 1
@@ -114,6 +116,7 @@ global State := {
     generation: 0,
     timerFn: 0,
     targetHwnd: 0,
+    targetPid: 0,
     buttonTemplates: [
         {path: buttonTemplatePath, width: 220, height: 42, clickOffsetX: 194, clickOffsetY: 21},
         {path: windowedButtonTemplatePath, width: 239, height: 43, clickOffsetX: 210, clickOffsetY: 21}
@@ -182,8 +185,17 @@ global State := {
     inventoryBaseline: "",
     nextCapacityCheckAt: 0,
     capacityProbeFailures: 0,
+    workpointProbeFailures: 0,
+    serverEpoch: "",
+    serverHealthFailures: 0,
+    nextServerHealthAt: 0,
+    lastInventoryWeight: 0,
+    lastInventoryMaxWeight: 0,
+    lastInventoryFreeWeight: 0,
+    lastCapacityReason: "未確認",
     storageTrips: 0,
     lastStorageResult: "未実行",
+    lastStorageProbeResult: "",
     registrationActive: false,
     registrationCancelled: false,
     registrationOverlay: 0,
@@ -198,6 +210,7 @@ global State := {
     registrationHotIf: 0,
     registrationMovementHotIf: 0,
     registrationMovementBlocked: false,
+    registrationLastMask: -1,
     page: "overview",
     pages: Map(),
     ui: {},
@@ -214,7 +227,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
         : !FileExist(State.backgroundBridgePath) ? 15
         : !FileExist(State.updaterPath) ? 16
         : MonotonicMs() <= 0 ? 17
-        : RunBackgroundBridge("capabilities") != "CAPS 5 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW" ? 18
+        : RunBackgroundBridge("capabilities") != "CAPS 6 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HEALTH" ? 18
         : updaterCapabilities != "UPDATE_CAPS 1 CHECK DOWNLOAD APPLY" ? 19
         : !IsSafeConfiguredHotkey("F8") ? 20
         : IsSafeConfiguredHotkey("A") ? 21
@@ -243,7 +256,19 @@ if A_Args.Length && A_Args[1] = "--validate" {
         : CombineRoutes("150:1", "150:64") != "150:1,150:64" ? 44
         : RouteViewSegmentCount("150:1,150:64,150:128") != 2 ? 45
         : AutomationStartAllowed(false, true) ? 46
-        : !AutomationStartAllowed(false, false) ? 47 : 0
+        : !AutomationStartAllowed(false, false) ? 47
+        : ReverseRoute("180:1,200:5") != "200:10,180:2" ? 48
+        : VehicleSearchRoutes(180).Length != 20 ? 49
+        : !ParseServerHealth("HEALTH READY YWJjZGVmZ2g", &testEpoch) ? 50
+        : testEpoch != "YWJjZGVmZ2g" ? 51
+        : !CapacityNeedsStorage({weight: 8000, maxWeight: 10000,
+            used: 2, slots: 20}, &testCapacityReason, &testFreeWeight) ? 52
+        : testCapacityReason != "weight" || testFreeWeight != 2000 ? 53
+        : CapacityNeedsStorage({weight: 7999, maxWeight: 10000,
+            used: 2, slots: 20}, &testCapacityReason, &testFreeWeight) ? 54
+        : !CapacityNeedsStorage({weight: 1000, maxWeight: 10000,
+            used: 20, slots: 20}, &testCapacityReason, &testFreeWeight) ? 55
+        : testCapacityReason != "slots" ? 56 : 0
     if exitCode = 19
         try FileAppend "UPDATER_CAPS=" updaterCapabilities "`r`n",
             State.diagnosticPath, "UTF-8"
@@ -301,23 +326,27 @@ else if !A_Args.Length && Config.autoCheckUpdates && A_IsCompiled
 BuildGui() {
     global State, Config, AppVersion
 
-    State.gui := Gui("+Resize +MinSize480x680", "AI採掘機")
-    State.gui.BackColor := "F2F2F7"
+    ; 広い画面はiPadOSの設定に近いサイドバー＋内容ペイン、狭い画面は
+    ; 上部ナビゲーションへ切り替え、520x640でも主要操作を画面内に保ちます。
+    State.gui := Gui("+Resize +MinSize520x640", "AI採掘機")
+    State.gui.BackColor := "F5F5F7"
     State.gui.MarginX := 0
     State.gui.MarginY := 0
     State.pages := Map("overview", [], "vehicle", [], "settings", [], "update", [])
     State.ui := {}
 
-    State.gui.SetFont("s20 w600 c1C1C1E", "Segoe UI Variable Text")
-    State.ui.appTitle := State.gui.AddText("x24 y16 w420 h38", "AI採掘機")
-    State.gui.SetFont("s9 w400 c636366", "Yu Gothic UI")
+    State.gui.SetFont("s14 w600 c1D1D1F", "Segoe UI Variable Text")
+    State.ui.appTitle := State.gui.AddText("x24 y17 w420 h30", "AI採掘機")
+    State.gui.SetFont("s9 w400 c6E6E73", "Segoe UI Variable Text")
     State.ui.version := State.gui.AddText("x650 y25 w110 h22 Right", "v" AppVersion)
-    State.ui.appSubtitle := State.gui.AddText("x24 y52 w500 h22",
-        "採掘・洗浄・砂金採りと車両収納を自動化")
+    State.ui.appSubtitle := State.gui.AddText("x24 y45 w500 h20",
+        "FiveM ユーティリティ")
 
-    State.ui.sidebarSurface := State.gui.AddProgress("x16 y88 w176 h236 Disabled BackgroundFFFFFF cFFFFFF", 100)
-    State.ui.selectionBar := State.gui.AddProgress("x16 y100 w4 h44 Disabled Background0088FF c0088FF", 100)
-    State.gui.SetFont("s10 w600 c1C1C1E", "Yu Gothic UI")
+    State.ui.sidebarSurface := State.gui.AddText(
+        "x16 y76 w176 h224 Disabled BackgroundFFFFFF", "")
+    State.ui.selectionBar := State.gui.AddText(
+        "x16 y88 w4 h44 Disabled Background0A84FF", "")
+    State.gui.SetFont("s10 w600 c1D1D1F", "Segoe UI Variable Text")
     State.ui.navOverview := State.gui.AddButton("x28 y100 w152 h44", "概要")
     State.ui.navVehicle := State.gui.AddButton("x28 y152 w152 h44", "車両")
     State.ui.navSettings := State.gui.AddButton("x28 y204 w152 h44", "設定")
@@ -335,10 +364,10 @@ BuildGui() {
     State.gui.OnEvent("Close", (*) => ExitApp())
     State.gui.OnEvent("Escape", HandleMainEscape)
     State.gui.OnEvent("Size", LayoutMainWindow)
-    State.gui.Show("w800 h660")
+    State.gui.Show("w820 h640")
     ApplyRoundedWindowCorners(State.gui.Hwnd)
     State.layoutReady := true
-    LayoutMainWindow(State.gui, 0, 800, 660)
+    LayoutMainWindow(State.gui, 0, 820, 640)
     ShowPage("overview")
     UpdateActionUi()
     UpdateConnectionStatus()
@@ -356,40 +385,47 @@ AddPageControl(pageName, control) {
 BuildOverviewPage() {
     global State, Config
     gui := State.gui
-    gui.SetFont("s19 w600 c1C1C1E", "Segoe UI Variable Text")
-    State.ui.overviewTitle := AddPageControl("overview", gui.AddText("x0 y0 w400 h38", "概要"))
-    gui.SetFont("s9 w400 c636366", "Yu Gothic UI")
+    gui.SetFont("s20 w600 c1D1D1F", "Segoe UI Variable Text")
+    State.ui.overviewTitle := AddPageControl("overview", gui.AddText("x0 y0 w400 h38", "自動操作"))
+    gui.SetFont("s9 w400 c6E6E73", "Segoe UI Variable Text")
     State.taglineLabel := AddPageControl("overview", gui.AddText("x0 y0 w400 h36",
         "画面を奪わず、選んだ作業を続けます"))
     State.ui.statusSurface := AddPageControl("overview",
-        gui.AddProgress("x0 y0 w400 h142 Disabled BackgroundFFFFFF cFFFFFF", 100))
-    gui.SetFont("s12 w600 c1C1C1E", "Yu Gothic UI")
-    State.statusLabel := AddPageControl("overview", gui.AddText("x0 y0 w400 h32", "停止中"))
+        gui.AddText("x0 y0 w400 h142 Disabled Background17171C", ""))
+    ; 動的な状態文が狭幅でも1行で読める密度にします。
+    gui.SetFont("s11 w600 cFFFFFF", "Segoe UI Variable Text")
+    State.statusLabel := AddPageControl("overview",
+        gui.AddText("x0 y0 w400 h32 BackgroundTrans", "停止中"))
     State.ui.statusSeparator1 := AddPageControl("overview",
-        gui.AddText("x0 y0 w400 h1 BackgroundD1D1D6"))
-    gui.SetFont("s10 w400 c3A3A3C", "Yu Gothic UI")
-    State.connectionLabel := AddPageControl("overview", gui.AddText("x0 y0 w400 h28", "FiveM　確認中"))
+        gui.AddText("x0 y0 w400 h1 Background3A3A3C"))
+    gui.SetFont("s10 w400 cD1D1D6", "Segoe UI Variable Text")
+    State.connectionLabel := AddPageControl("overview",
+        gui.AddText("x0 y0 w400 h28 BackgroundTrans", "FiveM　確認中"))
     State.ui.statusSeparator2 := AddPageControl("overview",
-        gui.AddText("x0 y0 w400 h1 BackgroundD1D1D6"))
-    State.modeLabel := AddPageControl("overview", gui.AddText("x0 y0 w400 h28", "バックグラウンド操作"))
-    gui.SetFont("s9 w600 c636366", "Yu Gothic UI")
+        gui.AddText("x0 y0 w400 h1 Background3A3A3C"))
+    State.modeLabel := AddPageControl("overview",
+        gui.AddText("x0 y0 w400 h28 BackgroundTrans", "バックグラウンド操作"))
+    gui.SetFont("s9 w600 c6E6E73", "Segoe UI Variable Text")
     State.ui.actionCaption := AddPageControl("overview", gui.AddText("x0 y0 w100 h24", "作業") )
-    gui.SetFont("s10 w400 c1C1C1E", "Yu Gothic UI")
+    gui.SetFont("s10 w400 c1D1D1F", "Segoe UI Variable Text")
     actionIndex := Config.actionMode = "washing" ? 2 : Config.actionMode = "gold" ? 3 : 1
     State.actionControl := AddPageControl("overview", gui.AddDropDownList("x0 y0 w300 Choose" actionIndex,
         ["鉱石を採掘する", "石を洗う", "砂金採りトレイ"]))
     State.actionControl.OnEvent("Change", ChangeActionMode)
-    gui.SetFont("s11 w600 cFFFFFF", "Yu Gothic UI")
+    gui.SetFont("s11 w600", "Segoe UI Variable Text")
     State.mainButton := AddPageControl("overview",
         gui.AddButton("x0 y0 w300 h50 Default", "自動操作を開始"))
     State.mainButton.OnEvent("Click", ToggleMining)
     State.ui.metricsSurface := AddPageControl("overview",
-        gui.AddProgress("x0 y0 w400 h78 Disabled BackgroundFFFFFF cFFFFFF", 100))
-    gui.SetFont("s9 w600 c1C1C1E", "Yu Gothic UI")
-    State.countLabel := AddPageControl("overview", gui.AddText("x0 y0 w120 h40 Center 0x200", "採掘回数`n0"))
-    State.mealLabel := AddPageControl("overview", gui.AddText("x0 y0 w120 h40 Center 0x200", "食事回数`n0"))
-    State.vehicleTripLabel := AddPageControl("overview", gui.AddText("x0 y0 w120 h40 Center 0x200", "自動収納`n0"))
-    gui.SetFont("s9 w400 c636366", "Yu Gothic UI")
+        gui.AddText("x0 y0 w400 h78 Disabled BackgroundFFFFFF", ""))
+    gui.SetFont("s9 w600 c1D1D1F", "Segoe UI Variable Text")
+    State.countLabel := AddPageControl("overview",
+        gui.AddText("x0 y0 w120 h40 Center 0x200 BackgroundTrans", "採掘回数`n0"))
+    State.mealLabel := AddPageControl("overview",
+        gui.AddText("x0 y0 w120 h40 Center 0x200 BackgroundTrans", "食事回数`n0"))
+    State.vehicleTripLabel := AddPageControl("overview",
+        gui.AddText("x0 y0 w120 h40 Center 0x200 BackgroundTrans", "自動収納`n0"))
+    gui.SetFont("s9 w400 c6E6E73", "Segoe UI Variable Text")
     State.footerLabel := AddPageControl("overview", gui.AddText("x0 y0 w400 h24 Center",
         "開始 " Config.startHotkey "　停止 " Config.stopHotkey))
 }
@@ -397,62 +433,77 @@ BuildOverviewPage() {
 BuildVehiclePage() {
     global State, Config
     gui := State.gui
-    gui.SetFont("s19 w600 c1C1C1E", "Segoe UI Variable Text")
+    gui.SetFont("s20 w600 c1D1D1F", "Segoe UI Variable Text")
     State.ui.vehicleTitle := AddPageControl("vehicle", gui.AddText("x0 y0 w400 h38", "車両収納"))
-    gui.SetFont("s9 w400 c636366", "Yu Gothic UI")
+    gui.SetFont("s9 w400 c6E6E73", "Segoe UI Variable Text")
     State.ui.vehicleSubtitle := AddPageControl("vehicle", gui.AddText("x0 y0 w480 h36",
         "容量が少なくなると、登録した車両へ採集品だけを収納します"))
     State.ui.vehicleSurface := AddPageControl("vehicle",
-        gui.AddProgress("x0 y0 w400 h160 Disabled BackgroundFFFFFF cFFFFFF", 100))
-    gui.SetFont("s11 w600 c1C1C1E", "Yu Gothic UI")
-    State.vehicleStatusLabel := AddPageControl("vehicle", gui.AddText("x0 y0 w400 h30", "未登録"))
+        gui.AddText("x0 y0 w400 h160 Disabled BackgroundFFFFFF", ""))
+    gui.SetFont("s11 w600 c1C1C1E", "Segoe UI Variable Text")
+    State.vehicleStatusLabel := AddPageControl("vehicle",
+        gui.AddText("x0 y0 w400 h30 BackgroundTrans", "未登録"))
     State.ui.vehicleSeparator1 := AddPageControl("vehicle", gui.AddText("x0 y0 w400 h1 BackgroundD1D1D6"))
-    gui.SetFont("s9 w400 c3A3A3C", "Yu Gothic UI")
-    State.ui.vehicleNameCaption := AddPageControl("vehicle", gui.AddText("x0 y0 w100 h28 0x200", "表示名"))
+    gui.SetFont("s9 w400 c3A3A3C", "Segoe UI Variable Text")
+    State.ui.vehicleNameCaption := AddPageControl("vehicle",
+        gui.AddText("x0 y0 w100 h28 0x200 BackgroundTrans", "表示名"))
     State.vehicleNameEdit := AddPageControl("vehicle", gui.AddEdit("x0 y0 w240 h30", Config.vehicleName))
     State.ui.vehicleSeparator2 := AddPageControl("vehicle", gui.AddText("x0 y0 w400 h1 BackgroundD1D1D6"))
     State.vehicleEnabledControl := AddPageControl("vehicle",
         gui.AddCheckbox("x0 y0 w360 h32", "容量不足時に自動収納"))
     State.vehicleEnabledControl.Value := Config.vehicleStorageEnabled
     State.vehicleEnabledControl.OnEvent("Click", ToggleVehicleStorage)
+    State.ui.capacitySurface := AddPageControl("vehicle",
+        gui.AddText("x0 y0 w400 h82 Disabled BackgroundFFFFFF", ""))
+    gui.SetFont("s10 w600 c1D1D1F", "Segoe UI Variable Text")
+    State.capacityStatusLabel := AddPageControl("vehicle",
+        gui.AddText("x0 y0 w400 h28 BackgroundTrans", "所持重量　開始後に確認します"))
+    State.capacityProgress := AddPageControl("vehicle",
+        gui.AddProgress("x0 y0 w400 h6 Disabled BackgroundE5E5EA c0A84FF Range0-100", 0))
+    gui.SetFont("s9 w400 c6E6E73", "Segoe UI Variable Text")
+    State.capacityDetailLabel := AddPageControl("vehicle",
+        gui.AddText("x0 y0 w400 h22 BackgroundTrans", "重量を優先し、空きスロットも安全確認します"))
     State.ui.routeSurface := AddPageControl("vehicle",
-        gui.AddProgress("x0 y0 w400 h104 Disabled BackgroundFFFFFF cFFFFFF", 100))
-    gui.SetFont("s10 w600 c1C1C1E", "Yu Gothic UI")
-    State.routeStatusLabel := AddPageControl("vehicle", gui.AddText("x0 y0 w400 h28", "往復ルート　未登録"))
-    gui.SetFont("s9 w400 c636366", "Yu Gothic UI")
-    State.routeDetailLabel := AddPageControl("vehicle", gui.AddText("x0 y0 w400 h48",
+        gui.AddText("x0 y0 w400 h104 Disabled BackgroundFFFFFF", ""))
+    gui.SetFont("s10 w600 c1C1C1E", "Segoe UI Variable Text")
+    State.routeStatusLabel := AddPageControl("vehicle",
+        gui.AddText("x0 y0 w400 h28 BackgroundTrans", "往復ルート　未登録"))
+    gui.SetFont("s9 w400 c636366", "Segoe UI Variable Text")
+    State.routeDetailLabel := AddPageControl("vehicle", gui.AddText("x0 y0 w400 h48 BackgroundTrans",
         "作業場所から車両後部までの往路と復路を記録します。"))
-    gui.SetFont("s10 w600 c1C1C1E", "Yu Gothic UI")
+    gui.SetFont("s10 w600 c1C1C1E", "Segoe UI Variable Text")
     State.vehicleRegisterButton := AddPageControl("vehicle",
         gui.AddButton("x0 y0 w240 h48", "車両とルートを登録"))
     State.vehicleDeleteButton := AddPageControl("vehicle",
         gui.AddButton("x0 y0 w160 h48", "登録を削除"))
     State.vehicleRegisterButton.OnEvent("Click", BeginVehicleRegistration)
     State.vehicleDeleteButton.OnEvent("Click", DeleteVehicleRegistration)
-    gui.SetFont("s9 w400 c636366", "Yu Gothic UI")
+    gui.SetFont("s9 w400 c636366", "Segoe UI Variable Text")
     State.ui.vehicleHelp := AddPageControl("vehicle", gui.AddText("x0 y0 w460 h72",
         "開始前から持っていた道具・食料・所持品は移動しません。`n"
-        "登録中は W/A/S/D で移動、矢印キーで視点を調整します。Enterで記録開始・到着確定します。"))
+        "登録中はW/A/S/Dで移動、矢印で視点を記録します。少しの車両移動は荷台周辺を自動探索します。"))
 }
 
 BuildSettingsPage() {
     global State, Config
     gui := State.gui
-    gui.SetFont("s19 w600 c1C1C1E", "Segoe UI Variable Text")
+    gui.SetFont("s20 w600 c1D1D1F", "Segoe UI Variable Text")
     State.ui.settingsTitle := AddPageControl("settings", gui.AddText("x0 y0 w400 h38", "設定"))
-    gui.SetFont("s9 w400 c636366", "Yu Gothic UI")
+    gui.SetFont("s9 w400 c6E6E73", "Segoe UI Variable Text")
     State.ui.settingsSubtitle := AddPageControl("settings", gui.AddText("x0 y0 w460 h36",
         "キーボード操作とバックグラウンド動作"))
     State.ui.keysSurface := AddPageControl("settings",
-        gui.AddProgress("x0 y0 w400 h126 Disabled BackgroundFFFFFF cFFFFFF", 100))
-    gui.SetFont("s10 w400 c1C1C1E", "Yu Gothic UI")
-    State.ui.startKeyCaption := AddPageControl("settings", gui.AddText("x0 y0 w150 h30 0x200", "開始キー"))
+        gui.AddText("x0 y0 w400 h126 Disabled BackgroundFFFFFF", ""))
+    gui.SetFont("s10 w400 c1C1C1E", "Segoe UI Variable Text")
+    State.ui.startKeyCaption := AddPageControl("settings",
+        gui.AddText("x0 y0 w150 h30 0x200 BackgroundTrans", "開始キー"))
     State.startHotkeyControl := AddPageControl("settings", gui.AddHotkey("x0 y0 w180 h32", Config.startHotkey))
     State.ui.keysSeparator := AddPageControl("settings", gui.AddText("x0 y0 w400 h1 BackgroundD1D1D6"))
-    State.ui.stopKeyCaption := AddPageControl("settings", gui.AddText("x0 y0 w150 h30 0x200", "停止キー"))
+    State.ui.stopKeyCaption := AddPageControl("settings",
+        gui.AddText("x0 y0 w150 h30 0x200 BackgroundTrans", "停止キー"))
     State.stopHotkeyControl := AddPageControl("settings", gui.AddHotkey("x0 y0 w180 h32", Config.stopHotkey))
     State.ui.optionsSurface := AddPageControl("settings",
-        gui.AddProgress("x0 y0 w400 h170 Disabled BackgroundFFFFFF cFFFFFF", 100))
+        gui.AddText("x0 y0 w400 h214 Disabled BackgroundFFFFFF", ""))
     State.backgroundControl := AddPageControl("settings",
         gui.AddCheckbox("x0 y0 w400 h36", "バックグラウンドで操作する"))
     State.backgroundControl.Value := Config.backgroundMode
@@ -465,36 +516,43 @@ BuildSettingsPage() {
     State.autoUpdateControl := AddPageControl("settings",
         gui.AddCheckbox("x0 y0 w400 h36", "起動時にアップデートを確認"))
     State.autoUpdateControl.Value := Config.autoCheckUpdates
-    gui.SetFont("s10 w600 c1C1C1E", "Yu Gothic UI")
+    State.ui.minimumFreeWeightCaption := AddPageControl("settings",
+        gui.AddText("x0 y0 w220 h34 0x200 BackgroundTrans", "自動収納を始める残り重量 (g)"))
+    State.minimumFreeWeightControl := AddPageControl("settings",
+        gui.AddEdit("x0 y0 w120 h32 Number", Config.minimumFreeWeight))
+    gui.SetFont("s10 w600 c1C1C1E", "Segoe UI Variable Text")
     State.settingsButton := AddPageControl("settings", gui.AddButton("x0 y0 w220 h48 Default", "設定を保存"))
     State.settingsButton.OnEvent("Click", SaveInlineSettings)
-    gui.SetFont("s9 w400 cB42318", "Yu Gothic UI")
+    gui.SetFont("s9 w400 cB42318", "Segoe UI Variable Text")
     State.settingsErrorLabel := AddPageControl("settings", gui.AddText("x0 y0 w460 h44", ""))
 }
 
 BuildUpdatePage() {
     global State, AppVersion
     gui := State.gui
-    gui.SetFont("s19 w600 c1C1C1E", "Segoe UI Variable Text")
+    gui.SetFont("s20 w600 c1D1D1F", "Segoe UI Variable Text")
     State.ui.updateTitle := AddPageControl("update", gui.AddText("x0 y0 w400 h38", "アップデート"))
-    gui.SetFont("s9 w400 c636366", "Yu Gothic UI")
+    gui.SetFont("s9 w400 c636366", "Segoe UI Variable Text")
     State.ui.updateSubtitle := AddPageControl("update", gui.AddText("x0 y0 w460 h36",
         "署名を検証してから安全に更新します"))
     State.ui.updateSurface := AddPageControl("update",
-        gui.AddProgress("x0 y0 w400 h170 Disabled BackgroundFFFFFF cFFFFFF", 100))
-    gui.SetFont("s10 w400 c1C1C1E", "Yu Gothic UI")
-    State.ui.currentVersionCaption := AddPageControl("update", gui.AddText("x0 y0 w160 h30", "現在のバージョン"))
-    State.currentVersionLabel := AddPageControl("update", gui.AddText("x0 y0 w180 h30 Right", "v" AppVersion))
+        gui.AddText("x0 y0 w400 h170 Disabled BackgroundFFFFFF", ""))
+    gui.SetFont("s10 w400 c1C1C1E", "Segoe UI Variable Text")
+    State.ui.currentVersionCaption := AddPageControl("update",
+        gui.AddText("x0 y0 w160 h30 BackgroundTrans", "現在のバージョン"))
+    State.currentVersionLabel := AddPageControl("update",
+        gui.AddText("x0 y0 w180 h30 Right BackgroundTrans", "v" AppVersion))
     State.ui.updateSeparator1 := AddPageControl("update", gui.AddText("x0 y0 w400 h1 BackgroundD1D1D6"))
-    State.updatePageStatus := AddPageControl("update", gui.AddText("x0 y0 w400 h34", "未確認"))
+    State.updatePageStatus := AddPageControl("update",
+        gui.AddText("x0 y0 w400 h34 BackgroundTrans", "未確認"))
     State.ui.updateSeparator2 := AddPageControl("update", gui.AddText("x0 y0 w400 h1 BackgroundD1D1D6"))
-    gui.SetFont("s9 w400 c636366", "Yu Gothic UI")
-    State.ui.signatureLabel := AddPageControl("update", gui.AddText("x0 y0 w400 h42",
+    gui.SetFont("s9 w400 c636366", "Segoe UI Variable Text")
+    State.ui.signatureLabel := AddPageControl("update", gui.AddText("x0 y0 w400 h42 BackgroundTrans",
         "ECDSA署名・SHA-256・起動検証・失敗時ロールバック"))
-    gui.SetFont("s10 w600 c1C1C1E", "Yu Gothic UI")
+    gui.SetFont("s10 w600 c1C1C1E", "Segoe UI Variable Text")
     State.updateButton := AddPageControl("update", gui.AddButton("x0 y0 w240 h48", "アップデートを確認"))
     State.updateButton.OnEvent("Click", CheckForUpdates)
-    gui.SetFont("s9 w400 c636366", "Yu Gothic UI")
+    gui.SetFont("s9 w400 c636366", "Segoe UI Variable Text")
     State.ui.updateHelp := AddPageControl("update", gui.AddText("x0 y0 w460 h64",
         "新しいバージョンがあると、この画面とサイドバーに表示します。"))
 }
@@ -532,11 +590,11 @@ RefreshNavigationSelection() {
 RunUiSmokeTest() {
     global State
 
-    ; 装飾用Progressが有効だと前面の透明な壁になり、下のボタンや入力欄を
+    ; 装飾面が有効だと前面の透明な壁になり、下のボタンや入力欄を
     ; Windowのhit-testから隠します。実際に起きた回帰を起動テストで防ぎます。
     for surface in [State.ui.sidebarSurface, State.ui.selectionBar,
         State.ui.statusSurface, State.ui.metricsSurface, State.ui.vehicleSurface,
-        State.ui.routeSurface, State.ui.keysSurface, State.ui.optionsSurface,
+        State.ui.capacitySurface, State.ui.routeSurface, State.ui.keysSurface, State.ui.optionsSurface,
         State.ui.updateSurface] {
         if surface.Enabled
             return 41
@@ -546,10 +604,47 @@ RunUiSmokeTest() {
         if !nav.Enabled
             return 42
     }
+    ; 実際のBM_CLICKを通して各ナビゲーションのイベント配線も確認します。
+    ; Enabled確認だけでは見つからない無反応の配線回帰を防ぎます。
+    for navCase in [
+        {control: State.ui.navOverview, page: "overview"},
+        {control: State.ui.navVehicle, page: "vehicle"},
+        {control: State.ui.navSettings, page: "settings"},
+        {control: State.ui.navUpdate, page: "update"}
+    ] {
+        DllCall("user32\PostMessageW", "Ptr", navCase.control.Hwnd,
+            "UInt", 0x00F5, "Ptr", 0, "Ptr", 0, "Int")
+        Sleep 25
+        if State.page != navCase.page
+            return 59
+    }
+    for interactive in [State.actionControl, State.mainButton,
+        State.vehicleNameEdit, State.vehicleRegisterButton,
+        State.backgroundControl, State.startHotkeyControl,
+        State.stopHotkeyControl, State.minimumFreeWeightControl,
+        State.settingsButton, State.updateButton] {
+        if !interactive.Enabled
+            return 57
+    }
     for pageName in ["overview", "vehicle", "settings", "update"] {
         ShowPage(pageName)
         if State.page != pageName
             return 43
+    }
+    compactChecks := Map(
+        "overview", [State.mainButton, State.ui.metricsSurface, State.footerLabel],
+        "vehicle", [State.ui.vehicleSurface, State.ui.routeSurface,
+            State.vehicleRegisterButton, State.vehicleDeleteButton],
+        "settings", [State.ui.optionsSurface, State.settingsButton,
+            State.settingsErrorLabel],
+        "update", [State.ui.updateSurface, State.updateButton, State.ui.updateHelp])
+    for pageName, controls in compactChecks {
+        ShowPage(pageName)
+        LayoutMainWindow(State.gui, 0, 520, 640)
+        for control in controls {
+            if !ControlFitsLayout(control, 520, 640)
+                return 58
+        }
     }
     try {
         CreateRegistrationOverlay(State.gui.Hwnd)
@@ -557,8 +652,8 @@ RunUiSmokeTest() {
             return 44
         UpdateRegistrationOverlay("車両登録　2/4", "表示テスト", "● 記録中", "info")
         UpdateRegistrationInputState(81, 1250)
-        if State.registrationKeyControls["w"].control.Text != "●W"
-            || State.registrationKeyControls["left"].control.Text != "●←"
+        if State.registrationKeyControls["w"].control.Text != "W"
+            || State.registrationKeyControls["left"].control.Text != "←"
             || State.registrationKeyControls["s"].control.Text != "S"
             return 45
         ConfigureRegistrationControlKeys(true)
@@ -570,7 +665,16 @@ RunUiSmokeTest() {
         CloseRegistrationOverlay()
     }
     ShowPage("overview")
+    LayoutMainWindow(State.gui, 0, 820, 640)
     return 0
+}
+
+ControlFitsLayout(control, clientWidth, clientHeight) {
+    try control.GetPos(&x, &y, &width, &height)
+    catch
+        return false
+    return x >= 0 && y >= 0 && width > 0 && height > 0
+        && x + width <= clientWidth && y + height <= clientHeight
 }
 
 HandleMainEscape(*) {
@@ -590,10 +694,13 @@ LayoutMainWindow(guiObj, minMax, width, height) {
     wide := width >= 700
     margin := wide ? 24 : 16
     if wide {
-        sidebarX := 16, sidebarY := 88, sidebarW := 176, sidebarH := 236
-        contentX := 224, contentY := 82, contentW := Max(420, width - 248)
+        sidebarX := 16, sidebarY := 76, sidebarW := 176, sidebarH := 224
+        availableW := Max(420, width - 248)
+        contentW := Min(760, availableW)
+        contentX := 224 + Floor((availableW - contentW) / 2)
+        contentY := 20
         State.ui.sidebarSurface.Move(sidebarX, sidebarY, sidebarW, sidebarH)
-        navY := [100, 152, 204, 256]
+        navY := [88, 140, 192, 244]
         for index, control in [State.ui.navOverview, State.ui.navVehicle,
             State.ui.navSettings, State.ui.navUpdate]
             control.Move(28, navY[index], 152, 44)
@@ -601,8 +708,8 @@ LayoutMainWindow(guiObj, minMax, width, height) {
             : State.page = "update" ? 4 : 1
         State.ui.selectionBar.Move(16, navY[selectedIndex], 4, 44)
     } else {
-        sidebarX := 16, sidebarY := 82, sidebarW := width - 32, sidebarH := 52
-        contentX := 16, contentY := 152, contentW := width - 32
+        sidebarX := 16, sidebarY := 60, sidebarW := width - 32, sidebarH := 52
+        contentX := 16, contentY := 120, contentW := width - 32
         State.ui.sidebarSurface.Move(sidebarX, sidebarY, sidebarW, sidebarH)
         gap := 6
         navW := Floor((sidebarW - 24 - gap * 3) / 4)
@@ -617,10 +724,11 @@ LayoutMainWindow(guiObj, minMax, width, height) {
             sidebarY + 47, navW, 3)
     }
 
-    State.ui.appTitle.Move(margin, 16, Max(260, width - 190), 38)
-    State.ui.appSubtitle.Move(margin, 52, Max(300, width - 180), 22)
-    State.ui.version.Move(Max(margin, width - 132), 25, 108, 22)
-    ApplyRoundedControlCorners(State.ui.sidebarSurface.Hwnd, 18)
+    State.ui.appTitle.Move(margin, 15, wide ? 168 : Max(260, width - 190), 30)
+    State.ui.appSubtitle.Move(margin, 43, wide ? 168 : Max(300, width - 180), 20)
+    State.ui.version.Move(Max(margin, width - 132), 22, 108, 22)
+    State.ui.appSubtitle.Visible := wide
+    ApplyRoundedControlCorners(State.ui.sidebarSurface.Hwnd, 12)
 
     ; 概要
     State.ui.overviewTitle.Move(contentX, contentY, contentW, 38)
@@ -641,67 +749,93 @@ LayoutMainWindow(guiObj, minMax, width, height) {
     State.vehicleTripLabel.Move(contentX + metricW * 2, contentY + 399,
         contentW - metricW * 2, 44)
     State.footerLabel.Move(contentX, Min(height - 30, contentY + 478), contentW, 24)
-    ApplyRoundedControlCorners(State.ui.statusSurface.Hwnd, 18)
-    ApplyRoundedControlCorners(State.ui.metricsSurface.Hwnd, 18)
-    ApplyRoundedControlCorners(State.mainButton.Hwnd, 16)
+    ApplyRoundedControlCorners(State.ui.statusSurface.Hwnd, 14)
+    ApplyRoundedControlCorners(State.ui.metricsSurface.Hwnd, 12)
+    ApplyRoundedControlCorners(State.mainButton.Hwnd, 12)
 
     ; 車両
+    vehicleShift := wide ? 0 : -32
+    State.ui.vehicleSubtitle.Visible := wide && State.page = "vehicle"
+    State.ui.vehicleHelp.Visible := wide && State.page = "vehicle"
     State.ui.vehicleTitle.Move(contentX, contentY, contentW, 38)
     State.ui.vehicleSubtitle.Move(contentX, contentY + 38, contentW, 34)
-    State.ui.vehicleSurface.Move(contentX, contentY + 76, contentW, 160)
-    State.vehicleStatusLabel.Move(contentX + 18, contentY + 90, contentW - 36, 30)
-    State.ui.vehicleSeparator1.Move(contentX + 18, contentY + 125, contentW - 18, 1)
-    State.ui.vehicleNameCaption.Move(contentX + 18, contentY + 135, 96, 30)
-    State.vehicleNameEdit.Move(contentX + 118, contentY + 134, contentW - 136, 32)
-    State.ui.vehicleSeparator2.Move(contentX + 18, contentY + 175, contentW - 18, 1)
-    State.vehicleEnabledControl.Move(contentX + 18, contentY + 187, contentW - 36, 34)
-    State.ui.routeSurface.Move(contentX, contentY + 256, contentW, 104)
-    State.routeStatusLabel.Move(contentX + 18, contentY + 270, contentW - 36, 28)
-    State.routeDetailLabel.Move(contentX + 18, contentY + 301, contentW - 36, 48)
+    State.ui.vehicleSurface.Move(contentX, contentY + 76 + vehicleShift, contentW, 160)
+    State.vehicleStatusLabel.Move(contentX + 18, contentY + 90 + vehicleShift, contentW - 36, 30)
+    State.ui.vehicleSeparator1.Move(contentX + 18, contentY + 125 + vehicleShift, contentW - 18, 1)
+    State.ui.vehicleNameCaption.Move(contentX + 18, contentY + 135 + vehicleShift, 96, 30)
+    State.vehicleNameEdit.Move(contentX + 118, contentY + 134 + vehicleShift, contentW - 136, 32)
+    State.ui.vehicleSeparator2.Move(contentX + 18, contentY + 175 + vehicleShift, contentW - 18, 1)
+    State.vehicleEnabledControl.Move(contentX + 18, contentY + 187 + vehicleShift, contentW - 36, 34)
+    State.ui.capacitySurface.Move(contentX, contentY + 250 + vehicleShift, contentW, 82)
+    State.capacityStatusLabel.Move(contentX + 18, contentY + 260 + vehicleShift, contentW - 36, 24)
+    State.capacityProgress.Move(contentX + 18, contentY + 289 + vehicleShift, contentW - 36, 6)
+    State.capacityDetailLabel.Move(contentX + 18, contentY + 301 + vehicleShift, contentW - 36, 22)
+    State.ui.routeSurface.Move(contentX, contentY + 346 + vehicleShift, contentW, 104)
+    State.routeStatusLabel.Move(contentX + 18, contentY + 360 + vehicleShift, contentW - 36, 28)
+    State.routeDetailLabel.Move(contentX + 18, contentY + 391 + vehicleShift, contentW - 36, 48)
     buttonGap := 12
     registerW := Max(210, Floor((contentW - buttonGap) * 0.62))
     deleteW := contentW - registerW - buttonGap
-    State.vehicleRegisterButton.Move(contentX, contentY + 380, registerW, 48)
-    State.vehicleDeleteButton.Move(contentX + registerW + buttonGap, contentY + 380, deleteW, 48)
-    State.ui.vehicleHelp.Move(contentX, contentY + 448, contentW, 72)
-    ApplyRoundedControlCorners(State.ui.vehicleSurface.Hwnd, 18)
-    ApplyRoundedControlCorners(State.ui.routeSurface.Hwnd, 18)
-    ApplyRoundedControlCorners(State.vehicleRegisterButton.Hwnd, 16)
-    ApplyRoundedControlCorners(State.vehicleDeleteButton.Hwnd, 16)
+    State.vehicleRegisterButton.Move(contentX, contentY + 466 + vehicleShift, registerW, 48)
+    State.vehicleDeleteButton.Move(contentX + registerW + buttonGap,
+        contentY + 466 + vehicleShift, deleteW, 48)
+    State.ui.vehicleHelp.Move(contentX, contentY + 528 + vehicleShift, contentW, 58)
+    ApplyRoundedControlCorners(State.ui.vehicleSurface.Hwnd, 12)
+    ApplyRoundedControlCorners(State.ui.capacitySurface.Hwnd, 12)
+    ApplyRoundedControlCorners(State.ui.routeSurface.Hwnd, 12)
+    ApplyRoundedControlCorners(State.vehicleRegisterButton.Hwnd, 12)
+    ApplyRoundedControlCorners(State.vehicleDeleteButton.Hwnd, 12)
 
     ; 設定
+    settingsShift := wide ? 0 : -32
+    State.ui.settingsSubtitle.Visible := wide && State.page = "settings"
     State.ui.settingsTitle.Move(contentX, contentY, contentW, 38)
     State.ui.settingsSubtitle.Move(contentX, contentY + 38, contentW, 34)
-    State.ui.keysSurface.Move(contentX, contentY + 76, contentW, 126)
-    State.ui.startKeyCaption.Move(contentX + 18, contentY + 90, 150, 32)
-    State.startHotkeyControl.Move(contentX + contentW - 208, contentY + 88, 190, 34)
-    State.ui.keysSeparator.Move(contentX + 18, contentY + 137, contentW - 18, 1)
-    State.ui.stopKeyCaption.Move(contentX + 18, contentY + 151, 150, 32)
-    State.stopHotkeyControl.Move(contentX + contentW - 208, contentY + 149, 190, 34)
-    State.ui.optionsSurface.Move(contentX, contentY + 222, contentW, 170)
+    State.ui.keysSurface.Move(contentX, contentY + 76 + settingsShift, contentW, 126)
+    State.ui.startKeyCaption.Move(contentX + 18, contentY + 90 + settingsShift, 150, 32)
+    State.startHotkeyControl.Move(contentX + contentW - 208,
+        contentY + 88 + settingsShift, 190, 34)
+    State.ui.keysSeparator.Move(contentX + 18, contentY + 137 + settingsShift, contentW - 18, 1)
+    State.ui.stopKeyCaption.Move(contentX + 18, contentY + 151 + settingsShift, 150, 32)
+    State.stopHotkeyControl.Move(contentX + contentW - 208,
+        contentY + 149 + settingsShift, 190, 34)
+    State.ui.optionsSurface.Move(contentX, contentY + 222 + settingsShift, contentW, 214)
     for index, control in [State.backgroundControl, State.hideControl,
         State.washCorrectionControl, State.autoUpdateControl]
-        control.Move(contentX + 18, contentY + 229 + (index - 1) * 39, contentW - 36, 34)
-    State.settingsButton.Move(contentX, contentY + 414, Min(250, contentW), 48)
-    State.settingsErrorLabel.Move(contentX, contentY + 472, contentW, 44)
-    ApplyRoundedControlCorners(State.ui.keysSurface.Hwnd, 18)
-    ApplyRoundedControlCorners(State.ui.optionsSurface.Hwnd, 18)
-    ApplyRoundedControlCorners(State.settingsButton.Hwnd, 16)
+        control.Move(contentX + 18, contentY + 229 + settingsShift
+            + (index - 1) * 39, contentW - 36, 34)
+    State.ui.minimumFreeWeightCaption.Move(contentX + 18,
+        contentY + 385 + settingsShift, contentW - 174, 34)
+    State.minimumFreeWeightControl.Move(contentX + contentW - 148,
+        contentY + 386 + settingsShift, 130, 32)
+    State.settingsButton.Move(contentX, contentY + 456 + settingsShift, Min(250, contentW), 48)
+    State.settingsErrorLabel.Move(contentX, contentY + 514 + settingsShift,
+        contentW, wide ? 44 : 38)
+    ApplyRoundedControlCorners(State.ui.keysSurface.Hwnd, 12)
+    ApplyRoundedControlCorners(State.ui.optionsSurface.Hwnd, 12)
+    ApplyRoundedControlCorners(State.settingsButton.Hwnd, 12)
 
     ; アップデート
+    updateShift := wide ? 0 : -32
+    State.ui.updateSubtitle.Visible := wide && State.page = "update"
     State.ui.updateTitle.Move(contentX, contentY, contentW, 38)
     State.ui.updateSubtitle.Move(contentX, contentY + 38, contentW, 34)
-    State.ui.updateSurface.Move(contentX, contentY + 76, contentW, 170)
-    State.ui.currentVersionCaption.Move(contentX + 18, contentY + 92, 180, 30)
-    State.currentVersionLabel.Move(contentX + contentW - 198, contentY + 92, 180, 30)
-    State.ui.updateSeparator1.Move(contentX + 18, contentY + 132, contentW - 18, 1)
-    State.updatePageStatus.Move(contentX + 18, contentY + 145, contentW - 36, 34)
-    State.ui.updateSeparator2.Move(contentX + 18, contentY + 184, contentW - 18, 1)
-    State.ui.signatureLabel.Move(contentX + 18, contentY + 198, contentW - 36, 40)
-    State.updateButton.Move(contentX, contentY + 270, Min(280, contentW), 48)
-    State.ui.updateHelp.Move(contentX, contentY + 338, contentW, 64)
-    ApplyRoundedControlCorners(State.ui.updateSurface.Hwnd, 18)
-    ApplyRoundedControlCorners(State.updateButton.Hwnd, 16)
+    State.ui.updateSurface.Move(contentX, contentY + 76 + updateShift, contentW, 170)
+    State.ui.currentVersionCaption.Move(contentX + 18, contentY + 92 + updateShift, 180, 30)
+    State.currentVersionLabel.Move(contentX + contentW - 198,
+        contentY + 92 + updateShift, 180, 30)
+    State.ui.updateSeparator1.Move(contentX + 18,
+        contentY + 132 + updateShift, contentW - 18, 1)
+    State.updatePageStatus.Move(contentX + 18,
+        contentY + 145 + updateShift, contentW - 36, 34)
+    State.ui.updateSeparator2.Move(contentX + 18,
+        contentY + 184 + updateShift, contentW - 18, 1)
+    State.ui.signatureLabel.Move(contentX + 18,
+        contentY + 198 + updateShift, contentW - 36, 40)
+    State.updateButton.Move(contentX, contentY + 270 + updateShift, Min(280, contentW), 48)
+    State.ui.updateHelp.Move(contentX, contentY + 338 + updateShift, contentW, 64)
+    ApplyRoundedControlCorners(State.ui.updateSurface.Hwnd, 12)
+    ApplyRoundedControlCorners(State.updateButton.Hwnd, 12)
 }
 
 ApplyRoundedControlCorners(hwnd, radius := 16) {
@@ -892,6 +1026,15 @@ SaveInlineSettings(*) {
         return
     }
     newBackground := State.backgroundControl.Value ? 1 : 0
+    try newMinimumFreeWeight := Integer(Trim(State.minimumFreeWeightControl.Value))
+    catch {
+        State.settingsErrorLabel.Text := "残り重量は250～20000gの数値で指定してください。"
+        return
+    }
+    if newMinimumFreeWeight < 250 || newMinimumFreeWeight > 20000 {
+        State.settingsErrorLabel.Text := "残り重量は250～20000gで指定してください。"
+        return
+    }
     if Config.vehicleStorageEnabled && !newBackground {
         State.settingsErrorLabel.Text := "車両収納を使う場合はバックグラウンド操作が必要です。"
         return
@@ -904,7 +1047,8 @@ SaveInlineSettings(*) {
         hideWhileRunning: Config.hideWhileRunning,
         autoCheckUpdates: Config.autoCheckUpdates,
         washForwardCorrection: Config.washForwardCorrection,
-        goldRecoveryEnabled: Config.goldRecoveryEnabled
+        goldRecoveryEnabled: Config.goldRecoveryEnabled,
+        minimumFreeWeight: Config.minimumFreeWeight
     }
     UnregisterConfiguredHotkeys()
     Config.startHotkey := newStart
@@ -923,6 +1067,7 @@ SaveInlineSettings(*) {
     Config.autoCheckUpdates := State.autoUpdateControl.Value ? 1 : 0
     Config.washForwardCorrection := State.washCorrectionControl.Value ? 1 : 0
     Config.goldRecoveryEnabled := State.washCorrectionControl.Value ? 1 : 0
+    Config.minimumFreeWeight := newMinimumFreeWeight
     try {
         SaveAllSettingsAtomically()
     } catch as err {
@@ -934,6 +1079,7 @@ SaveInlineSettings(*) {
         Config.autoCheckUpdates := oldConfig.autoCheckUpdates
         Config.washForwardCorrection := oldConfig.washForwardCorrection
         Config.goldRecoveryEnabled := oldConfig.goldRecoveryEnabled
+        Config.minimumFreeWeight := oldConfig.minimumFreeWeight
         try RegisterConfiguredHotkeys()
         State.settingsErrorLabel.Text := "設定を保存できません: " err.Message
         return
@@ -941,6 +1087,7 @@ SaveInlineSettings(*) {
     State.footerLabel.Text := "開始 " Config.startHotkey "　停止 " Config.stopHotkey
     State.settingsErrorLabel.Opt("c248A3D")
     State.settingsErrorLabel.Text := "設定を保存しました。"
+    RefreshCapacityUi()
     UpdateConnectionStatus()
 }
 
@@ -975,6 +1122,8 @@ SaveAllSettingsAtomically() {
         IniWrite Config.minimumFreeWeight, temporarySettingsPath, "VehicleStorage", "MinimumFreeWeight"
         IniWrite Config.routeIdleFinishMs, temporarySettingsPath, "VehicleStorage", "RouteIdleFinishMs"
         IniWrite Config.routeSettleMs, temporarySettingsPath, "VehicleStorage", "RouteSettleMs"
+        IniWrite Config.vehicleSearchPulseMs, temporarySettingsPath, "VehicleStorage", "SearchPulseMs"
+        IniWrite Config.serverHealthIntervalMs, temporarySettingsPath, "Safety", "ServerHealthIntervalMs"
         FileMove temporarySettingsPath, settingsPath, true
     } catch as err {
         try FileDelete temporarySettingsPath
@@ -1017,33 +1166,60 @@ RefreshVehicleUi(*) {
         return
     valid := IsValidVehicleProfile(Config)
     State.vehicleEnabledControl.Value := Config.vehicleStorageEnabled && valid
+    State.vehicleEnabledControl.Enabled := valid
+        && !State.running && !State.registrationActive
     if valid {
         State.vehicleStatusLabel.Text := "登録済み　" Config.vehicleName
         outSeconds := Round(RouteTotalMs(Config.vehicleOutboundRoute) / 1000, 1)
         backSeconds := Round(RouteTotalMs(Config.vehicleReturnRoute) / 1000, 1)
         State.routeStatusLabel.Text := "往路 " outSeconds "秒　復路 " backSeconds "秒"
-        if Config.vehicleRouteFormat >= 2 {
-            viewSegments := RouteViewSegmentCount(Config.vehicleOutboundRoute)
-                + RouteViewSegmentCount(Config.vehicleReturnRoute)
+        if Config.vehicleRouteFormat >= 3 {
             State.routeDetailLabel.Text := "作業: " ActionModeLabel(Config.vehicleWorkMode)
-                . "　視点操作 " viewSegments "区間"
-            State.vehicleRegisterButton.Text := "視点つきルートを登録し直す"
+                . "　荷台の近距離自動探索: オン"
+            State.vehicleRegisterButton.Text := "車両ルートを登録し直す"
         } else {
-            State.routeDetailLabel.Text := "旧ルートは視点なしです。安定動作には登録し直してください。"
-            State.vehicleRegisterButton.Text := "視点つきルートへ更新"
+            State.routeDetailLabel.Text := "旧ルートです。荷台の再探索を使うには登録し直してください。"
+            State.vehicleRegisterButton.Text := "自動探索対応へ更新"
         }
         State.vehicleDeleteButton.Enabled := !State.running && !State.registrationActive
     } else {
-        State.vehicleStatusLabel.Text := "未登録"
-        State.routeStatusLabel.Text := "往復ルート　未登録"
-        State.routeDetailLabel.Text := "作業場所から車両後部までの往路と復路を記録します。"
-        State.vehicleRegisterButton.Text := "車両とルートを登録"
+        legacyProfile := Config.vehicleRegistered
+            && Config.vehicleRouteFormat > 0 && Config.vehicleRouteFormat < 3
+        State.vehicleStatusLabel.Text := legacyProfile ? "安全更新が必要　" Config.vehicleName : "未登録"
+        State.routeStatusLabel.Text := legacyProfile ? "旧方式のルートは自動再生しません" : "往復ルート　未登録"
+        State.routeDetailLabel.Text := legacyProfile
+            ? "視点入力方式が変わったため、車両とルートを登録し直してください。"
+            : "作業場所から車両後部までの往路と復路を記録します。"
+        State.vehicleRegisterButton.Text := legacyProfile ? "新方式で登録し直す" : "車両とルートを登録"
         State.vehicleDeleteButton.Enabled := false
     }
     if !State.registrationActive
         State.vehicleNameEdit.Value := Config.vehicleName
     State.vehicleRegisterButton.Enabled := !State.running && !State.registrationActive
     State.vehicleNameEdit.Enabled := !State.running && !State.registrationActive
+    RefreshCapacityUi()
+}
+
+RefreshCapacityUi(*) {
+    global State, Config
+    if !State.ui.HasOwnProp("capacitySurface")
+        return
+    if State.lastInventoryMaxWeight > 0 {
+        percent := Min(100, Max(0, Round(State.lastInventoryWeight * 100
+            / State.lastInventoryMaxWeight)))
+        State.capacityProgress.Value := percent
+        State.capacityStatusLabel.Text := "所持重量　"
+            FormatInventoryWeight(State.lastInventoryWeight) " / "
+            FormatInventoryWeight(State.lastInventoryMaxWeight) "　" percent "%"
+        State.capacityDetailLabel.Text := "残り "
+            . FormatInventoryWeight(State.lastInventoryFreeWeight)
+            . "　·　収納開始 " . FormatInventoryWeight(Config.minimumFreeWeight)
+    } else {
+        State.capacityProgress.Value := 0
+        State.capacityStatusLabel.Text := "所持重量　自動操作の開始後に確認"
+        State.capacityDetailLabel.Text := "残り "
+            FormatInventoryWeight(Config.minimumFreeWeight) " 以下で自動収納"
+    }
 }
 
 RefreshUpdateUi(*) {
@@ -1088,6 +1264,15 @@ BeginVehicleRegistration(*) {
         State.vehicleStatusLabel.Text := "FiveMが見つかりません"
         return
     }
+    try targetPid := WinGetPID("ahk_id " targetHwnd)
+    catch
+        targetPid := 0
+    healthResult := RunBackgroundBridge("health")
+    if !targetPid || !ParseServerHealth(healthResult, &registrationEpoch) {
+        State.vehicleStatusLabel.Text := "サーバー接続を確認できません"
+        WriteDiagnostic("REGISTRATION_PREFLIGHT_ERROR=" healthResult)
+        return
+    }
     vehicleName := Trim(StrReplace(StrReplace(State.vehicleNameEdit.Value, "`r", " "), "`n", " "))
     if !vehicleName
         vehicleName := "登録車両"
@@ -1100,6 +1285,8 @@ BeginVehicleRegistration(*) {
     ; 実際のルート記録中以外は移動を通さず、未記録の位置ずれを防ぎます。
     State.registrationMovementBlocked := true
     State.targetHwnd := targetHwnd
+    State.targetPid := targetPid
+    State.serverEpoch := registrationEpoch
     RefreshVehicleUi()
     try {
         ConfigureRegistrationControlKeys(true)
@@ -1117,16 +1304,19 @@ BeginVehicleRegistration(*) {
             throw Error("ここでは「" ActionModeLabel(Config.actionMode) "」を確認できません。作業場所に立ってやり直してください。")
 
         outboundRoute := RecordMovementRoute("車両登録　2/4",
-            "W/A/S/Dで車両後部へ移動し、矢印キーでストレージが見える向きへ調整します")
+            "W/A/S/Dで車両後部へ移動し、矢印キーで荷台が見える視点へ合わせます")
 
         if !CaptureStorageWithGuidedAdjustment(&outboundRoute, &storageId, &storageType)
             throw Error("車両後部の「ストレージを開く」を確認できませんでした。")
-        RunBackgroundBridge("close-inventory")
+        registrationReleased := ReleaseBackgroundTarget(true)
+        registrationCloseResult := RunBackgroundBridge("close-inventory")
+        if registrationCloseResult != "CLOSED" || !registrationReleased
+            throw Error("荷台画面を安全に閉じられないため、復路の記録を開始しません。")
         if !WaitRegistration(500)
             throw Error("登録を中止しました")
 
         returnRoute := RecordMovementRoute("車両登録　4/4",
-            "W/A/S/Dで元の位置へ戻り、矢印キーで作業対象が見える向きへ調整します")
+            "W/A/S/Dで元の位置へ戻し、矢印キーで作業対象へ視点を合わせます")
         if !ConfirmWorkWithGuidedAdjustment(&returnRoute, Config.actionMode)
             throw Error("復路の終点で作業ボタンを確認できません。往復ルートを登録し直してください。")
         VerifyVehicleRegistration(outboundRoute, returnRoute, storageId, storageType,
@@ -1147,7 +1337,7 @@ BeginVehicleRegistration(*) {
         Config.vehicleStorageId := storageId
         Config.vehicleStorageType := storageType
         Config.vehicleWorkMode := Config.actionMode
-        Config.vehicleRouteFormat := 2
+        Config.vehicleRouteFormat := 3
         Config.vehicleOutboundRoute := outboundRoute
         Config.vehicleReturnRoute := returnRoute
         Config.vehicleRegistered := 1
@@ -1178,12 +1368,14 @@ BeginVehicleRegistration(*) {
     } finally {
         try SetRegistrationViewMask(0)
         ConfigureRegistrationControlKeys(false)
-        RunBackgroundBridge("close-inventory")
         ReleaseBackgroundTarget(true)
+        RunBackgroundBridge("close-inventory")
         CloseRegistrationOverlay()
         State.registrationActive := false
         State.registrationCancelled := false
         State.targetHwnd := 0
+        State.targetPid := 0
+        State.serverEpoch := ""
         RefreshVehicleUi()
         ShowPage("vehicle")
         ShowMainWindow()
@@ -1198,45 +1390,47 @@ CancelVehicleRegistration(*) {
 CreateRegistrationOverlay(targetHwnd) {
     global State
     WinGetClientPos(&gameX, &gameY, &gameW, &gameH, "ahk_id " targetHwnd)
-    overlayW := Min(760, Max(320, gameW - 16))
+    overlayW := Min(680, Max(240, gameW - 24))
     overlayX := gameX + Floor((gameW - overlayW) / 2)
-    overlayY := gameY + 18
+    overlayY := gameY + 20
     overlay := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x20")
-    overlay.BackColor := "1C1C1E"
+    overlay.BackColor := "111318"
     overlay.MarginX := 0
     overlay.MarginY := 0
-    overlay.SetFont("s13 w700 cFFFFFF", "Yu Gothic UI")
-    titleLabel := overlay.AddText("x24 y14 w" (overlayW - 260) " h30 0x200", "車両登録")
-    overlay.SetFont("s10 w600 c64D2FF", "Yu Gothic UI")
-    feedbackLabel := overlay.AddText("x" (overlayW - 236) " y16 w212 h26 Right 0x200", "● 準備中")
-    overlay.SetFont("s9 w400 cD1D1D6", "Yu Gothic UI")
-    detailLabel := overlay.AddText("x24 y47 w" (overlayW - 48) " h42 Center 0x200", "準備しています…")
+    brandW := Min(150, Max(82, Floor((overlayW - 54) * 0.45)))
+    feedbackX := 30 + brandW
+    feedbackW := Max(82, overlayW - feedbackX - 18)
+    overlay.SetFont("s9 w600 c8E8E93", "Segoe UI Variable Text")
+    overlay.AddText("x18 y10 w" brandW " h20 0x200", "AI採掘機  /  ROUTE")
+    overlay.SetFont("s9 w600 c4CC9F0", "Segoe UI Variable Text")
+    feedbackLabel := overlay.AddText("x" feedbackX " y10 w" feedbackW
+        . " h20 Right 0x200", "準備中")
+    overlay.SetFont("s15 w600 cFFFFFF", "Segoe UI Variable Text")
+    titleLabel := overlay.AddText("x18 y34 w" (overlayW - 36) " h28 0x200", "車両ルートを登録")
+    overlay.SetFont("s9 w400 cC7C7CC", "Segoe UI Variable Text")
+    detailLabel := overlay.AddText("x18 y65 w" (overlayW - 36) " h34 0x200", "準備しています…")
 
-    moveCenter := Floor(overlayW * 0.29)
-    viewCenter := Floor(overlayW * 0.71)
-    overlay.SetFont("s9 w600 c8E8E93", "Yu Gothic UI")
-    overlay.AddText("x" (moveCenter - 90) " y91 w180 h22 Center", "移動　W / A / S / D")
-    overlay.AddText("x" (viewCenter - 90) " y91 w180 h22 Center", "視点　矢印キー")
+    moveCenter := Floor(overlayW / 2)
     State.registrationKeyControls := Map()
-    AddRegistrationKeyControl(overlay, "w", "W", 1, moveCenter - 20, 115)
-    AddRegistrationKeyControl(overlay, "a", "A", 4, moveCenter - 66, 153)
-    AddRegistrationKeyControl(overlay, "s", "S", 2, moveCenter - 20, 153)
-    AddRegistrationKeyControl(overlay, "d", "D", 8, moveCenter + 26, 153)
-    AddRegistrationKeyControl(overlay, "up", "↑", 16, viewCenter - 20, 115)
-    AddRegistrationKeyControl(overlay, "left", "←", 64, viewCenter - 66, 153)
-    AddRegistrationKeyControl(overlay, "down", "↓", 32, viewCenter - 20, 153)
-    AddRegistrationKeyControl(overlay, "right", "→", 128, viewCenter + 26, 153)
+    AddRegistrationKeyControl(overlay, "w", "W", 1, moveCenter - 91, 105)
+    AddRegistrationKeyControl(overlay, "a", "A", 4, moveCenter - 43, 105)
+    AddRegistrationKeyControl(overlay, "s", "S", 2, moveCenter + 5, 105)
+    AddRegistrationKeyControl(overlay, "d", "D", 8, moveCenter + 53, 105)
+    AddRegistrationKeyControl(overlay, "up", "↑", 16, moveCenter - 91, 137)
+    AddRegistrationKeyControl(overlay, "left", "←", 64, moveCenter - 43, 137)
+    AddRegistrationKeyControl(overlay, "down", "↓", 32, moveCenter + 5, 137)
+    AddRegistrationKeyControl(overlay, "right", "→", 128, moveCenter + 53, 137)
 
-    overlay.SetFont("s9 w600 cFFFFFF", "Yu Gothic UI")
-    timerLabel := overlay.AddText("x24 y193 w" (overlayW - 48) " h24 Center 0x200",
-        "記録待ち　—　移動と視点を同時に保存します")
-    overlay.SetFont("s9 w400 cAEAEB2", "Yu Gothic UI")
-    footerLabel := overlay.AddText("x24 y222 w" (overlayW - 48) " h24 Center",
-        "Enter 記録開始 / 到着確定　　　Esc 中止")
-    overlay.Show("NA x" overlayX " y" overlayY " w" overlayW " h254")
-    WinSetTransparent 244, "ahk_id " overlay.Hwnd
+    overlay.SetFont("s9 w600 cE5E5EA", "Segoe UI Variable Text")
+    timerLabel := overlay.AddText("x18 y171 w" (overlayW - 36) " h20 Center 0x200",
+        "待機中  ·  WASD 移動  ·  矢印 視点")
+    overlay.SetFont("s8 w400 c8E8E93", "Segoe UI Variable Text")
+    footerLabel := overlay.AddText("x18 y196 w" (overlayW - 36) " h18 Center",
+        "Enter  決定      Esc  中止")
+    overlay.Show("NA x" overlayX " y" overlayY " w" overlayW " h220")
+    WinSetTransparent 248, "ahk_id " overlay.Hwnd
     ApplyRoundedWindowCorners(overlay.Hwnd)
-    ApplyRoundedControlCorners(overlay.Hwnd, 24)
+    ApplyRoundedControlCorners(overlay.Hwnd, 16)
     State.registrationOverlay := overlay
     State.registrationOverlayTitle := titleLabel
     State.registrationOverlayDetail := detailLabel
@@ -1244,7 +1438,8 @@ CreateRegistrationOverlay(targetHwnd) {
     State.registrationOverlayTimer := timerLabel
     State.registrationOverlayFooter := footerLabel
     State.registrationOverlayWatchFn := MaintainRegistrationOverlayVisibility
-    SetTimer State.registrationOverlayWatchFn, 100
+    State.registrationLastMask := -1
+    SetTimer State.registrationOverlayWatchFn, 250
     UpdateRegistrationInputState(0, 0)
 }
 
@@ -1256,8 +1451,8 @@ UpdateRegistrationFooter(text) {
 
 AddRegistrationKeyControl(overlay, keyName, label, bit, x, y) {
     global State
-    overlay.SetFont("s11 w700 cD1D1D6", "Yu Gothic UI")
-    control := overlay.AddText("x" x " y" y " w40 h34 Center Border 0x200", label)
+    overlay.SetFont("s10 w600 cC7C7CC", "Segoe UI Variable Text")
+    control := overlay.AddText("x" x " y" y " w38 h28 Center Border 0x200", label)
     State.registrationKeyControls[keyName] := {control: control, label: label, bit: bit}
 }
 
@@ -1269,27 +1464,37 @@ UpdateRegistrationOverlay(title, detail := "", feedback := "", feedbackKind := "
         State.registrationOverlayDetail.Text := detail
     if IsObject(State.registrationOverlayFeedback) {
         color := feedbackKind = "success" ? "30D158"
-            : feedbackKind = "error" ? "FF453A" : "64D2FF"
+            : feedbackKind = "error" ? "FF453A"
+            : feedbackKind = "warning" ? "FF9F0A" : "4CC9F0"
         State.registrationOverlayFeedback.Opt("c" color)
         State.registrationOverlayFeedback.Text := feedback
+    }
+    if State.registrationMovementBlocked && IsObject(State.registrationOverlayTimer) {
+        phaseText := RegExReplace(feedback, "^[●\s]+", "")
+        State.registrationOverlayTimer.Text := (phaseText ? phaseText : "待機中")
+            . "  ·  入力待ち"
     }
 }
 
 UpdateRegistrationInputState(mask, elapsedMs := 0) {
     global State
-    if IsObject(State.registrationKeyControls) {
+    if IsObject(State.registrationKeyControls) && mask != State.registrationLastMask {
         for _, info in State.registrationKeyControls {
             active := (mask & info.bit) != 0
-            info.control.SetFont(active ? "s11 w700 c0A84FF" : "s11 w700 cD1D1D6",
-                "Yu Gothic UI")
-            info.control.Text := active ? "●" info.label : info.label
+            info.control.SetFont(active ? "s10 w700 c4CC9F0" : "s10 w600 cC7C7CC",
+                "Segoe UI Variable Text")
         }
+        State.registrationLastMask := mask
     }
     if IsObject(State.registrationOverlayTimer) {
-        moving := (mask & 15) ? "移動中" : "停止"
-        looking := (mask & 240) ? "視点調整中" : "視点停止"
-        State.registrationOverlayTimer.Text := "記録 " Round(elapsedMs / 1000, 1)
-            . "秒　　" moving "　/　" looking
+        if State.registrationMovementBlocked {
+            State.registrationOverlayTimer.Text := "待機中  ·  入力はまだ記録されません"
+        } else {
+            moving := (mask & 15) ? "移動中" : "停止"
+            looking := (mask & 240) ? "視点調整中" : "視点停止"
+            State.registrationOverlayTimer.Text := "記録 " Round(elapsedMs / 1000, 1)
+                . "秒  ·  " moving "  ·  " looking
+        }
     }
 }
 
@@ -1308,6 +1513,7 @@ CloseRegistrationOverlay() {
     State.registrationOverlayFooter := 0
     State.registrationOverlayWatchFn := 0
     State.registrationKeyControls := Map()
+    State.registrationLastMask := -1
 }
 
 MaintainRegistrationOverlayVisibility(*) {
@@ -1401,7 +1607,7 @@ IsVehicleRegistrationMovementBlocked(*) {
 }
 
 BlockRegistrationControlKey(*) {
-    ; 矢印はDevCon経由で視点入力へ変換します。未記録区間の移動と、
+    ; 矢印はDevConのdirect-lookへ変換します。未記録区間の移動と、
     ; 再生距離を変えるShift/Ctrl/Spaceも登録中だけゲームへ通しません。
 }
 
@@ -1441,7 +1647,7 @@ RecordMovementRoute(title, instruction, requireMovement := true, showCountdown :
                 if preStartMask || unsupportedKey {
                     UpdateRegistrationOverlay(title,
                         "W/A/S/D・矢印・Shift/Ctrl/Spaceをすべて離してから、Enterで開始してください。",
-                        "● キーを離してください", "error")
+                        "キーを離してください", "warning")
                 } else {
                     break
                 }
@@ -1455,7 +1661,7 @@ RecordMovementRoute(title, instruction, requireMovement := true, showCountdown :
                 throw Error("登録を中止しました")
         }
     } else {
-        UpdateRegistrationFooter("W/A/S/D・矢印キーで調整　　　Enter 調整確定　　　Esc 中止")
+        UpdateRegistrationFooter("W/A/S/D 位置   矢印 視点   Enter 確定   Esc 中止")
         UpdateRegistrationOverlay(title,
             instruction "`nキーをすべて離すと調整記録を開始します。",
             "● 入力待ち", "info")
@@ -1495,7 +1701,7 @@ RecordMovementRoute(title, instruction, requireMovement := true, showCountdown :
                 UpdateRegistrationInputState(0, now - routeStartedAt)
                 UpdateRegistrationOverlay(title,
                     "記録を一時停止しました。キーを離してFiveMへ戻ると再開します。",
-                    "● 一時停止", "error")
+                    "一時停止", "warning")
                 try State.registrationOverlay.Hide()
                 pausedAt := now
                 while !WinActive("ahk_id " State.targetHwnd) {
@@ -1526,7 +1732,7 @@ RecordMovementRoute(title, instruction, requireMovement := true, showCountdown :
             requestedViewMask := (mask >> 4) & 15
             if requestedViewMask != State.registrationViewMask {
                 if !SetRegistrationViewMask(requestedViewMask)
-                    throw Error("FiveMの視点を動かせませんでした。バックグラウンド接続を確認してください。")
+                    throw Error("FiveMの視点入力へ接続できませんでした。")
                 now := MonotonicMs()
             }
             maskChanged := mask != previousMask
@@ -1557,8 +1763,8 @@ RecordMovementRoute(title, instruction, requireMovement := true, showCountdown :
             if enterDown && !enterWasDown {
                 if mask {
                     UpdateRegistrationOverlay(title,
-                        "先に移動キーと矢印キーをすべて離してから、Enterを押してください。",
-                        "● キーを離してください", "error")
+                        "先にW/A/S/Dをすべて離してから、Enterを押してください。",
+                        "キーを離してください", "warning")
                 } else if requireMovement && !movementObserved {
                     UpdateRegistrationOverlay(title, instruction,
                         "● W/A/S/Dの移動がまだありません", "error")
@@ -1593,7 +1799,7 @@ RecordMovementRoute(title, instruction, requireMovement := true, showCountdown :
         return ""
     if !IsValidRoute(route, requireMovement, requireMovement ? 150 : 25)
         throw Error(requireMovement ? "移動が短すぎるか、ルートを正しく記録できませんでした。"
-            : "視点または立ち位置の調整を正しく記録できませんでした。")
+            : "立ち位置の調整を正しく記録できませんでした。")
     return route
 }
 
@@ -1602,13 +1808,13 @@ ConfirmRegistrationStart(actionMode) {
         UpdateRegistrationOverlay("車両登録　1/4", "現在の作業ボタンを検出しています…",
             "● 再検出中", "info")
         if ProbeWorkTarget(actionMode) {
-            UpdateRegistrationOverlay("車両登録　1/4", "作業場所と開始視点を確認しました。",
+            UpdateRegistrationOverlay("1/4  作業場所を確認", "作業ボタンを認識しました。",
                 "● 作業ボタンを検出", "success")
             return WaitRegistration(650)
         }
         UpdateRegistrationOverlay("車両登録　1/4",
-            "まだ見つかりません。W/A/S/Dで立ち位置、矢印キーで開始視点を微調整してください。",
-            "● 作業ボタン未検出", "error")
+            "まだ見つかりません。W/A/S/Dで立ち位置、矢印キーで視点を調整してください。",
+            "作業ボタン未検出", "warning")
         ; ここでの調整後の位置・視点が往路の起点になるため、調整断片自体は保存しません。
         RecordMovementRoute("車両登録　1/4",
             "作業ボタンが画面内に入るよう開始位置を調整します", false, false)
@@ -1627,8 +1833,8 @@ CaptureStorageWithGuidedAdjustment(&route, &storageId, &storageType) {
             return WaitRegistration(650)
         }
         UpdateRegistrationOverlay("車両登録　3/4",
-            "まだ見つかりません。W/A/S/Dで立ち位置、矢印キーで視点を微調整してください。",
-            "● ストレージ未検出", "error")
+            "まだ見つかりません。車両後部へ寄り、矢印キーで下向きに合わせてください。",
+            "荷台ターゲット未検出", "warning")
         adjustment := RecordMovementRoute("車両登録　3/4",
             "ストレージが画面内に入るよう微調整します", false, false)
         route := CombineRoutes(route, adjustment)
@@ -1649,8 +1855,8 @@ ConfirmWorkWithGuidedAdjustment(&route, actionMode) {
             return WaitRegistration(650)
         }
         UpdateRegistrationOverlay("車両登録　4/4",
-            "まだ見つかりません。W/A/S/Dで立ち位置、矢印キーで視点を微調整してください。",
-            "● 作業ボタン未検出", "error")
+            "まだ見つかりません。W/A/S/Dで立ち位置、矢印キーで視点を調整してください。",
+            "作業ボタン未検出", "warning")
         adjustment := RecordMovementRoute("車両登録　4/4",
             "作業ボタンが画面内に入るよう微調整します", false, false)
         route := CombineRoutes(route, adjustment)
@@ -1662,7 +1868,7 @@ ConfirmWorkWithGuidedAdjustment(&route, actionMode) {
 
 VerifyVehicleRegistration(outboundRoute, returnRoute, storageId, storageType, actionMode) {
     UpdateRegistrationFooter("往復テスト中は操作しないでください　　　Esc 中止")
-    UpdateRegistrationOverlay("保存前の往復テスト", "記録した移動と視点で車両へ向かいます。操作せずお待ちください。",
+    UpdateRegistrationOverlay("確認テスト", "記録した移動で車両へ向かいます。操作せずお待ちください。",
         "● 往路を再生", "info")
     if !PlayRegistrationRoute(outboundRoute)
         throw Error("保存前テストで車両まで移動できませんでした。ルートを登録し直してください。")
@@ -1670,16 +1876,19 @@ VerifyVehicleRegistration(outboundRoute, returnRoute, storageId, storageType, ac
     UpdateRegistrationOverlay("保存前の往復テスト", "登録した車両ストレージを照合しています…",
         "● 車両を確認", "info")
     if !OpenStorageAndCapture(&testStorageId, &testStorageType) {
-        RunBackgroundBridge("close-inventory")
         ReleaseBackgroundTarget(true)
+        RunBackgroundBridge("close-inventory")
         throw Error("保存前テストで車両ストレージを検出できませんでした。安全のため自動復路は再生しません。手動で作業場所へ戻ってください。")
     }
     if testStorageId != storageId || testStorageType != storageType {
-        RunBackgroundBridge("close-inventory")
         ReleaseBackgroundTarget(true)
+        RunBackgroundBridge("close-inventory")
         throw Error("保存前テストで別のストレージを検出しました。安全のため自動復路は再生しません。手動で作業場所へ戻ってください。")
     }
-    RunBackgroundBridge("close-inventory")
+    verificationReleased := ReleaseBackgroundTarget(true)
+    verificationCloseResult := RunBackgroundBridge("close-inventory")
+    if verificationCloseResult != "CLOSED" || !verificationReleased
+        throw Error("保存前テストで荷台画面を閉じられませんでした。自動復路は再生しません。手動で作業場所へ戻ってください。")
 
     UpdateRegistrationOverlay("保存前の往復テスト", "記録した復路と視点で作業場所へ戻ります。",
         "● 復路を再生", "info")
@@ -1700,12 +1909,12 @@ PlayRegistrationRoute(route) {
     global State, Config
     if !IsValidRoute(route) || !State.registrationActive || State.registrationCancelled
         return false
-    ReleaseBackgroundTarget(true)
     if !EnsureDevConPort()
         return false
     port := State.lastDevConPort
     routeStartedAt := MonotonicMs()
-    result := RunBackgroundBridgeCancelable(0, "play-route", port, route)
+    result := RunBackgroundBridgeCancelable(0,
+        "play-route-health", port, route, State.serverEpoch)
     elapsedMs := MonotonicMs() - routeStartedAt
     if !RegExMatch(result, "^ROUTE (29200|29300) (\d+)$", &parts)
         return false
@@ -1727,7 +1936,12 @@ SetRegistrationViewMask(mask) {
     result := RunBridgeForContext(0, "set-view", port, mask)
     if result != "VIEW " port " " mask {
         WriteDiagnostic("REGISTRATION_VIEW_ERROR=" result)
-        RunBackgroundBridge("deactivate-" port)
+        releaseResult := RunBackgroundBridge("deactivate-" port)
+        if releaseResult != "RELEASED" {
+            Sleep 75
+            releaseResult := RunBackgroundBridge("deactivate-" port)
+        }
+        WriteDiagnostic("REGISTRATION_VIEW_RELEASE=" releaseResult)
         State.registrationViewMask := 0
         return false
     }
@@ -1795,7 +2009,8 @@ ProbeWorkTarget(actionMode, expectedGeneration := 0) {
 
 ProbeTargetOption(probeMode, expectedResult, expectedGeneration := 0) {
     global State
-    ReleaseBackgroundTarget(true)
+    if !ReleaseBackgroundTarget(true)
+        return false
     activateResult := RunBridgeForContext(expectedGeneration, "activate")
     if !RegExMatch(activateResult, "^ACTIVATED (29200|29300)$", &portMatch)
         return false
@@ -1808,52 +2023,87 @@ ProbeTargetOption(probeMode, expectedResult, expectedGeneration := 0) {
         return false
     }
     result := RunBridgeForContext(expectedGeneration, probeMode)
-    ReleaseBackgroundTarget(true)
-    return result = expectedResult
+    released := ReleaseBackgroundTarget(true)
+    return released && result = expectedResult
 }
 
 OpenStorageAndCapture(&storageId, &storageType, expectedGeneration := 0) {
     global State
     storageId := ""
     storageType := ""
-    ; 以前のrightInventoryを登録対象と誤認しないよう、必ず閉じた状態から開始します。
+    State.lastStorageProbeResult := ""
+    ; 以前の入力を先に解放し、rightInventoryを誤認しないよう閉じた状態から開始します。
+    if !ReleaseBackgroundTarget(true) {
+        State.lastStorageProbeResult := "ERROR INPUT_RELEASE"
+        return false
+    }
     closeResult := RunBridgeForContext(expectedGeneration, "close-inventory")
-    if closeResult != "CLOSED"
+    if closeResult != "CLOSED" {
+        State.lastStorageProbeResult := closeResult
         return false
-    ReleaseBackgroundTarget(true)
+    }
     activateResult := RunBridgeForContext(expectedGeneration, "activate")
-    if !RegExMatch(activateResult, "^ACTIVATED (29200|29300)$", &portMatch)
+    if !RegExMatch(activateResult, "^ACTIVATED (29200|29300)$", &portMatch) {
+        State.lastStorageProbeResult := activateResult
         return false
+    }
     State.backgroundTargetActive := true
     State.backgroundDevConPort := portMatch[1] + 0
     State.lastDevConPort := State.backgroundDevConPort
     Sleep 350
-    if RunBridgeForContext(expectedGeneration, "probe-storage") != "PRESENT STORAGE" {
-        ReleaseBackgroundTarget(true)
+    probeResult := RunBridgeForContext(expectedGeneration, "probe-storage")
+    State.lastStorageProbeResult := probeResult
+    if probeResult != "PRESENT STORAGE" {
+        if !ReleaseBackgroundTarget(true)
+            State.lastStorageProbeResult := "ERROR INPUT_RELEASE"
         return false
     }
-    if RunBridgeForContext(expectedGeneration, "click-storage") != "CLICKED STORAGE" {
-        ReleaseBackgroundTarget(true)
+    clickResult := RunBridgeForContext(expectedGeneration, "click-storage")
+    State.lastStorageProbeResult := clickResult
+    if clickResult != "CLICKED STORAGE" {
+        CloseInventoryAfterStorageFailure(clickResult)
         return false
     }
-    ReleaseBackgroundTarget(true)
+    if !ReleaseBackgroundTarget(true) {
+        State.lastStorageProbeResult := "ERROR INPUT_RELEASE"
+        CloseInventoryAfterStorageFailure(State.lastStorageProbeResult)
+        return false
+    }
     deadline := MonotonicMs() + 5000
     while MonotonicMs() < deadline {
-        if expectedGeneration && !IsCurrentRun(expectedGeneration)
+        if expectedGeneration && !IsCurrentRun(expectedGeneration) {
+            CloseInventoryAfterStorageFailure(State.lastStorageProbeResult)
             return false
-        if State.registrationActive && State.registrationCancelled
+        }
+        if State.registrationActive && State.registrationCancelled {
+            CloseInventoryAfterStorageFailure(State.lastStorageProbeResult)
             return false
-        if !State.registrationActive && !State.running
+        }
+        if !State.registrationActive && !State.running {
+            CloseInventoryAfterStorageFailure(State.lastStorageProbeResult)
             return false
+        }
         capture := RunBridgeForContext(expectedGeneration, "capture-storage")
+        State.lastStorageProbeResult := capture
         if ParseStorageCapture(capture, &storageInfo) {
             storageId := storageInfo.id
             storageType := storageInfo.type
+            State.lastStorageProbeResult := "CAPTURED STORAGE"
             return true
         }
         Sleep 180
     }
+    CloseInventoryAfterStorageFailure(State.lastStorageProbeResult)
     return false
+}
+
+CloseInventoryAfterStorageFailure(originalResult) {
+    global State
+    released := ReleaseBackgroundTarget(true)
+    closeResult := RunBackgroundBridge("close-inventory")
+    State.lastStorageProbeResult := closeResult != "CLOSED" ? closeResult
+        : !released ? "ERROR INPUT_RELEASE" : originalResult
+    return closeResult = "CLOSED" && released
 }
 
 RunBridgeForContext(expectedGeneration, mode, bridgeArgs*) {
@@ -1868,7 +2118,7 @@ ParseStorageCapture(result, &storageInfo) {
     if !RegExMatch(result,
         "^STORAGE ([A-Za-z0-9+/]+={0,2}) ([A-Za-z0-9+/]+={0,2}) (\d+) (\d+) (\d+) (\d+)$", &parts)
         return false
-    if !IsValidBase64Token(parts[1]) || !IsValidBase64Token(parts[2])
+    if !IsValidBase64Token(parts[1]) || parts[2] != "dHJ1bms="
         return false
     storageInfo := {
         id: parts[1], type: parts[2], weight: parts[3] + 0,
@@ -2175,10 +2425,9 @@ HandleUpdateCheckResult(result, silent) {
         return
     }
     if status = "NOT_PUBLISHED" {
-        if !silent {
+        State.updatePageStatus.Text := "公開済みアップデートはありません"
+        if !silent
             State.statusLabel.Text := "●  公開済みアップデートはありません"
-            State.updatePageStatus.Text := "公開済みアップデートはありません"
-        }
         CleanupUpdateStage()
         RefreshUpdateUi()
         return
@@ -2188,11 +2437,11 @@ HandleUpdateCheckResult(result, silent) {
         securityIssue := InStr(StrLower(message), "signature")
             || InStr(StrLower(message), "public key")
             || InStr(StrLower(message), "security")
+        State.updatePageStatus.Text := securityIssue
+            ? "安全でない更新を拒否しました" : "更新情報を確認できませんでした"
         if !silent || securityIssue {
             State.statusLabel.Text := securityIssue
                 ? "●  安全でない更新を拒否しました" : "●  更新を確認できません"
-            State.updatePageStatus.Text := securityIssue
-                ? "安全でない更新を拒否しました" : "更新情報を確認できませんでした"
         }
         CleanupUpdateStage()
         RefreshUpdateUi()
@@ -2420,6 +2669,20 @@ StartMining(*) {
         State.connectionLabel.Text := "FiveM: 未接続"
         return
     }
+    try targetPid := WinGetPID("ahk_id " targetHwnd)
+    catch
+        targetPid := 0
+    if !targetPid {
+        State.statusLabel.Text := "●  FiveMのプロセスを確認できません"
+        return
+    }
+    preflightHealth := RunBackgroundBridge("health")
+    if !ParseServerHealth(preflightHealth, &serverEpoch) {
+        State.statusLabel.Text := "●  サーバー接続を確認できないため開始しません"
+        State.connectionLabel.Text := "FiveM　サーバー未接続"
+        WriteDiagnostic("SERVER_PREFLIGHT_ERROR=" preflightHealth)
+        return
+    }
 
     Critical "On"
     try {
@@ -2428,6 +2691,7 @@ StartMining(*) {
     State.generation += 1
     runGeneration := State.generation
     State.targetHwnd := targetHwnd
+    State.targetPid := targetPid
     State.successes := 0
     State.attempts := 0
     State.meals := 0
@@ -2448,8 +2712,16 @@ StartMining(*) {
     State.backgroundDevConPort := 0
     State.automationPhase := "preparing"
     State.inventoryBaseline := ""
+    State.workpointProbeFailures := 0
     State.nextCapacityCheckAt := 0
     State.capacityProbeFailures := 0
+    State.serverEpoch := serverEpoch
+    State.serverHealthFailures := 0
+    State.nextServerHealthAt := MonotonicMs() + Config.serverHealthIntervalMs
+    State.lastInventoryWeight := 0
+    State.lastInventoryMaxWeight := 0
+    State.lastInventoryFreeWeight := 0
+    State.lastCapacityReason := "監視中"
     State.mainButton.Text := "自動操作を停止"
     State.actionControl.Enabled := false
     SetConfigurationEnabled(false)
@@ -2471,10 +2743,15 @@ StartMining(*) {
     if !IsCurrentRun(runGeneration)
         return
     if Config.backgroundMode {
-        releaseResult := RunBackgroundBridge("deactivate")
+        releaseOk := ReleaseBackgroundTarget(true)
         if !IsCurrentRun(runGeneration)
             return
-        WriteDiagnostic("BG_START_RELEASE=" releaseResult)
+        WriteDiagnostic("BG_START_RELEASE=" (releaseOk ? "RELEASED" : "FAILED"))
+        if !releaseOk {
+            StopMining()
+            State.statusLabel.Text := "開始前の入力解除を確認できないため安全停止しました"
+            return
+        }
     }
 
     if Config.vehicleStorageEnabled && IsCurrentRun(runGeneration) {
@@ -2488,6 +2765,17 @@ StartMining(*) {
             return
         }
         State.inventoryBaseline := inventoryInfo.items
+        UpdateInventoryCapacityState(inventoryInfo)
+        if CapacityNeedsStorage(inventoryInfo, &startReason, &startFreeWeight) {
+            WriteDiagnostic("INVENTORY_START_CAPACITY reason=" startReason
+                " free=" startFreeWeight)
+            StopMining()
+            State.statusLabel.Text := startReason = "weight"
+                ? "開始時点で残り重量が少ないため開始しませんでした"
+                : "開始時点で空きスロットがないため開始しませんでした"
+            ShowPage("vehicle")
+            return
+        }
         State.nextCapacityCheckAt := MonotonicMs() + Config.capacityCheckIntervalMs
         WriteDiagnostic("INVENTORY_BASELINE weight=" inventoryInfo.weight
             " max=" inventoryInfo.maxWeight " used=" inventoryInfo.used)
@@ -2512,6 +2800,12 @@ StopMining(*) {
     State.generation += 1
     State.automationPhase := "stopped"
     State.inventoryBaseline := ""
+    State.capacityProbeFailures := 0
+    State.workpointProbeFailures := 0
+    State.serverEpoch := ""
+    State.serverHealthFailures := 0
+    State.nextServerHealthAt := 0
+    State.targetPid := 0
 
     if IsObject(State.timerFn) {
         try SetTimer(State.timerFn, 0)
@@ -2538,7 +2832,8 @@ SetConfigurationEnabled(enabled) {
     for control in [State.startHotkeyControl, State.stopHotkeyControl,
         State.backgroundControl, State.hideControl,
         State.washCorrectionControl, State.autoUpdateControl, State.vehicleEnabledControl,
-        State.vehicleRegisterButton, State.vehicleNameEdit] {
+        State.vehicleRegisterButton, State.vehicleNameEdit,
+        State.minimumFreeWeightControl] {
         try control.Enabled := enabled
     }
     ; 実行中もナビゲーションと主要ボタンは押せます。変更操作を選んだ時点で
@@ -2567,6 +2862,82 @@ ScheduleNext(expectedGeneration, delayMs) {
     SetTimer(nextFn, -Max(1, delayMs))
 }
 
+ParseServerHealth(result, &epoch) {
+    epoch := ""
+    if !RegExMatch(result, "^HEALTH READY ([A-Za-z0-9_-]{8,512})$", &parts)
+        return false
+    epoch := parts[1]
+    return true
+}
+
+ValidateServerEpochCheckpoint(expectedGeneration, checkpoint) {
+    global State
+    if !IsCurrentRun(expectedGeneration) || !State.serverEpoch
+        return false
+    if !IsTargetIdentityAlive()
+        return false
+    healthResult := RunBackgroundBridgeCancelable(expectedGeneration, "health")
+    if !ParseServerHealth(healthResult, &epoch) || epoch != State.serverEpoch {
+        WriteDiagnostic("SERVER_CHECKPOINT_ERROR point=" checkpoint
+            " expected=" State.serverEpoch " result=" healthResult)
+        return false
+    }
+    return true
+}
+
+IsTargetIdentityAlive() {
+    global State
+    if !State.targetHwnd || !State.targetPid || !WinExist("ahk_id " State.targetHwnd)
+        return false
+    try return WinGetPID("ahk_id " State.targetHwnd) = State.targetPid
+    catch
+        return false
+}
+
+MaybeHandleServerHealth(expectedGeneration) {
+    global State, Config
+    if !IsCurrentRun(expectedGeneration)
+        return true
+    if !IsTargetIdentityAlive() {
+        StopAutomationWithFault("FiveMが終了したため自動停止しました")
+        return true
+    }
+    now := MonotonicMs()
+    if now < State.nextServerHealthAt
+        return false
+
+    State.automationPhase := "server_health"
+    healthResult := RunBackgroundBridgeCancelable(expectedGeneration, "health")
+    if !IsCurrentRun(expectedGeneration)
+        return true
+    if ParseServerHealth(healthResult, &epoch) {
+        if State.serverEpoch && epoch != State.serverEpoch {
+            WriteDiagnostic("SERVER_EPOCH_CHANGED old=" State.serverEpoch " new=" epoch)
+            StopAutomationWithFault("サーバー再起動または再接続を検知したため自動停止しました")
+            return true
+        }
+        State.serverEpoch := epoch
+        State.serverHealthFailures := 0
+        State.nextServerHealthAt := now + Config.serverHealthIntervalMs
+        State.connectionLabel.Text := "FiveM　サーバー接続中"
+        State.automationPhase := "working"
+        return false
+    }
+
+    State.serverHealthFailures += 1
+    State.nextServerHealthAt := now + 900
+    WriteDiagnostic("SERVER_HEALTH_ERROR attempt=" State.serverHealthFailures
+        " result=" healthResult)
+    if State.serverHealthFailures >= 3 {
+        StopAutomationWithFault("サーバー再起動または切断を検知したため自動停止しました")
+        return true
+    }
+    State.statusLabel.Text := "接続状態を確認中（" State.serverHealthFailures "/3）"
+    State.connectionLabel.Text := "FiveM　応答待ち"
+    ScheduleNext(expectedGeneration, 1000)
+    return true
+}
+
 MaybeHandleVehicleCapacity(expectedGeneration) {
     global State, Config
     if !Config.vehicleStorageEnabled || !IsCurrentRun(expectedGeneration)
@@ -2576,7 +2947,7 @@ MaybeHandleVehicleCapacity(expectedGeneration) {
         return false
     State.nextCapacityCheckAt := now + Config.capacityCheckIntervalMs
     State.automationPhase := "capacity_check"
-    snapshotResult := RunBackgroundBridge("inventory-snapshot")
+    snapshotResult := RunBackgroundBridgeCancelable(expectedGeneration, "inventory-snapshot")
     if !IsCurrentRun(expectedGeneration)
         return true
     if !ParseInventorySnapshot(snapshotResult, &inventoryInfo) {
@@ -2586,13 +2957,14 @@ MaybeHandleVehicleCapacity(expectedGeneration) {
             StopAutomationWithFault("インベントリ状態を確認できないため安全停止しました", "vehicle")
             return true
         }
-        State.automationPhase := "working"
-        return false
+        State.statusLabel.Text := "所持重量を再確認中（" State.capacityProbeFailures "/3）"
+        State.nextCapacityCheckAt := MonotonicMs() + 850
+        ScheduleNext(expectedGeneration, 950)
+        return true
     }
     State.capacityProbeFailures := 0
-    freeWeight := Max(0, inventoryInfo.maxWeight - inventoryInfo.weight)
-    needsStorage := freeWeight <= Config.minimumFreeWeight
-        || inventoryInfo.used >= inventoryInfo.slots
+    UpdateInventoryCapacityState(inventoryInfo)
+    needsStorage := CapacityNeedsStorage(inventoryInfo, &capacityReason, &freeWeight)
     if !needsStorage {
         State.automationPhase := "working"
         return false
@@ -2601,19 +2973,63 @@ MaybeHandleVehicleCapacity(expectedGeneration) {
         StopAutomationWithFault("開始前の持ち物で容量が不足しています。所持品を整理してください", "vehicle")
         return true
     }
-    if State.runMode = "gold" && !ProbeWorkTarget("gold", expectedGeneration) {
-        ; 位置補正の途中から、登録時の起点を前提にした車両ルートを再生しません。
-        ; targetが見つかるまでは各周期で先に再確認し、GoldAttempt側に補正だけを
-        ; 任せます。見つかった周期は砂金を追加で採る前に収納へ進みます。
+    State.lastCapacityReason := capacityReason = "weight"
+        ? "残り重量が設定値以下" : "空きスロットなし"
+    WriteDiagnostic("VEHICLE_CAPACITY_TRIGGER reason=" capacityReason
+        " weight=" inventoryInfo.weight " max=" inventoryInfo.maxWeight
+        " free=" freeWeight " used=" inventoryInfo.used " slots=" inventoryInfo.slots)
+    if !ProbeWorkTarget(State.runMode, expectedGeneration) {
+        ; 再出現待ちや洗浄・砂金の位置ずれ中に、登録起点前提のルートを
+        ; 再生しません。容量不足中は追加採集も止めたまま再確認します。
+        State.workpointProbeFailures += 1
         State.nextCapacityCheckAt := 0
-        State.automationPhase := "working"
-        State.statusLabel.Text := "作業位置を戻してから自動収納します"
-        WriteDiagnostic("VEHICLE_GOLD_WORKPOINT_PENDING")
-        return false
+        State.automationPhase := "verify_workpoint"
+        State.statusLabel.Text := "収納前に登録した作業位置を確認中（"
+            State.workpointProbeFailures "/10）"
+        WriteDiagnostic("VEHICLE_WORKPOINT_PENDING attempt=" State.workpointProbeFailures)
+        if State.workpointProbeFailures >= 10 {
+            StopAutomationWithFault("登録した作業位置を確認できないため安全停止しました", "vehicle")
+            return true
+        }
+        ScheduleNext(expectedGeneration, 850)
+        return true
     }
+    State.workpointProbeFailures := 0
     State.timerFn := 0
     RunVehicleStorageCycle(expectedGeneration)
     return true
+}
+
+CapacityNeedsStorage(inventoryInfo, &reason, &freeWeight) {
+    global Config
+    reason := ""
+    freeWeight := Max(0, inventoryInfo.maxWeight - inventoryInfo.weight)
+    if freeWeight <= Config.minimumFreeWeight {
+        reason := "weight"
+        return true
+    }
+    if inventoryInfo.used >= inventoryInfo.slots {
+        reason := "slots"
+        return true
+    }
+    return false
+}
+
+UpdateInventoryCapacityState(inventoryInfo) {
+    global State, Config
+    State.lastInventoryWeight := inventoryInfo.weight
+    State.lastInventoryMaxWeight := inventoryInfo.maxWeight
+    State.lastInventoryFreeWeight := Max(0, inventoryInfo.maxWeight - inventoryInfo.weight)
+    State.lastCapacityReason := "残り " . FormatInventoryWeight(State.lastInventoryFreeWeight)
+        . "（収納開始 " . FormatInventoryWeight(Config.minimumFreeWeight) . "）"
+    RefreshCapacityUi()
+}
+
+FormatInventoryWeight(value) {
+    value := Max(0, Round(value))
+    if value >= 1000
+        return Round(value / 1000, 1) " kg"
+    return value " g"
 }
 
 ParseInventorySnapshot(result, &inventoryInfo) {
@@ -2734,21 +3150,37 @@ RunVehicleStorageCycle(expectedGeneration) {
             StopAutomationWithFault("車両への移動を完了できないため安全停止しました", "vehicle")
         return
     }
+    if !ValidateServerEpochCheckpoint(expectedGeneration, "vehicle_arrival") {
+        StopAutomationWithFault("移動中のサーバー再起動または切断を検知したため自動停止しました", "vehicle")
+        return
+    }
 
     storageOpened := false
     depositOk := false
     failureMessage := ""
+    storageReturnCorrection := ""
+    locatorFailure := ""
+    inventoryCloseResult := ""
+    inputReleaseOk := false
     try {
         if !IsCurrentRun(expectedGeneration)
             return
         State.automationPhase := "locate_storage"
-        State.statusLabel.Text := "登録車両のストレージを確認しています"
-        if !OpenStorageAndCapture(&storageId, &storageType, expectedGeneration) {
-            failureMessage := "車両が見つからないか、登録位置から動いています"
+        State.statusLabel.Text := "車両後部の荷台ターゲットを探索しています"
+        if !LocateRegisteredStorage(&storageId, &storageType,
+            &storageReturnCorrection, &locatorFailure, expectedGeneration) {
+            failureMessage := locatorFailure = "wrong_storage"
+                ? "別の車両ストレージを検出したため何も収納しませんでした"
+                : locatorFailure = "ambiguous"
+                    ? "荷台候補が複数あるため安全停止しました"
+                : locatorFailure = "route_error"
+                    ? "荷台探索中の位置を保証できないため安全停止しました"
+                    : "登録車両の荷台を安全に特定できませんでした"
         } else {
             storageOpened := true
-            if storageId != Config.vehicleStorageId || storageType != Config.vehicleStorageType {
-                failureMessage := "登録した車両と一致しないため、何も収納しませんでした"
+            if !ValidateServerEpochCheckpoint(expectedGeneration, "before_deposit") {
+                failureMessage := "収納直前にサーバー再起動または切断を検知したため停止しました"
+                locatorFailure := "server_session"
             } else {
                 State.automationPhase := "depositing"
                 State.statusLabel.Text := "今回増えた採集品だけを収納しています"
@@ -2758,7 +3190,8 @@ RunVehicleStorageCycle(expectedGeneration) {
                     State.inventoryBaseline)
                 if RegExMatch(depositResult, "^DEPOSITED (\d+) (\d+)$", &depositParts)
                     && depositParts[1] + 0 > 0 {
-                    postDepositResult := RunBackgroundBridge("inventory-snapshot")
+                    postDepositResult := RunBackgroundBridgeCancelable(expectedGeneration,
+                        "inventory-snapshot")
                     if !ParseInventorySnapshot(postDepositResult, &postDepositInfo)
                         || InventorySpecHasIncrease(postDepositInfo.items,
                             State.inventoryBaseline) {
@@ -2768,6 +3201,7 @@ RunVehicleStorageCycle(expectedGeneration) {
                         ; 消費済みの開始時アイテムを将来の採集品と取り違えないよう、
                         ; 正常収納後の残量を次回の保護基準にします。
                         State.inventoryBaseline := postDepositInfo.items
+                        UpdateInventoryCapacityState(postDepositInfo)
                         depositOk := true
                         State.lastStorageResult := depositParts[1] "個を収納"
                         WriteDiagnostic("VEHICLE_DEPOSIT count=" depositParts[1]
@@ -2781,14 +3215,42 @@ RunVehicleStorageCycle(expectedGeneration) {
         }
     } catch as err {
         failureMessage := "収納処理でエラーが発生しました"
+        if !storageOpened
+            locatorFailure := "route_error"
         WriteDiagnostic("VEHICLE_CYCLE_ERROR=" err.Message)
     } finally {
-        RunBackgroundBridge("close-inventory")
-        ReleaseBackgroundTarget(true)
+        inputReleaseOk := ReleaseBackgroundTarget(true)
+        inventoryCloseResult := RunBackgroundBridge("close-inventory")
     }
 
     if !IsCurrentRun(expectedGeneration)
         return
+    if inventoryCloseResult != "CLOSED" {
+        WriteDiagnostic("VEHICLE_CLOSE_ERROR=" inventoryCloseResult)
+        StopAutomationWithFault("インベントリを安全に閉じられないため停止しました", "vehicle")
+        return
+    }
+    if !inputReleaseOk {
+        StopAutomationWithFault("荷台操作の入力解除を確認できないため安全停止しました", "vehicle")
+        return
+    }
+    if storageOpened && !ValidateServerEpochCheckpoint(expectedGeneration, "after_deposit") {
+        StopAutomationWithFault("収納中のサーバー再起動または切断を検知したため自動停止しました", "vehicle")
+        return
+    }
+    if locatorFailure {
+        StopAutomationWithFault(failureMessage, "vehicle")
+        return
+    }
+    if storageReturnCorrection {
+        State.automationPhase := "return_to_route_anchor"
+        State.statusLabel.Text := "探索位置から登録ルートへ戻しています"
+        if !PlayRegisteredRoute(storageReturnCorrection, expectedGeneration,
+            "荷台探索のずれを戻しています") {
+            StopAutomationWithFault("荷台探索位置から戻れないため安全停止しました", "vehicle")
+            return
+        }
+    }
     State.automationPhase := "route_to_work"
     State.statusLabel.Text := "作業場所へ戻っています"
     returned := PlayRegisteredRoute(Config.vehicleReturnRoute, expectedGeneration, "作業場所へ復帰中")
@@ -2818,10 +3280,170 @@ RunVehicleStorageCycle(expectedGeneration) {
     State.lastMineAt := 0
     ResetGoldRecoveryState()
     State.nextCapacityCheckAt := MonotonicMs() + Config.capacityCheckIntervalMs
+    State.workpointProbeFailures := 0
     State.automationPhase := "working"
     State.statusLabel.Text := "収納完了。作業を再開します"
     WriteDiagnostic("VEHICLE_TRIP_COMPLETE trip=" State.storageTrips)
     ScheduleNext(expectedGeneration, 900)
+}
+
+LocateRegisteredStorage(&storageId, &storageType, &returnCorrection,
+    &failureCode, expectedGeneration) {
+    global State, Config
+    storageId := ""
+    storageType := ""
+    returnCorrection := ""
+    failureCode := ""
+
+    if OpenStorageAndCapture(&candidateId, &candidateType, expectedGeneration) {
+        if candidateId = Config.vehicleStorageId
+            && candidateType = Config.vehicleStorageType {
+            storageId := candidateId
+            storageType := candidateType
+            WriteDiagnostic("VEHICLE_SEARCH anchor=matched")
+            return true
+        }
+        WriteDiagnostic("VEHICLE_SEARCH anchor=wrong_storage")
+        if !CloseInventoryAfterStorageFailure("WRONG STORAGE") {
+            failureCode := "route_error"
+            return false
+        }
+        failureCode := "wrong_storage"
+        return false
+    }
+    initialProbeFailure := StorageProbeFailureCode()
+    if initialProbeFailure {
+        failureCode := initialProbeFailure
+        WriteDiagnostic("VEHICLE_SEARCH anchor_probe=" State.lastStorageProbeResult)
+        return false
+    }
+
+    searchRoutes := VehicleSearchRoutes(Config.vehicleSearchPulseMs)
+    for index, correctionRoute in searchRoutes {
+        if !IsCurrentRun(expectedGeneration)
+            return false
+        inverseRoute := ReverseRoute(correctionRoute)
+        if !inverseRoute {
+            failureCode := "route_error"
+            return false
+        }
+        State.statusLabel.Text := "荷台ターゲットを再探索中（" index "/" searchRoutes.Length "）"
+        if !PlayRegisteredRoute(correctionRoute, expectedGeneration,
+            "車両後部を探索中") {
+            failureCode := "route_error"
+            return false
+        }
+
+        matched := false
+        openedCandidate := OpenStorageAndCapture(&candidateId, &candidateType,
+            expectedGeneration)
+        if openedCandidate {
+            if candidateId = Config.vehicleStorageId
+                && candidateType = Config.vehicleStorageType {
+                matched := true
+                storageId := candidateId
+                storageType := candidateType
+                returnCorrection := inverseRoute
+                WriteDiagnostic("VEHICLE_SEARCH matched_attempt=" index)
+            } else {
+                WriteDiagnostic("VEHICLE_SEARCH wrong_storage_attempt=" index)
+                if !CloseInventoryAfterStorageFailure("WRONG STORAGE") {
+                    failureCode := "route_error"
+                    return false
+                }
+                if !PlayRegisteredRoute(inverseRoute, expectedGeneration,
+                    "探索位置を戻しています") {
+                    failureCode := "route_error"
+                    return false
+                }
+                failureCode := "wrong_storage"
+                return false
+            }
+        } else {
+            probeFailure := StorageProbeFailureCode()
+            if probeFailure {
+                if !CloseInventoryAfterStorageFailure(State.lastStorageProbeResult) {
+                    failureCode := "route_error"
+                    return false
+                }
+                if !PlayRegisteredRoute(inverseRoute, expectedGeneration,
+                    "探索位置を戻しています") {
+                    failureCode := "route_error"
+                    return false
+                }
+                failureCode := probeFailure
+                WriteDiagnostic("VEHICLE_SEARCH probe_stop=" State.lastStorageProbeResult)
+                return false
+            }
+        }
+        if matched
+            return true
+        if !PlayRegisteredRoute(inverseRoute, expectedGeneration,
+            "探索位置を戻しています") {
+            failureCode := "route_error"
+            return false
+        }
+    }
+    failureCode := "not_found"
+    WriteDiagnostic("VEHICLE_SEARCH exhausted=" searchRoutes.Length)
+    return false
+}
+
+StorageProbeFailureCode() {
+    global State
+    if State.lastStorageProbeResult = "AMBIGUOUS STORAGE"
+        return "ambiguous"
+    if InStr(State.lastStorageProbeResult, "ERROR ") = 1
+        return "route_error"
+    return ""
+}
+
+VehicleSearchRoutes(pulseMs) {
+    pulseMs := Min(350, Max(150, Round(pulseMs)))
+    longerMs := Min(500, pulseMs + 140)
+    routes := []
+    ; 原点から毎回短く出て必ず戻るため、探索のたびに位置ずれを累積しません。
+    ; まず立ち位置を探し、その後だけdirect-lookを組み合わせて、車両位置と
+    ; カメラ方向の小さなずれを両方カバーします。登録ID一致までは収納しません。
+    for mask in [1, 2, 4, 8, 5, 9, 6, 10]
+        routes.Push(pulseMs ":" mask)
+    for mask in [17, 34, 68, 136, 65, 129, 66, 130]
+        routes.Push(pulseMs ":" mask)
+    for mask in [1, 2, 4, 8]
+        routes.Push(longerMs ":" mask)
+    return routes
+}
+
+ReverseRoute(route) {
+    if !IsValidRoute(route, false, 25)
+        return ""
+    steps := StrSplit(route, ",")
+    reversed := ""
+    loop steps.Length {
+        step := steps[steps.Length - A_Index + 1]
+        if !RegExMatch(step, "^(\d{2,4}):(\d{1,3})$", &parts)
+            return ""
+        mask := parts[2] + 0
+        inverseMask := 0
+        if mask & 1
+            inverseMask |= 2
+        if mask & 2
+            inverseMask |= 1
+        if mask & 4
+            inverseMask |= 8
+        if mask & 8
+            inverseMask |= 4
+        if mask & 16
+            inverseMask |= 32
+        if mask & 32
+            inverseMask |= 16
+        if mask & 64
+            inverseMask |= 128
+        if mask & 128
+            inverseMask |= 64
+        reversed .= (reversed ? "," : "") parts[1] ":" inverseMask
+    }
+    return IsValidRoute(reversed, false, 25) ? reversed : ""
 }
 
 PlayRegisteredRoute(route, expectedGeneration, statusText) {
@@ -2834,7 +3456,7 @@ PlayRegisteredRoute(route, expectedGeneration, statusText) {
     State.statusLabel.Text := statusText
     routeStartedAt := MonotonicMs()
     routeResult := RunBackgroundBridgeCancelable(expectedGeneration,
-        "play-route", port, route)
+        "play-route-health", port, route, State.serverEpoch)
     routeElapsedMs := MonotonicMs() - routeStartedAt
     if !RegExMatch(routeResult, "^ROUTE (29200|29300) (\d+)$", &parts)
         return false
@@ -2848,13 +3470,37 @@ PlayRegisteredRoute(route, expectedGeneration, statusText) {
 
 EnsureDevConPort() {
     global State
-    if State.lastDevConPort = 29200 || State.lastDevConPort = 29300
-        return true
+    if State.lastDevConPort = 29200 || State.lastDevConPort = 29300 {
+        cachedRelease := RunBackgroundBridge("deactivate-" State.lastDevConPort)
+        if cachedRelease != "RELEASED" {
+            Sleep 75
+            cachedRelease := RunBackgroundBridge("deactivate-" State.lastDevConPort)
+        }
+        WriteDiagnostic("DEVCON_CACHED_RELEASE=" cachedRelease)
+        if cachedRelease = "RELEASED" {
+            State.backgroundTargetActive := false
+            State.backgroundDevConPort := 0
+            return true
+        }
+        State.lastDevConPort := 0
+    }
     activateResult := RunBackgroundBridge("activate")
     if !RegExMatch(activateResult, "^ACTIVATED (29200|29300)$", &parts)
         return false
-    State.lastDevConPort := parts[1] + 0
-    RunBackgroundBridge("deactivate-" State.lastDevConPort)
+    candidatePort := parts[1] + 0
+    releaseResult := RunBackgroundBridge("deactivate-" candidatePort)
+    if releaseResult != "RELEASED" {
+        Sleep 75
+        releaseResult := RunBackgroundBridge("deactivate-" candidatePort)
+    }
+    WriteDiagnostic("DEVCON_PREFLIGHT_RELEASE=" releaseResult)
+    if releaseResult != "RELEASED" {
+        State.lastDevConPort := 0
+        return false
+    }
+    State.lastDevConPort := candidatePort
+    State.backgroundTargetActive := false
+    State.backgroundDevConPort := 0
     return true
 }
 
@@ -2882,6 +3528,8 @@ StopAutomationWithFault(message, pageName := "overview") {
 AutomationCycle(expectedGeneration) {
     global State
     if !IsCurrentRun(expectedGeneration)
+        return
+    if MaybeHandleServerHealth(expectedGeneration)
         return
     if MaybeHandleVehicleCapacity(expectedGeneration)
         return
@@ -3056,7 +3704,7 @@ PerformGoldRecoveryStep(expectedGeneration) {
     port := State.lastDevConPort
     State.statusLabel.Text := "●  砂金位置を自動補正中 (" nextStep "/6)"
     recoveryResult := RunBackgroundBridgeCancelable(expectedGeneration,
-        "play-route", port, route)
+        "play-route-health", port, route, State.serverEpoch)
     if !IsCurrentRun(expectedGeneration)
         return false
     routeOk := recoveryResult = "ROUTE " port " " RouteTotalMs(route)
@@ -3618,31 +4266,43 @@ RunBackgroundBridgeCancelable(expectedGeneration, mode, bridgeArgs*) {
         State.activeBridgeOperationToken := operationToken
         Critical "Off"
 
-        timeoutMs := mode = "play-route" && bridgeArgs.Length >= 2
-            ? Min(125000, Max(9000, RouteTotalMs(bridgeArgs[2]) + 5000))
-            : mode = "deposit-delta" ? 50000 : 9000
+        if InStr(mode, "play-route") && bridgeArgs.Length >= 2 {
+            routeDurationMs := RouteTotalMs(bridgeArgs[2])
+            if mode = "play-route-health" {
+                ; 各2.5秒区切りのCDP healthはroot取得3秒＋socket処理4秒まで
+                ; 待つため、長い登録経路では全チェック回数分を予算化します。
+                ; 開始時と終了時の照合も含め、境界一致時の重複省略ぶんは余裕側です。
+                healthChecks := Floor(routeDurationMs / 2500) + 2
+                timeoutMs := Min(380000,
+                    Max(18000, routeDurationMs + healthChecks * 7200 + 5000))
+            } else {
+                timeoutMs := Min(125000, Max(9000, routeDurationMs + 5000))
+            }
+        } else {
+            timeoutMs := mode = "deposit-delta" ? 50000 : 9000
+        }
         deadline := MonotonicMs() + timeoutMs
         while helperPid && ProcessExist(helperPid) {
             if !IsBridgeOperationContextValid(expectedGeneration) {
                 CancelBridgeProcess(helperPid, mode, operationToken)
-                RunBackgroundBridge("deactivate")
+                ReleaseBackgroundTarget(true)
                 return "ERROR CANCELLED"
             }
-            if !State.targetHwnd || !WinExist("ahk_id " State.targetHwnd) {
+            if !IsTargetIdentityAlive() {
                 CancelBridgeProcess(helperPid, mode, operationToken)
-                RunBackgroundBridge("deactivate")
+                ReleaseBackgroundTarget(true)
                 return "ERROR TARGET_CLOSED"
             }
-            if mode = "play-route" && WinActive("ahk_id " State.targetHwnd)
-                && CurrentPhysicalRouteMask() {
+            if InStr(mode, "play-route") && WinActive("ahk_id " State.targetHwnd)
+                && (CurrentPhysicalRouteMask() || CurrentUnsupportedRegistrationKey()) {
                 CancelBridgeProcess(helperPid, mode, operationToken)
-                RunBackgroundBridge("deactivate")
+                ReleaseBackgroundTarget(true)
                 State.lastStorageResult := "手動の移動・視点入力を検知して中止"
                 return "ERROR MANUAL_INPUT"
             }
             if MonotonicMs() >= deadline {
                 CancelBridgeProcess(helperPid, mode, operationToken)
-                RunBackgroundBridge("deactivate")
+                ReleaseBackgroundTarget(true)
                 return "ERROR BRIDGE_TIMEOUT"
             }
             Sleep 25
@@ -3690,6 +4350,7 @@ CancelBridgeProcess(processId, mode := "", operationToken := "") {
     if mode = "deposit-delta" && operationToken {
         ; 先にNUIへ同じ操作IDの中止を通知し、現在の1トランザクションが
         ; 確定または失敗するまで待ってから補助プロセスを終了します。
+        ReleaseBackgroundTarget(true)
         RunBackgroundBridge("cancel-operation", operationToken)
         RunBackgroundBridge("close-inventory")
         try ProcessWaitClose processId, 6
@@ -3716,13 +4377,35 @@ ReleaseBackgroundTarget(force := false) {
     global State
 
     if !State.backgroundTargetActive && !force
-        return
-    mode := State.backgroundTargetActive && State.backgroundDevConPort
-        ? "deactivate-" State.backgroundDevConPort : "deactivate"
+        return true
+    knownPort := State.backgroundTargetActive && State.backgroundDevConPort
+        ? State.backgroundDevConPort
+        : (State.lastDevConPort = 29200 || State.lastDevConPort = 29300)
+            ? State.lastDevConPort : 0
+    mode := knownPort ? "deactivate-" knownPort : "deactivate"
     result := RunBackgroundBridge(mode)
+    if result != "RELEASED" {
+        Sleep 75
+        result := RunBackgroundBridge(mode)
+    }
+    if result != "RELEASED" && force && knownPort {
+        ; FiveM更新などでDevConポートが切り替わった可能性があるため、既知の
+        ; ポートが失効したときだけ固定2ポートの安全解除へフォールバックします。
+        result := RunBackgroundBridge("deactivate")
+        if result != "RELEASED" {
+            Sleep 75
+            result := RunBackgroundBridge("deactivate")
+        }
+        if result = "RELEASED"
+            State.lastDevConPort := 0
+    }
     WriteDiagnostic("BG_RELEASE=" result)
-    State.backgroundTargetActive := false
-    State.backgroundDevConPort := 0
+    if result = "RELEASED" {
+        State.backgroundTargetActive := false
+        State.backgroundDevConPort := 0
+        return true
+    }
+    return false
 }
 
 WaitWhileBackgroundReady(delayMs, expectedGeneration) {
@@ -4572,10 +5255,10 @@ ReadVehicleWorkMode(settingsFile) {
 IsValidVehicleProfile(config) {
     return config.vehicleRegistered = 1
         && IsValidBase64Token(config.vehicleStorageId)
-        && IsValidBase64Token(config.vehicleStorageType)
+        && config.vehicleStorageType = "dHJ1bms="
         && (config.vehicleWorkMode = "mining" || config.vehicleWorkMode = "washing"
             || config.vehicleWorkMode = "gold")
-        && (config.vehicleRouteFormat = 1 || config.vehicleRouteFormat = 2)
+        && config.vehicleRouteFormat = 3
         && IsValidRoute(config.vehicleOutboundRoute)
         && IsValidRoute(config.vehicleReturnRoute)
 }
