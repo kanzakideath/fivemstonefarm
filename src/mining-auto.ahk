@@ -10,7 +10,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "6.0.0"
+global AppVersion := "6.0.1"
 processId := DllCall("GetCurrentProcessId")
 buttonTemplatePath := A_Temp "\codex-mining-button-" processId ".png"
 windowedButtonTemplatePath := A_Temp "\codex-mining-button-windowed-" processId ".png"
@@ -77,6 +77,10 @@ global Config := {
     washForwardPulseMs: ReadIntegerSetting(settingsPath, "Washing", "ForwardPulseMs", 100, 50, 250),
     washForwardSettleMs: ReadIntegerSetting(settingsPath, "Washing", "ForwardSettleMs", 250, 50, 3000),
     goldCycleMs: ReadIntegerSetting(settingsPath, "GoldPanning", "CycleMs", 6000, 4000, 15000),
+    goldRecoveryEnabled: ReadIntegerSetting(settingsPath, "GoldPanning", "RecoveryEnabled", 1, 0, 1),
+    goldRecoveryAfterMs: ReadIntegerSetting(settingsPath, "GoldPanning", "RecoveryAfterMs", 12000, 8000, 60000),
+    goldRecoveryPulseMs: ReadIntegerSetting(settingsPath, "GoldPanning", "RecoveryPulseMs", 150, 150, 250),
+    goldRecoverySettleMs: ReadIntegerSetting(settingsPath, "GoldPanning", "RecoverySettleMs", 300, 100, 3000),
     vehicleStorageEnabled: ReadIntegerSetting(settingsPath, "VehicleStorage", "Enabled", 0, 0, 1),
     vehicleRegistered: ReadIntegerSetting(settingsPath, "VehicleStorage", "Registered", 0, 0, 1),
     vehicleName: ReadTextSetting(settingsPath, "VehicleStorage", "DisplayName", "登録車両"),
@@ -145,6 +149,10 @@ global State := {
     meals: 0,
     nudges: 0,
     washNudgePending: false,
+    goldMissingSince: 0,
+    goldRecoveryStep: 0,
+    goldRecoveryExhausted: false,
+    goldRecoveryFault: false,
     waitingForStone: false,
     stoneGoneObserved: false,
     stoneAbsentVotes: 0,
@@ -208,7 +216,12 @@ if A_Args.Length && A_Args[1] = "--validate" {
         : !InventorySpecHasIncrease("0002.tool.eyJkIjo5OX0=2", "0001.tool.eyJkIjoxMDB9=1") ? 28
         : !InventorySpecHasIncrease("0001.ore.e30=1", "0001.food.e30=1") ? 29
         : !IsValidRoute("150:1") ? 30
-        : IsValidRoute("6000:1") ? 31 : 0
+        : IsValidRoute("6000:1") ? 31
+        : GoldRecoveryRoute(1, 150) != "150:1" ? 32
+        : GoldRecoveryRoute(2, 150) != "300:2" ? 33
+        : GoldRecoveryRoute(6, 150) != "150:4" ? 34
+        : GoldRecoveryRoute(7, 150) != "" ? 35
+        : !GoldRecoveryPatternIsBalanced(150) ? 36 : 0
     if exitCode = 19
         try FileAppend "UPDATER_CAPS=" updaterCapabilities "`r`n",
             State.diagnosticPath, "UTF-8"
@@ -251,8 +264,9 @@ catch as err {
 OnExit Cleanup
 
 if A_Args.Length && A_Args[1] = "--smoke-test" {
+    smokeExitCode := RunUiSmokeTest()
     State.gui.Hide()
-    SetTimer((*) => ExitApp(0), -250)
+    ExitApp smokeExitCode
 }
 
 if A_Args.Length && A_Args[1] = "--updated"
@@ -279,8 +293,8 @@ BuildGui() {
     State.ui.appSubtitle := State.gui.AddText("x24 y52 w500 h22",
         "採掘・洗浄・砂金採りと車両収納を自動化")
 
-    State.ui.sidebarSurface := State.gui.AddProgress("x16 y88 w176 h236 BackgroundFFFFFF cFFFFFF", 100)
-    State.ui.selectionBar := State.gui.AddProgress("x16 y100 w4 h44 Background0088FF c0088FF", 100)
+    State.ui.sidebarSurface := State.gui.AddProgress("x16 y88 w176 h236 Disabled BackgroundFFFFFF cFFFFFF", 100)
+    State.ui.selectionBar := State.gui.AddProgress("x16 y100 w4 h44 Disabled Background0088FF c0088FF", 100)
     State.gui.SetFont("s10 w600 c1C1C1E", "Yu Gothic UI")
     State.ui.navOverview := State.gui.AddButton("x28 y100 w152 h44", "概要")
     State.ui.navVehicle := State.gui.AddButton("x28 y152 w152 h44", "車両")
@@ -326,7 +340,7 @@ BuildOverviewPage() {
     State.taglineLabel := AddPageControl("overview", gui.AddText("x0 y0 w400 h36",
         "画面を奪わず、選んだ作業を続けます"))
     State.ui.statusSurface := AddPageControl("overview",
-        gui.AddProgress("x0 y0 w400 h142 BackgroundFFFFFF cFFFFFF", 100))
+        gui.AddProgress("x0 y0 w400 h142 Disabled BackgroundFFFFFF cFFFFFF", 100))
     gui.SetFont("s12 w600 c1C1C1E", "Yu Gothic UI")
     State.statusLabel := AddPageControl("overview", gui.AddText("x0 y0 w400 h32", "停止中"))
     State.ui.statusSeparator1 := AddPageControl("overview",
@@ -348,7 +362,7 @@ BuildOverviewPage() {
         gui.AddButton("x0 y0 w300 h50 Default", "自動操作を開始"))
     State.mainButton.OnEvent("Click", ToggleMining)
     State.ui.metricsSurface := AddPageControl("overview",
-        gui.AddProgress("x0 y0 w400 h78 BackgroundFFFFFF cFFFFFF", 100))
+        gui.AddProgress("x0 y0 w400 h78 Disabled BackgroundFFFFFF cFFFFFF", 100))
     gui.SetFont("s9 w600 c1C1C1E", "Yu Gothic UI")
     State.countLabel := AddPageControl("overview", gui.AddText("x0 y0 w120 h40 Center 0x200", "採掘回数`n0"))
     State.mealLabel := AddPageControl("overview", gui.AddText("x0 y0 w120 h40 Center 0x200", "食事回数`n0"))
@@ -367,7 +381,7 @@ BuildVehiclePage() {
     State.ui.vehicleSubtitle := AddPageControl("vehicle", gui.AddText("x0 y0 w480 h36",
         "容量が少なくなると、登録した車両へ採集品だけを収納します"))
     State.ui.vehicleSurface := AddPageControl("vehicle",
-        gui.AddProgress("x0 y0 w400 h160 BackgroundFFFFFF cFFFFFF", 100))
+        gui.AddProgress("x0 y0 w400 h160 Disabled BackgroundFFFFFF cFFFFFF", 100))
     gui.SetFont("s11 w600 c1C1C1E", "Yu Gothic UI")
     State.vehicleStatusLabel := AddPageControl("vehicle", gui.AddText("x0 y0 w400 h30", "未登録"))
     State.ui.vehicleSeparator1 := AddPageControl("vehicle", gui.AddText("x0 y0 w400 h1 BackgroundD1D1D6"))
@@ -380,7 +394,7 @@ BuildVehiclePage() {
     State.vehicleEnabledControl.Value := Config.vehicleStorageEnabled
     State.vehicleEnabledControl.OnEvent("Click", ToggleVehicleStorage)
     State.ui.routeSurface := AddPageControl("vehicle",
-        gui.AddProgress("x0 y0 w400 h104 BackgroundFFFFFF cFFFFFF", 100))
+        gui.AddProgress("x0 y0 w400 h104 Disabled BackgroundFFFFFF cFFFFFF", 100))
     gui.SetFont("s10 w600 c1C1C1E", "Yu Gothic UI")
     State.routeStatusLabel := AddPageControl("vehicle", gui.AddText("x0 y0 w400 h28", "往復ルート　未登録"))
     gui.SetFont("s9 w400 c636366", "Yu Gothic UI")
@@ -408,7 +422,7 @@ BuildSettingsPage() {
     State.ui.settingsSubtitle := AddPageControl("settings", gui.AddText("x0 y0 w460 h36",
         "キーボード操作とバックグラウンド動作"))
     State.ui.keysSurface := AddPageControl("settings",
-        gui.AddProgress("x0 y0 w400 h126 BackgroundFFFFFF cFFFFFF", 100))
+        gui.AddProgress("x0 y0 w400 h126 Disabled BackgroundFFFFFF cFFFFFF", 100))
     gui.SetFont("s10 w400 c1C1C1E", "Yu Gothic UI")
     State.ui.startKeyCaption := AddPageControl("settings", gui.AddText("x0 y0 w150 h30 0x200", "開始キー"))
     State.startHotkeyControl := AddPageControl("settings", gui.AddHotkey("x0 y0 w180 h32", Config.startHotkey))
@@ -416,7 +430,7 @@ BuildSettingsPage() {
     State.ui.stopKeyCaption := AddPageControl("settings", gui.AddText("x0 y0 w150 h30 0x200", "停止キー"))
     State.stopHotkeyControl := AddPageControl("settings", gui.AddHotkey("x0 y0 w180 h32", Config.stopHotkey))
     State.ui.optionsSurface := AddPageControl("settings",
-        gui.AddProgress("x0 y0 w400 h170 BackgroundFFFFFF cFFFFFF", 100))
+        gui.AddProgress("x0 y0 w400 h170 Disabled BackgroundFFFFFF cFFFFFF", 100))
     State.backgroundControl := AddPageControl("settings",
         gui.AddCheckbox("x0 y0 w400 h36", "バックグラウンドで操作する"))
     State.backgroundControl.Value := Config.backgroundMode
@@ -424,8 +438,8 @@ BuildSettingsPage() {
         gui.AddCheckbox("x0 y0 w400 h36", "開始後にこの画面を隠す"))
     State.hideControl.Value := Config.hideWhileRunning
     State.washCorrectionControl := AddPageControl("settings",
-        gui.AddCheckbox("x0 y0 w400 h36", "石洗い後の後退を補正する"))
-    State.washCorrectionControl.Value := Config.washForwardCorrection
+        gui.AddCheckbox("x0 y0 w400 h36", "洗浄・砂金採りの位置ずれを補正"))
+    State.washCorrectionControl.Value := Config.washForwardCorrection && Config.goldRecoveryEnabled
     State.autoUpdateControl := AddPageControl("settings",
         gui.AddCheckbox("x0 y0 w400 h36", "起動時にアップデートを確認"))
     State.autoUpdateControl.Value := Config.autoCheckUpdates
@@ -445,7 +459,7 @@ BuildUpdatePage() {
     State.ui.updateSubtitle := AddPageControl("update", gui.AddText("x0 y0 w460 h36",
         "署名を検証してから安全に更新します"))
     State.ui.updateSurface := AddPageControl("update",
-        gui.AddProgress("x0 y0 w400 h170 BackgroundFFFFFF cFFFFFF", 100))
+        gui.AddProgress("x0 y0 w400 h170 Disabled BackgroundFFFFFF cFFFFFF", 100))
     gui.SetFont("s10 w400 c1C1C1E", "Yu Gothic UI")
     State.ui.currentVersionCaption := AddPageControl("update", gui.AddText("x0 y0 w160 h30", "現在のバージョン"))
     State.currentVersionLabel := AddPageControl("update", gui.AddText("x0 y0 w180 h30 Right", "v" AppVersion))
@@ -486,11 +500,37 @@ ShowPage(pageName, *) {
 
 RefreshNavigationSelection() {
     global State
-    selected := State.page
-    State.ui.navOverview.Enabled := selected != "overview"
-    State.ui.navVehicle.Enabled := selected != "vehicle"
-    State.ui.navSettings.Enabled := selected != "settings"
-    State.ui.navUpdate.Enabled := selected != "update"
+    ; 選択状態は青いバーで表現します。選択中の項目も通常のボタンとして
+    ; 有効にしておくことで、「選択中」と「操作不能」を混同させません。
+    for control in [State.ui.navOverview, State.ui.navVehicle,
+        State.ui.navSettings, State.ui.navUpdate]
+        control.Enabled := true
+}
+
+RunUiSmokeTest() {
+    global State
+
+    ; 装飾用Progressが有効だと前面の透明な壁になり、下のボタンや入力欄を
+    ; Windowのhit-testから隠します。実際に起きた回帰を起動テストで防ぎます。
+    for surface in [State.ui.sidebarSurface, State.ui.selectionBar,
+        State.ui.statusSurface, State.ui.metricsSurface, State.ui.vehicleSurface,
+        State.ui.routeSurface, State.ui.keysSurface, State.ui.optionsSurface,
+        State.ui.updateSurface] {
+        if surface.Enabled
+            return 41
+    }
+    for nav in [State.ui.navOverview, State.ui.navVehicle,
+        State.ui.navSettings, State.ui.navUpdate] {
+        if !nav.Enabled
+            return 42
+    }
+    for pageName in ["overview", "vehicle", "settings", "update"] {
+        ShowPage(pageName)
+        if State.page != pageName
+            return 43
+    }
+    ShowPage("overview")
+    return 0
 }
 
 HandleMainEscape(*) {
@@ -668,7 +708,9 @@ ConfigureTrayMenu() {
 
 ShowMainWindow(*) {
     global State
-    State.gui.Show("NoActivate")
+    ; 利用者がトレイから明示的に開いた場合は、最初のクリックから操作できる
+    ; よう通常表示します。自動処理側の表示は引き続きNoActivateです。
+    State.gui.Show()
     UpdateConnectionStatus()
 }
 
@@ -700,8 +742,8 @@ UpdateActionUi() {
         State.taglineLabel.Text := "画面を奪わず、約9秒ごとに石を洗います"
     } else if actionMode = "gold" {
         State.countLabel.Text := "砂金採り回数`n" State.successes
-        State.mealLabel.Text := "周期`n約6秒"
-        State.taglineLabel.Text := "画面を奪わず、約6秒ごとに砂金を採ります"
+        State.mealLabel.Text := "位置補正`n" State.nudges
+        State.taglineLabel.Text := "画面を奪わず、位置ずれも検知して砂金を採ります"
     } else {
         State.countLabel.Text := "採掘回数`n" State.successes
         State.mealLabel.Text := "食事回数`n" State.meals
@@ -782,7 +824,10 @@ SaveInlineSettings(*) {
     global State, Config, settingsPath
     State.settingsErrorLabel.Opt("cB42318")
     if State.running {
-        State.settingsErrorLabel.Text := "自動操作を停止してから変更してください。"
+        ; 実行中もボタン自体は反応させ、何も起きないように見える状態を避けます。
+        StopMining()
+        ShowPage("settings")
+        State.settingsErrorLabel.Text := "自動操作を停止しました。設定を変更してから保存してください。"
         return
     }
     if State.updateOperation {
@@ -811,7 +856,8 @@ SaveInlineSettings(*) {
         backgroundMode: Config.backgroundMode,
         hideWhileRunning: Config.hideWhileRunning,
         autoCheckUpdates: Config.autoCheckUpdates,
-        washForwardCorrection: Config.washForwardCorrection
+        washForwardCorrection: Config.washForwardCorrection,
+        goldRecoveryEnabled: Config.goldRecoveryEnabled
     }
     UnregisterConfiguredHotkeys()
     Config.startHotkey := newStart
@@ -829,6 +875,7 @@ SaveInlineSettings(*) {
     Config.hideWhileRunning := State.hideControl.Value ? 1 : 0
     Config.autoCheckUpdates := State.autoUpdateControl.Value ? 1 : 0
     Config.washForwardCorrection := State.washCorrectionControl.Value ? 1 : 0
+    Config.goldRecoveryEnabled := State.washCorrectionControl.Value ? 1 : 0
     try {
         SaveAllSettingsAtomically()
     } catch as err {
@@ -839,6 +886,7 @@ SaveInlineSettings(*) {
         Config.hideWhileRunning := oldConfig.hideWhileRunning
         Config.autoCheckUpdates := oldConfig.autoCheckUpdates
         Config.washForwardCorrection := oldConfig.washForwardCorrection
+        Config.goldRecoveryEnabled := oldConfig.goldRecoveryEnabled
         try RegisterConfiguredHotkeys()
         State.settingsErrorLabel.Text := "設定を保存できません: " err.Message
         return
@@ -863,6 +911,10 @@ SaveAllSettingsAtomically() {
         IniWrite 1, temporarySettingsPath, "Updates", "Schema"
         IniWrite Config.autoCheckUpdates, temporarySettingsPath, "Updates", "AutoCheck"
         IniWrite Config.washForwardCorrection, temporarySettingsPath, "Washing", "ForwardCorrection"
+        IniWrite Config.goldRecoveryEnabled, temporarySettingsPath, "GoldPanning", "RecoveryEnabled"
+        IniWrite Config.goldRecoveryAfterMs, temporarySettingsPath, "GoldPanning", "RecoveryAfterMs"
+        IniWrite Config.goldRecoveryPulseMs, temporarySettingsPath, "GoldPanning", "RecoveryPulseMs"
+        IniWrite Config.goldRecoverySettleMs, temporarySettingsPath, "GoldPanning", "RecoverySettleMs"
         IniWrite Config.vehicleStorageEnabled, temporarySettingsPath, "VehicleStorage", "Enabled"
         IniWrite Config.vehicleRegistered, temporarySettingsPath, "VehicleStorage", "Registered"
         IniWrite Config.vehicleName, temporarySettingsPath, "VehicleStorage", "DisplayName"
@@ -958,6 +1010,9 @@ RefreshUpdateUi(*) {
         State.updateButton.Text := "アップデートを確認"
         State.ui.navUpdate.Text := "アップデート"
     }
+    State.updateButton.Enabled := !State.updateOperation
+    if State.running && !State.updateOperation
+        State.updateButton.Text := State.updateVersion ? "停止して更新" : "停止して確認"
 }
 
 ActionModeLabel(mode) {
@@ -1345,7 +1400,8 @@ SaveSettings(settingsGui, startControl, stopControl, backgroundControl,
         backgroundMode: Config.backgroundMode,
         hideWhileRunning: Config.hideWhileRunning,
         autoCheckUpdates: Config.autoCheckUpdates,
-        washForwardCorrection: Config.washForwardCorrection
+        washForwardCorrection: Config.washForwardCorrection,
+        goldRecoveryEnabled: Config.goldRecoveryEnabled
     }
     UnregisterConfiguredHotkeys()
     Config.startHotkey := newStart
@@ -1363,6 +1419,7 @@ SaveSettings(settingsGui, startControl, stopControl, backgroundControl,
     Config.hideWhileRunning := hideControl.Value ? 1 : 0
     Config.autoCheckUpdates := autoUpdateControl.Value ? 1 : 0
     Config.washForwardCorrection := washCorrectionControl.Value ? 1 : 0
+    Config.goldRecoveryEnabled := washCorrectionControl.Value ? 1 : 0
     temporarySettingsPath := settingsPath ".tmp-" A_TickCount
     try {
         if FileExist(settingsPath)
@@ -1375,6 +1432,10 @@ SaveSettings(settingsGui, startControl, stopControl, backgroundControl,
         IniWrite 1, temporarySettingsPath, "Updates", "Schema"
         IniWrite Config.autoCheckUpdates, temporarySettingsPath, "Updates", "AutoCheck"
         IniWrite Config.washForwardCorrection, temporarySettingsPath, "Washing", "ForwardCorrection"
+        IniWrite Config.goldRecoveryEnabled, temporarySettingsPath, "GoldPanning", "RecoveryEnabled"
+        IniWrite Config.goldRecoveryAfterMs, temporarySettingsPath, "GoldPanning", "RecoveryAfterMs"
+        IniWrite Config.goldRecoveryPulseMs, temporarySettingsPath, "GoldPanning", "RecoveryPulseMs"
+        IniWrite Config.goldRecoverySettleMs, temporarySettingsPath, "GoldPanning", "RecoverySettleMs"
         FileMove temporarySettingsPath, settingsPath, true
     } catch as err {
         try FileDelete temporarySettingsPath
@@ -1385,6 +1446,7 @@ SaveSettings(settingsGui, startControl, stopControl, backgroundControl,
         Config.hideWhileRunning := oldConfig.hideWhileRunning
         Config.autoCheckUpdates := oldConfig.autoCheckUpdates
         Config.washForwardCorrection := oldConfig.washForwardCorrection
+        Config.goldRecoveryEnabled := oldConfig.goldRecoveryEnabled
         try RegisterConfiguredHotkeys()
         errorLabel.Text := "設定ファイルへ保存できません: " err.Message
         return
@@ -1417,6 +1479,11 @@ IsSafeConfiguredHotkey(value) {
 CheckForUpdates(*) {
     global State
     ShowPage("update")
+    if State.running {
+        StopMining()
+        ShowPage("update")
+        State.updatePageStatus.Text := "自動操作を停止しました。更新を確認します。"
+    }
     if State.updateVersion && FileExist(State.updateManifestPath)
         && FileExist(State.updateSignaturePath)
         BeginUpdateDownload()
@@ -1825,6 +1892,7 @@ StartMining(*) {
     State.meals := 0
     State.nudges := 0
     State.washNudgePending := false
+    ResetGoldRecoveryState()
     State.nextHungerCheckAt := 0
     State.nextEatAllowedAt := 0
     State.waitingForStone := false
@@ -1926,16 +1994,21 @@ StopMining(*) {
 
 SetConfigurationEnabled(enabled) {
     global State
-    for control in [State.settingsButton, State.updateButton, State.startHotkeyControl,
-        State.stopHotkeyControl, State.backgroundControl, State.hideControl,
+    for control in [State.startHotkeyControl, State.stopHotkeyControl,
+        State.backgroundControl, State.hideControl,
         State.washCorrectionControl, State.autoUpdateControl, State.vehicleEnabledControl,
         State.vehicleRegisterButton, State.vehicleNameEdit] {
         try control.Enabled := enabled
     }
+    ; 実行中もナビゲーションと主要ボタンは押せます。変更操作を選んだ時点で
+    ; 明示的に停止し、無反応に見えるDisabledボタンを作りません。
+    try State.settingsButton.Enabled := true
+    try State.settingsButton.Text := enabled ? "設定を保存" : "停止して設定を変更"
     if enabled
         RefreshVehicleUi()
     else
         try State.vehicleDeleteButton.Enabled := false
+    RefreshUpdateUi()
 }
 
 ScheduleNext(expectedGeneration, delayMs) {
@@ -1986,6 +2059,16 @@ MaybeHandleVehicleCapacity(expectedGeneration) {
     if !InventorySpecHasIncrease(inventoryInfo.items, State.inventoryBaseline) {
         StopAutomationWithFault("開始前の持ち物で容量が不足しています。所持品を整理してください", "vehicle")
         return true
+    }
+    if State.runMode = "gold" && !ProbeWorkTarget("gold", expectedGeneration) {
+        ; 位置補正の途中から、登録時の起点を前提にした車両ルートを再生しません。
+        ; targetが見つかるまでは各周期で先に再確認し、GoldAttempt側に補正だけを
+        ; 任せます。見つかった周期は砂金を追加で採る前に収納へ進みます。
+        State.nextCapacityCheckAt := 0
+        State.automationPhase := "working"
+        State.statusLabel.Text := "作業位置を戻してから自動収納します"
+        WriteDiagnostic("VEHICLE_GOLD_WORKPOINT_PENDING")
+        return false
     }
     State.timerFn := 0
     RunVehicleStorageCycle(expectedGeneration)
@@ -2192,6 +2275,7 @@ RunVehicleStorageCycle(expectedGeneration) {
     State.stoneAbsentVotes := 0
     State.stoneReadyVotes := 0
     State.lastMineAt := 0
+    ResetGoldRecoveryState()
     State.nextCapacityCheckAt := MonotonicMs() + Config.capacityCheckIntervalMs
     State.automationPhase := "working"
     State.statusLabel.Text := "収納完了。作業を再開します"
@@ -2352,6 +2436,106 @@ WashAttemptBackground(expectedGeneration) {
     }
 }
 
+ResetGoldRecoveryState() {
+    global State
+    State.goldMissingSince := 0
+    State.goldRecoveryStep := 0
+    State.goldRecoveryExhausted := false
+    State.goldRecoveryFault := false
+}
+
+GoldRecoveryRoute(stepNumber, pulseMs := 0) {
+    global Config
+    pulse := pulseMs > 0 ? pulseMs : Config.goldRecoveryPulseMs
+    if pulse < 150 || pulse > 250
+        return ""
+    switch stepNumber {
+    case 1:
+        return pulse ":1"
+    case 2:
+        return (pulse * 2) ":2"
+    case 3:
+        return pulse ":1"
+    case 4:
+        return pulse ":4"
+    case 5:
+        return (pulse * 2) ":8"
+    case 6:
+        return pulse ":4"
+    default:
+        return ""
+    }
+}
+
+GoldRecoveryPatternIsBalanced(pulseMs := 150) {
+    vertical := 0
+    horizontal := 0
+    Loop 6 {
+        route := GoldRecoveryRoute(A_Index, pulseMs)
+        if !IsValidRoute(route)
+            return false
+        for routeStep in StrSplit(route, ",") {
+            separator := InStr(routeStep, ":")
+            duration := SubStr(routeStep, 1, separator - 1) + 0
+            mask := SubStr(routeStep, separator + 1) + 0
+            if (mask & 1)
+                vertical += duration
+            if (mask & 2)
+                vertical -= duration
+            if (mask & 4)
+                horizontal -= duration
+            if (mask & 8)
+                horizontal += duration
+        }
+    }
+    return vertical = 0 && horizontal = 0
+}
+
+PerformGoldRecoveryStep(expectedGeneration) {
+    global State, Config
+    if !IsCurrentRun(expectedGeneration) || State.goldRecoveryExhausted
+        return false
+    nextStep := State.goldRecoveryStep + 1
+    route := GoldRecoveryRoute(nextStep)
+    if !route
+        return false
+    if !EnsureDevConPort() {
+        ; 移動は始まっていないので、改めて12秒の連続未検出を確認します。
+        State.goldMissingSince := 0
+        State.statusLabel.Text := "●  位置補正の接続を再確認しています"
+        WriteDiagnostic("attempt=" State.attempts " GOLD_RECOVERY_PORT_MISSING")
+        return false
+    }
+    if !IsCurrentRun(expectedGeneration)
+        return false
+
+    ; bridgeの応答が失われても同じ方向へ無制限に進まないよう、実行前に
+    ; 段階を消費します。6段階全体では前後・左右の入力時間が釣り合います。
+    State.goldRecoveryStep := nextStep
+    port := State.lastDevConPort
+    State.statusLabel.Text := "●  砂金位置を自動補正中 (" nextStep "/6)"
+    recoveryResult := RunBackgroundBridgeCancelable(expectedGeneration,
+        "play-route", port, route)
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    routeOk := recoveryResult = "ROUTE " port " " RouteTotalMs(route)
+    WriteDiagnostic("attempt=" State.attempts " GOLD_RECOVERY_STEP=" nextStep
+        " route=" route " result=" recoveryResult)
+    if routeOk {
+        State.nudges += 1
+        State.mealLabel.Text := "位置補正`n" State.nudges
+    } else {
+        ; 次回はDevConポートから再検出します。部分的に入力された可能性が
+        ; あるため、同じ未検出中にはそれ以上移動しないfail-closed動作です。
+        State.lastDevConPort := 0
+        State.goldRecoveryFault := true
+        State.goldRecoveryExhausted := true
+        State.statusLabel.Text := "●  位置補正を完了できません。停止して位置を確認してください"
+        return false
+    }
+    return WaitWhileBackgroundReady(Config.goldRecoverySettleMs, expectedGeneration)
+}
+
 GoldAttemptBackground(expectedGeneration) {
     global State, Config
 
@@ -2370,6 +2554,8 @@ GoldAttemptBackground(expectedGeneration) {
     State.statusLabel.Text := "●  砂金採りの準備中"
 
     try {
+        ; 毎回まず現在位置を検査します。前周期のMISSINGだけを根拠に先に
+        ; 移動すると、自然復帰したtargetから離れる競合が起きるためです。
         State.statusLabel.Text := "●  「砂金採りトレイ」を確認中"
         clickRequestedAt := MonotonicMs()
         clickResult := RunBackgroundBridgeCancelable(expectedGeneration, "try-gold")
@@ -2377,18 +2563,48 @@ GoldAttemptBackground(expectedGeneration) {
             return
         if clickResult != "CLICKED GOLD" {
             WriteDiagnostic("attempt=" State.attempts " GOLD_TRY=" clickResult)
-            State.statusLabel.Text := clickResult = "MISSING GOLD"
-                ? "●  「砂金採りトレイ」を待っています"
-                : "●  FiveM内部UIへ再接続中"
+            if clickResult = "MISSING GOLD" {
+                missingNow := MonotonicMs()
+                if !State.goldMissingSince {
+                    State.goldMissingSince := missingNow
+                    WriteDiagnostic("attempt=" State.attempts " GOLD_MISSING_STARTED")
+                }
+                missingForMs := missingNow - State.goldMissingSince
+                if Config.goldRecoveryEnabled
+                    && missingForMs >= Config.goldRecoveryAfterMs {
+                    if State.goldRecoveryFault {
+                        State.statusLabel.Text := "●  位置補正を完了できません。停止して位置を確認してください"
+                    } else if State.goldRecoveryStep >= 6 {
+                        if !State.goldRecoveryExhausted
+                            WriteDiagnostic("attempt=" State.attempts " GOLD_RECOVERY_EXHAUSTED")
+                        State.goldRecoveryExhausted := true
+                        State.statusLabel.Text := "●  補正範囲外。位置を戻すと自動再開します"
+                    } else {
+                        recoveryMoved := PerformGoldRecoveryStep(expectedGeneration)
+                        if recoveryMoved && IsCurrentRun(expectedGeneration)
+                            State.statusLabel.Text := "●  補正後の位置を再確認します"
+                    }
+                } else {
+                    State.statusLabel.Text := "●  「砂金採りトレイ」を待っています"
+                }
+            } else {
+                ; 接続系の失敗を挟んだ時間は「連続未検出」に数えません。
+                State.goldMissingSince := 0
+                State.statusLabel.Text := "●  FiveM内部UIへ再接続中"
+            }
             return
         }
 
+        recoveredSteps := State.goldRecoveryStep
+        ResetGoldRecoveryState()
         State.successes += 1
         clickedThisAttempt := true
         State.lastMineAt := MonotonicMs()
         nextCycleAnchor := clickRequestedAt
         State.countLabel.Text := "砂金採り回数`n" State.successes
         State.statusLabel.Text := "●  約6秒後にもう一度採ります"
+        if recoveredSteps
+            WriteDiagnostic("attempt=" State.attempts " GOLD_RECOVERED steps=" recoveredSteps)
         WriteDiagnostic("attempt=" State.attempts " GOLD_CLICKED")
     } catch as err {
         WriteDiagnostic("attempt=" State.attempts " GOLD_ERROR=" err.Message)
