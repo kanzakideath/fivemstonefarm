@@ -370,6 +370,10 @@ try {
             '/icon', $quotedIcon, '/compress', '0', '/silent', 'verbose') `
         -PassThru -WindowStyle Hidden -RedirectStandardOutput $compilerStdout `
         -RedirectStandardError $compilerStderr
+    if ($null -eq $compilerProcess) {
+        throw 'Ahk2Exe did not return a process handle.'
+    }
+    Write-Host "Ahk2Exe started (PID $($compilerProcess.Id))."
     if (-not $compilerProcess.WaitForExit(120000)) {
         $compilerPid = $compilerProcess.Id
         try { $compilerProcess.Kill($true) }
@@ -385,22 +389,29 @@ try {
         try { [void]$compilerProcess.WaitForExit(5000) } catch { }
         foreach ($compilerLog in @($compilerStdout, $compilerStderr)) {
             if (Test-Path -LiteralPath $compilerLog -PathType Leaf) {
-                $timeoutLogText = [string](Get-Content -LiteralPath $compilerLog -Raw)
-                if ($timeoutLogText.Trim()) {
+                $timeoutLogText = [Convert]::ToString(
+                    (Get-Content -LiteralPath $compilerLog -Raw))
+                if (-not [string]::IsNullOrWhiteSpace($timeoutLogText)) {
                     Write-Host $timeoutLogText.Trim()
                 }
             }
         }
         throw 'Ahk2Exe compilation timed out after 120 seconds.'
     }
-    [string]$compilerStdoutText = if (Test-Path -LiteralPath $compilerStdout) {
-        Get-Content -LiteralPath $compilerStdout -Raw
-    } else { '' }
-    [string]$compilerStderrText = if (Test-Path -LiteralPath $compilerStderr) {
-        Get-Content -LiteralPath $compilerStderr -Raw
-    } else { '' }
-    $compilerOutput = @($compilerStdoutText.Trim(), $compilerStderrText.Trim()) |
-        Where-Object { $_ }
+    Write-Host "Ahk2Exe exited with code $($compilerProcess.ExitCode)."
+    $compilerStdoutText = ''
+    $compilerStderrText = ''
+    if (Test-Path -LiteralPath $compilerStdout -PathType Leaf) {
+        $compilerStdoutText = [Convert]::ToString(
+            (Get-Content -LiteralPath $compilerStdout -Raw))
+    }
+    if (Test-Path -LiteralPath $compilerStderr -PathType Leaf) {
+        $compilerStderrText = [Convert]::ToString(
+            (Get-Content -LiteralPath $compilerStderr -Raw))
+    }
+    $compilerOutput = @($compilerStdoutText, $compilerStderrText) |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        ForEach-Object { $_.Trim() }
     if ($compilerOutput) {
         Write-Host ($compilerOutput -join [Environment]::NewLine)
     }

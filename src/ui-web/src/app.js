@@ -48,7 +48,7 @@
   const fixtureState = {
     ...baseState,
     revision: 1,
-    version: '8.0.2',
+    version: '8.0.3',
     controls: {
       overviewSubtitle: { text: modeDetails.gold.subtitle },
       runStatus: { text: '停止中', tone: 'neutral' },
