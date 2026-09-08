@@ -299,7 +299,7 @@ try {
     Test-RouteHealthProductionOnly -Listener $listener -SelectedPort $Port
 
     $viewRelease = '-look_up_only;-look_down_only;-look_left_only;-look_right_only;-look_up;-look_down;-look_left;-look_right;-scaled_look_up_only;-scaled_look_down_only;-scaled_look_left_only;-scaled_look_right_only'
-    $inputRelease = '-move_up_only;-move_left_only;-move_down_only;-move_right_only;' + $viewRelease
+    $inputRelease = '-move_up_only;-move_left_only;-move_down_only;-move_right_only;' + $viewRelease + ';-hotkey1;-hotkey2;-hotkey3;-hotkey4;-hotkey5;-inv'
     $expectedView = $viewRelease + ';+look_up;+look_left'
     $routePressed = $inputRelease + ';+move_up_only;+look_left'
 
@@ -307,6 +307,20 @@ try {
         -ExpectedCommands @($expectedView) -TestToken $testToken
     if ($view.Result -ne "VIEW $Port 5" -or $view.Commands[0] -ne $expectedView) {
         throw 'set-view did not emit the expected view command.'
+    }
+
+    $hotbar = Invoke-BridgeCapture -Listener $listener `
+        -Arguments @('press-hotbar', ([string]$Port), '1', '30') `
+        -ExpectedCommands @('-hotkey1;+hotkey1', '-hotkey1') -TestToken $testToken
+    if ($hotbar.Result -ne "HOTBAR $Port 1") {
+        throw 'press-hotbar returned an unexpected result.'
+    }
+
+    $inventoryKey = Invoke-BridgeCapture -Listener $listener `
+        -Arguments @('press-inventory', ([string]$Port), '30') `
+        -ExpectedCommands @('-inv;+inv', '-inv') -TestToken $testToken
+    if ($inventoryKey.Result -ne "INVENTORY $Port") {
+        throw 'press-inventory returned an unexpected result.'
     }
 
     $route = Invoke-BridgeCapture -Listener $listener -Arguments @('play-route', ([string]$Port), '25:65,25:0') `

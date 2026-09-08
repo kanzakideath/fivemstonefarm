@@ -169,7 +169,7 @@
               <div class="content-column">
                 <header class="page-heading">
                   <h1>車両</h1>
-                  <p>登録済みの車両を近くから探索し、採集品を同じ荷台へ収納します</p>
+                  <p>登録済みの車両を近くから探索し、開始後に増えた持ち物を同じ荷台へ収納します</p>
                 </header>
 
                 <section class="section-block" aria-labelledby="vehicle-registration-heading">
@@ -258,8 +258,16 @@
                       <span class="toggle color-green"><input id="setting-hide" type="checkbox"><span class="toggle-icon"></span></span>
                     </label>
                     <label class="setting-row switch-row" for="setting-correction">
-                      <span class="row-label">洗浄・砂金採りの位置ずれを補正</span>
+                      <span class="row-label">作業位置と視点を自動補正</span>
                       <span class="toggle color-green"><input id="setting-correction" type="checkbox"><span class="toggle-icon"></span></span>
+                    </label>
+                    <label class="setting-row switch-row" for="setting-auto-eat">
+                      <span class="row-label">自動で食事</span>
+                      <span class="toggle color-green"><input id="setting-auto-eat" type="checkbox"><span class="toggle-icon"></span></span>
+                    </label>
+                    <label class="setting-row input-row" for="food-key">
+                      <span class="row-label">食料スロット</span>
+                      <input id="food-key" class="inline-input compact-number" type="number" min="1" max="5" step="1" inputmode="numeric" value="1">
                     </label>
                     <label class="setting-row switch-row" for="setting-auto-update">
                       <span class="row-label">起動時にアップデートを確認</span>
@@ -270,6 +278,7 @@
                       <span class="unit-input"><input id="minimum-free-weight" class="inline-input" type="number" min="250" max="20000" step="250" inputmode="numeric" value="2000"><span>g</span></span>
                     </label>
                   </div>
+                  <p class="group-footnote">食料は指定したホットバースロットから使い、個数が減ったときだけ成功として記録します。</p>
                 </section>
 
                 <button id="settings-save" class="primary-action pressable" type="button">

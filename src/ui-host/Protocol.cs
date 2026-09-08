@@ -75,12 +75,16 @@ namespace AiMiner.UiHost
 
                     case "settings.save":
                         EnsureOnlyKeys(payload, "startHotkey", "stopHotkey", "backgroundMode",
-                            "hideWhileRunning", "correctionEnabled", "autoCheckUpdates", "minimumFreeWeight");
+                            "hideWhileRunning", "correctionEnabled", "autoEat", "foodKey",
+                            "autoCheckUpdates", "minimumFreeWeight");
                         values.Add(GetSafeString(payload, "startHotkey", 64));
                         values.Add(GetSafeString(payload, "stopHotkey", 64));
                         values.Add(GetBoolean(payload, "backgroundMode") ? "1" : "0");
                         values.Add(GetBoolean(payload, "hideWhileRunning") ? "1" : "0");
                         values.Add(GetBoolean(payload, "correctionEnabled") ? "1" : "0");
+                        values.Add(GetBoolean(payload, "autoEat") ? "1" : "0");
+                        values.Add(GetInteger(payload, "foodKey", 1, 5)
+                            .ToString(CultureInfo.InvariantCulture));
                         values.Add(GetBoolean(payload, "autoCheckUpdates") ? "1" : "0");
                         values.Add(GetInteger(payload, "minimumFreeWeight", 250, 20000)
                             .ToString(CultureInfo.InvariantCulture));
@@ -194,11 +198,12 @@ namespace AiMiner.UiHost
                     "vehicle.toggle", new[] { "1" });
                 AssertAction(@"{""type"":""action"",""action"":""vehicle.register"",""payload"":{}}",
                     "vehicle.register", new string[0]);
-                AssertAction(@"{""type"":""action"",""action"":""settings.save"",""payload"":{""startHotkey"":""F8"",""stopHotkey"":""F9"",""backgroundMode"":true,""hideWhileRunning"":false,""correctionEnabled"":true,""autoCheckUpdates"":true,""minimumFreeWeight"":2000}}",
-                    "settings.save", new[] { "F8", "F9", "1", "0", "1", "1", "2000" });
+                AssertAction(@"{""type"":""action"",""action"":""settings.save"",""payload"":{""startHotkey"":""F8"",""stopHotkey"":""F9"",""backgroundMode"":true,""hideWhileRunning"":false,""correctionEnabled"":true,""autoEat"":true,""foodKey"":1,""autoCheckUpdates"":true,""minimumFreeWeight"":2000}}",
+                    "settings.save", new[] { "F8", "F9", "1", "0", "1", "1", "1", "1", "2000" });
                 AssertRejected(@"{""type"":""action"",""action"":""unknown"",""payload"":{}}");
                 AssertRejected(@"{""type"":""action"",""action"":""nav"",""payload"":{""page"":""external""}}");
-                AssertRejected(@"{""type"":""action"",""action"":""settings.save"",""payload"":{""startHotkey"":""F8\tBAD"",""stopHotkey"":""F9"",""backgroundMode"":true,""hideWhileRunning"":false,""correctionEnabled"":true,""autoCheckUpdates"":true,""minimumFreeWeight"":2000}}");
+                AssertRejected(@"{""type"":""action"",""action"":""settings.save"",""payload"":{""startHotkey"":""F8\tBAD"",""stopHotkey"":""F9"",""backgroundMode"":true,""hideWhileRunning"":false,""correctionEnabled"":true,""autoEat"":true,""foodKey"":1,""autoCheckUpdates"":true,""minimumFreeWeight"":2000}}");
+                AssertRejected(@"{""type"":""action"",""action"":""settings.save"",""payload"":{""startHotkey"":""F8"",""stopHotkey"":""F9"",""backgroundMode"":true,""hideWhileRunning"":false,""correctionEnabled"":true,""autoEat"":true,""foodKey"":6,""autoCheckUpdates"":true,""minimumFreeWeight"":2000}}");
 
                 string session = "0123456789abcdef";
                 BackendMessage parsed;

@@ -3,6 +3,7 @@ using Microsoft.Web.WebView2.WinForms;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Globalization;
 using System.IO;
@@ -30,15 +31,30 @@ namespace AiMiner.UiHost
         private bool _backendRequestedExit;
         private bool _pendingSmoke;
         private string _pendingStateJson;
+        private int _visualBrowserProcessId;
 
         internal MainForm(Program.HostOptions options)
         {
             _options = options;
-            Text = "AI採掘機";
+            Text = _options.VisualTest ? "AI採掘機を準備中" : "AI採掘機";
+            try
+            {
+                Icon executableIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+                if (executableIcon != null) Icon = executableIcon;
+            }
+            catch { }
             Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
             StartPosition = FormStartPosition.CenterScreen;
-            MinimumSize = new Size(640, 560);
-            ClientSize = new Size(980, 720);
+            if (_options.VisualTest)
+            {
+                MinimumSize = new Size(320, 360);
+                ClientSize = new Size(_options.WindowWidth, _options.WindowHeight);
+            }
+            else
+            {
+                MinimumSize = new Size(640, 560);
+                ClientSize = new Size(980, 720);
+            }
             FormBorderStyle = FormBorderStyle.Sizable;
             MinimizeBox = true;
             MaximizeBox = true;
@@ -116,12 +132,34 @@ namespace AiMiner.UiHost
         {
             try
             {
-                string userDataFolder = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "AI採掘機", "WebView2");
-                Directory.CreateDirectory(userDataFolder);
+                string userDataFolder;
+                if (_options.VisualTest)
+                {
+                    string visualFolderError;
+                    userDataFolder = Program.HostOptions.NormalizeVisualTestUserDataFolder(
+                        _options.VisualTestUserDataFolder, out visualFolderError);
+                    if (!String.Equals(userDataFolder, _options.VisualTestUserDataFolder,
+                        StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new InvalidOperationException(visualFolderError
+                            ?? "ビジュアルテストのWebView2フォルダーを確認できません。");
+                    }
+                }
+                else
+                {
+                    userDataFolder = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "AI採掘機", "WebView2");
+                    Directory.CreateDirectory(userDataFolder);
+                }
                 CoreWebView2Environment environment = await CoreWebView2Environment.CreateAsync(null, userDataFolder);
                 await _webView.EnsureCoreWebView2Async(environment);
+                if (_options.VisualTest)
+                {
+                    uint browserProcessId = _webView.CoreWebView2.BrowserProcessId;
+                    if (browserProcessId > 0 && browserProcessId <= Int32.MaxValue)
+                        _visualBrowserProcessId = (int)browserProcessId;
+                }
 
                 CoreWebView2 core = _webView.CoreWebView2;
                 core.Settings.AreDevToolsEnabled = false;
@@ -160,9 +198,7 @@ namespace AiMiner.UiHost
 
                 _webView.Visible = true;
                 _nativeError.Visible = false;
-                core.Navigate(_options.Fixture
-                    ? "https://app.local/index.html?fixture=1"
-                    : "https://app.local/index.html");
+                core.Navigate(_options.GetInitialAppUri());
             }
             catch (WebView2RuntimeNotFoundException)
             {
@@ -183,6 +219,7 @@ namespace AiMiner.UiHost
                 return;
             }
             _webReady = true;
+            if (_options.VisualTest) Text = "AI採掘機";
             if (!String.IsNullOrEmpty(_pendingStateJson))
             {
                 PostJsonToWeb(_pendingStateJson);
@@ -197,7 +234,7 @@ namespace AiMiner.UiHost
 
         private void CoreOnWebMessageReceived(object sender, CoreWebView2WebMessageReceivedEventArgs args)
         {
-            if (!_webReady || !IsAllowedAppUri(args.Source)
+            if (!IsAllowedAppUri(args.Source)
                 || !IsAllowedAppUri(_webView.Source == null ? null : _webView.Source.AbsoluteUri))
                 return;
 
@@ -209,6 +246,10 @@ namespace AiMiner.UiHost
                 PostHostError("INVALID_ACTION", error);
                 return;
             }
+
+            // The page can post its one-shot handshake immediately before WebView2 raises
+            // NavigationCompleted. Keep all other actions gated until navigation is complete.
+            if (!_webReady && action != "hello") return;
 
             if (_options.Fixture)
             {
@@ -283,6 +324,7 @@ namespace AiMiner.UiHost
             if (_closing) return;
             _closing = true;
             _backendMonitor.Stop();
+            if (_options.VisualTest) CloseVisualTestWebView();
             if (!_options.Fixture && !_backendRequestedExit)
             {
                 string closeLine = Protocol.BuildActionLine(_options.Session, "window.close", new string[0]);
@@ -295,6 +337,26 @@ namespace AiMiner.UiHost
             _outbound.CompleteAdding();
             if (_senderThread.IsAlive) _senderThread.Join(600);
             _backendMonitor.Dispose();
+        }
+
+        private void CloseVisualTestWebView()
+        {
+            int browserProcessId = _visualBrowserProcessId;
+            _visualBrowserProcessId = 0;
+            try { _webView.Dispose(); }
+            catch { }
+
+            if (browserProcessId <= 0) return;
+            try
+            {
+                using (Process browserProcess = Process.GetProcessById(browserProcessId))
+                {
+                    if (!browserProcess.HasExited) browserProcess.WaitForExit(3000);
+                }
+            }
+            catch (ArgumentException) { }
+            catch (InvalidOperationException) { }
+            catch (System.ComponentModel.Win32Exception) { }
         }
 
         private void SenderLoop()

@@ -11,7 +11,7 @@
     },
     {
       "name": "action-sheet",
-      "arguments": ["--fixture", "action-sheet", "--window-width", "820", "--window-height", "640"]
+      "arguments": ["--fixture", "action-sheet", "--window-width", "520", "--window-height", "640"]
     },
     {
       "name": "settings",

@@ -34,7 +34,7 @@ npm run build
 
 - 概要: `overviewSubtitle`, `runStatus`, `connection`, `operationMode`, `runButton`, `actionPicker`, `metricPrimaryLabel`, `metricPrimaryValue`, `metricCorrectionLabel`, `metricCorrectionValue`, `metricStorageValue`, `shortcut`
 - 車両: `vehicleStatus`, `vehicleEnabled`, `capacity`, `capacityDetail`, `companionStatus`, `companionDetail`, `vehicleRegister`, `vehicleDelete`
-- 設定: `startHotkey`, `stopHotkey`, `backgroundMode`, `hideWhileRunning`, `correctionEnabled`, `autoCheckUpdates`, `minimumFreeWeight`, `settingsSave`, `settingsFeedback`
+- 設定: `startHotkey`, `stopHotkey`, `backgroundMode`, `hideWhileRunning`, `correctionEnabled`, `autoEat`, `foodKey`, `autoCheckUpdates`, `minimumFreeWeight`, `settingsSave`, `settingsFeedback`
 - 更新: `updateStatus`, `updateIntegrity`, `updateButton`, `updateFeedback`, `updateAvailable`
 
 各コントロールは `{ "text": "表示", "value": true, "enabled": true, "tone": "success" }` の必要な項目だけを持てます。

@@ -39,6 +39,7 @@ namespace AiMiner.UiHost
             {
                 string validationError;
                 bool valid = AssetValidator.TryValidate(options.AssetsPath, out validationError)
+                    && HostOptions.RunSelfTests(options.AssetsPath, out validationError)
                     && Protocol.RunSelfTests(out validationError);
                 string result = valid ? "SELFTEST OK" : "SELFTEST ERROR " + Protocol.SanitizeDiagnostic(validationError);
                 if (!WriteResult(options.SelfTestResultPath, result))
@@ -117,15 +118,81 @@ namespace AiMiner.UiHost
 
         internal sealed class HostOptions
         {
+            private const int MinimumVisualWidth = 320;
+            private const int MaximumVisualWidth = 2560;
+            private const int MinimumVisualHeight = 360;
+            private const int MaximumVisualHeight = 1600;
+            private static readonly Regex VisualTestFolderPattern =
+                new Regex(@"\Aai-miner-webview-test-[a-f0-9]{32}\z", RegexOptions.CultureInvariant);
+            private static readonly HashSet<string> VisualFixtures = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "overview", "action-sheet", "settings", "narrow"
+            };
+
             internal IntPtr BackendWindow;
             internal int BackendPid;
             internal string Session;
             internal string AssetsPath;
             internal bool Fixture;
+            internal bool VisualTest;
+            internal string VisualFixture;
+            internal int WindowWidth;
+            internal int WindowHeight;
+            internal string VisualTestUserDataFolder;
             internal string CapabilitiesResultPath;
             internal string SelfTestResultPath;
 
+            internal string GetInitialAppUri()
+            {
+                if (!VisualTest)
+                {
+                    return Fixture
+                        ? "https://app.local/index.html?fixture=1"
+                        : "https://app.local/index.html";
+                }
+
+                switch (VisualFixture)
+                {
+                    case "action-sheet":
+                        return "https://app.local/index.html?fixture=1&page=overview&picker=1";
+                    case "settings":
+                        return "https://app.local/index.html?fixture=1&page=settings";
+                    case "narrow":
+                    case "overview":
+                        return "https://app.local/index.html?fixture=1&page=overview";
+                    default:
+                        throw new InvalidOperationException("ビジュアルテストのシーンが正しくありません。");
+                }
+            }
+
             internal static bool TryParse(string[] args, out HostOptions options, out string error)
+            {
+                if (args == null)
+                {
+                    options = new HostOptions();
+                    error = "引数を確認できません。";
+                    return false;
+                }
+
+                int visualTestCount = 0;
+                foreach (string argument in args)
+                {
+                    if (String.Equals(argument, "--visual-test", StringComparison.Ordinal))
+                        visualTestCount++;
+                }
+                if (visualTestCount > 1)
+                {
+                    options = new HostOptions();
+                    error = "--visual-test が重複しています。";
+                    return false;
+                }
+                if (visualTestCount == 1)
+                    return TryParseVisualTest(args, out options, out error);
+
+                return TryParseStandard(args, out options, out error);
+            }
+
+            private static bool TryParseStandard(string[] args, out HostOptions options, out string error)
             {
                 options = new HostOptions();
                 error = null;
@@ -240,12 +307,292 @@ namespace AiMiner.UiHost
                 return true;
             }
 
+            private static bool TryParseVisualTest(string[] args, out HostOptions options, out string error)
+            {
+                options = new HostOptions();
+                error = null;
+                Dictionary<string, string> values = new Dictionary<string, string>(StringComparer.Ordinal);
+                bool visualTest = false;
+
+                for (int i = 0; i < args.Length; i++)
+                {
+                    string key = args[i];
+                    if (key == "--visual-test")
+                    {
+                        if (visualTest)
+                        {
+                            error = "--visual-test が重複しています。";
+                            return false;
+                        }
+                        visualTest = true;
+                        continue;
+                    }
+
+                    if (key != "--assets" && key != "--fixture"
+                        && key != "--window-width" && key != "--window-height")
+                    {
+                        error = "ビジュアルテストで使用できない引数です: " + key;
+                        return false;
+                    }
+                    if (values.ContainsKey(key))
+                    {
+                        error = "引数が重複しています: " + key;
+                        return false;
+                    }
+                    if (i + 1 >= args.Length || args[i + 1].StartsWith("--", StringComparison.Ordinal))
+                    {
+                        error = "引数の値がありません: " + key;
+                        return false;
+                    }
+                    values.Add(key, args[++i]);
+                }
+
+                string assets;
+                string fixture;
+                string widthText;
+                string heightText;
+                if (!visualTest || values.Count != 4
+                    || !values.TryGetValue("--assets", out assets)
+                    || !values.TryGetValue("--fixture", out fixture)
+                    || !values.TryGetValue("--window-width", out widthText)
+                    || !values.TryGetValue("--window-height", out heightText))
+                {
+                    error = "--visual-test には --assets、--fixture、--window-width、--window-height が必要です。";
+                    return false;
+                }
+                if (!VisualFixtures.Contains(fixture))
+                {
+                    error = "--fixture は overview、action-sheet、settings、narrow のいずれかです。";
+                    return false;
+                }
+
+                int width;
+                int height;
+                if (!Int32.TryParse(widthText, NumberStyles.None, CultureInfo.InvariantCulture, out width)
+                    || width < MinimumVisualWidth || width > MaximumVisualWidth)
+                {
+                    error = "--window-width は " + MinimumVisualWidth.ToString(CultureInfo.InvariantCulture)
+                        + "～" + MaximumVisualWidth.ToString(CultureInfo.InvariantCulture) + " で指定してください。";
+                    return false;
+                }
+                if (!Int32.TryParse(heightText, NumberStyles.None, CultureInfo.InvariantCulture, out height)
+                    || height < MinimumVisualHeight || height > MaximumVisualHeight)
+                {
+                    error = "--window-height は " + MinimumVisualHeight.ToString(CultureInfo.InvariantCulture)
+                        + "～" + MaximumVisualHeight.ToString(CultureInfo.InvariantCulture) + " で指定してください。";
+                    return false;
+                }
+
+                options.AssetsPath = NormalizeAbsoluteDirectory(assets, out error);
+                if (error != null) return false;
+
+                string userDataFolder = Environment.GetEnvironmentVariable(
+                    "AI_MINER_VISUAL_TEST_USER_DATA_FOLDER", EnvironmentVariableTarget.Process);
+                options.VisualTestUserDataFolder = NormalizeVisualTestUserDataFolder(userDataFolder, out error);
+                if (error != null) return false;
+
+                options.Fixture = true;
+                options.VisualTest = true;
+                options.VisualFixture = fixture;
+                options.WindowWidth = width;
+                options.WindowHeight = height;
+                options.Session = "fixture00";
+                return true;
+            }
+
+            internal static string NormalizeVisualTestUserDataFolder(string path, out string error)
+            {
+                error = null;
+                try
+                {
+                    if (String.IsNullOrWhiteSpace(path) || !IsFullyQualifiedPath(path))
+                    {
+                        error = "AI_MINER_VISUAL_TEST_USER_DATA_FOLDER は絶対パスで指定してください。";
+                        return null;
+                    }
+
+                    string fullPath = Path.GetFullPath(path)
+                        .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    string tempRoot = Path.GetFullPath(Path.GetTempPath())
+                        .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    DirectoryInfo directory = new DirectoryInfo(fullPath);
+                    if (!VisualTestFolderPattern.IsMatch(directory.Name)
+                        || directory.Parent == null
+                        || !String.Equals(directory.Parent.FullName.TrimEnd(
+                                Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                            tempRoot, StringComparison.OrdinalIgnoreCase))
+                    {
+                        error = "ビジュアルテストのWebView2フォルダーが安全な一時フォルダーではありません。";
+                        return null;
+                    }
+                    if (!directory.Exists)
+                    {
+                        error = "ビジュアルテストのWebView2フォルダーがありません。";
+                        return null;
+                    }
+                    if ((directory.Attributes & FileAttributes.ReparsePoint) != 0)
+                    {
+                        error = "ビジュアルテストのWebView2フォルダーに再解析ポイントは使用できません。";
+                        return null;
+                    }
+                    return fullPath;
+                }
+                catch (Exception ex)
+                {
+                    error = "ビジュアルテストのWebView2フォルダーが正しくありません: " + ex.Message;
+                    return null;
+                }
+            }
+
+            internal static bool RunSelfTests(string assetsPath, out string error)
+            {
+                error = null;
+                string variableName = "AI_MINER_VISUAL_TEST_USER_DATA_FOLDER";
+                string previous = Environment.GetEnvironmentVariable(variableName, EnvironmentVariableTarget.Process);
+                string temporary = Path.Combine(Path.GetTempPath(),
+                    "ai-miner-webview-test-" + Guid.NewGuid().ToString("N"));
+                try
+                {
+                    Directory.CreateDirectory(temporary);
+                    Environment.SetEnvironmentVariable(variableName, temporary, EnvironmentVariableTarget.Process);
+
+                    HostOptions parsed;
+                    string parseError;
+                    string[] scenes = { "overview", "action-sheet", "settings", "narrow" };
+                    foreach (string scene in scenes)
+                    {
+                        string[] visualArgs =
+                        {
+                            "--visual-test", "--assets", assetsPath, "--fixture", scene,
+                            "--window-width", scene == "narrow" ? "520" : "820", "--window-height", "640"
+                        };
+                        string expectedUri = scene == "action-sheet"
+                            ? "https://app.local/index.html?fixture=1&page=overview&picker=1"
+                            : scene == "settings"
+                                ? "https://app.local/index.html?fixture=1&page=settings"
+                                : "https://app.local/index.html?fixture=1&page=overview";
+                        if (!TryParse(visualArgs, out parsed, out parseError)
+                            || !parsed.VisualTest || !parsed.Fixture
+                            || parsed.VisualFixture != scene
+                            || parsed.WindowWidth != (scene == "narrow" ? 520 : 820)
+                            || parsed.WindowHeight != 640
+                            || parsed.GetInitialAppUri() != expectedUri
+                            || !String.Equals(parsed.VisualTestUserDataFolder, temporary,
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            error = "visual-test parser rejected a valid " + scene + " fixture: " + parseError;
+                            return false;
+                        }
+                    }
+
+                    string[] ordinaryFixture = { "--fixture", "--assets", assetsPath };
+                    if (!TryParse(ordinaryFixture, out parsed, out parseError)
+                        || !parsed.Fixture || parsed.VisualTest
+                        || parsed.GetInitialAppUri() != "https://app.local/index.html?fixture=1")
+                    {
+                        error = "ordinary fixture parsing changed: " + parseError;
+                        return false;
+                    }
+
+                    string[] ordinaryConnected =
+                    {
+                        "--backend-hwnd", "1", "--backend-pid", "1",
+                        "--session", "session0", "--assets", assetsPath
+                    };
+                    if (!TryParse(ordinaryConnected, out parsed, out parseError)
+                        || parsed.Fixture || parsed.VisualTest
+                        || parsed.GetInitialAppUri() != "https://app.local/index.html")
+                    {
+                        error = "ordinary connected parsing changed: " + parseError;
+                        return false;
+                    }
+
+                    string[] invalidScene =
+                    {
+                        "--visual-test", "--assets", assetsPath, "--fixture", "unknown",
+                        "--window-width", "820", "--window-height", "640"
+                    };
+                    if (TryParse(invalidScene, out parsed, out parseError))
+                    {
+                        error = "visual-test parser accepted an unknown fixture.";
+                        return false;
+                    }
+
+                    string[] invalidWidth =
+                    {
+                        "--visual-test", "--assets", assetsPath, "--fixture", "overview",
+                        "--window-width", "319", "--window-height", "640"
+                    };
+                    if (TryParse(invalidWidth, out parsed, out parseError))
+                    {
+                        error = "visual-test parser accepted an out-of-range window size.";
+                        return false;
+                    }
+
+                    string[] connectedVisualTest =
+                    {
+                        "--visual-test", "--assets", assetsPath, "--fixture", "overview",
+                        "--window-width", "820", "--window-height", "640",
+                        "--backend-pid", "1"
+                    };
+                    if (TryParse(connectedVisualTest, out parsed, out parseError))
+                    {
+                        error = "visual-test parser accepted a backend connection argument.";
+                        return false;
+                    }
+
+                    Environment.SetEnvironmentVariable(variableName, null, EnvironmentVariableTarget.Process);
+                    string[] missingFolder =
+                    {
+                        "--visual-test", "--assets", assetsPath, "--fixture", "overview",
+                        "--window-width", "820", "--window-height", "640"
+                    };
+                    if (TryParse(missingFolder, out parsed, out parseError))
+                    {
+                        error = "visual-test parser accepted a missing isolated user-data folder.";
+                        return false;
+                    }
+
+                    string driveRelativeAsset = Path.GetPathRoot(assetsPath).TrimEnd(
+                        Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + "relative-assets";
+                    Environment.SetEnvironmentVariable(variableName, temporary, EnvironmentVariableTarget.Process);
+                    string[] driveRelative =
+                    {
+                        "--visual-test", "--assets", driveRelativeAsset, "--fixture", "overview",
+                        "--window-width", "820", "--window-height", "640"
+                    };
+                    if (TryParse(driveRelative, out parsed, out parseError))
+                    {
+                        error = "visual-test parser accepted a drive-relative asset path.";
+                        return false;
+                    }
+
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    error = "visual-test parser self-test failed: " + ex.Message;
+                    return false;
+                }
+                finally
+                {
+                    Environment.SetEnvironmentVariable(variableName, previous, EnvironmentVariableTarget.Process);
+                    try
+                    {
+                        DirectoryInfo directory = new DirectoryInfo(temporary);
+                        if (directory.Exists && (directory.Attributes & FileAttributes.ReparsePoint) == 0)
+                            directory.Delete(false);
+                    }
+                    catch { }
+                }
+            }
+
             private static string NormalizeAbsoluteDirectory(string path, out string error)
             {
                 error = null;
                 try
                 {
-                    if (String.IsNullOrWhiteSpace(path) || !Path.IsPathRooted(path))
+                    if (String.IsNullOrWhiteSpace(path) || !IsFullyQualifiedPath(path))
                     {
                         error = "--assets は絶対パスで指定してください。";
                         return null;
@@ -266,6 +613,26 @@ namespace AiMiner.UiHost
                     error = "UIファイルのパスが正しくありません: " + ex.Message;
                     return null;
                 }
+            }
+
+            private static bool IsFullyQualifiedPath(string path)
+            {
+                if (String.IsNullOrEmpty(path)) return false;
+                string root;
+                try { root = Path.GetPathRoot(path); }
+                catch { return false; }
+                if (String.IsNullOrEmpty(root)) return false;
+
+                if (root.Length >= 3 && Char.IsLetter(root[0]) && root[1] == ':'
+                    && (root[2] == Path.DirectorySeparatorChar || root[2] == Path.AltDirectorySeparatorChar))
+                {
+                    return true;
+                }
+
+                if (!root.StartsWith(@"\\", StringComparison.Ordinal)) return false;
+                string[] parts = root.Trim('\\', '/').Split(new[] { '\\', '/' },
+                    StringSplitOptions.RemoveEmptyEntries);
+                return parts.Length >= 2;
             }
         }
 

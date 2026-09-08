@@ -20,11 +20,18 @@ $distRoot = Join-Path $repoRoot 'dist'
 $mainSource = Join-Path $sourceRoot 'mining-auto.ahk'
 $bridgeSource = Join-Path $sourceRoot 'background-bridge\CdpBridge.cs'
 $updaterSource = Join-Path $sourceRoot 'updater\Updater.cs'
+$uiWebRoot = Join-Path $sourceRoot 'ui-web'
+$uiWebPackage = Join-Path $uiWebRoot 'package.json'
+$uiWebLock = Join-Path $uiWebRoot 'package-lock.json'
+$uiWebOutput = Join-Path $uiWebRoot 'www'
+$uiHostProject = Join-Path $sourceRoot 'ui-host\AI.Miner.UiHost.csproj'
+$uiHostLock = Join-Path $sourceRoot 'ui-host\packages.lock.json'
+$uiHostOutput = Join-Path $buildRoot 'ui-host'
+$nugetPackageRoot = Join-Path $buildRoot 'nuget-packages'
 $rootReadme = Join-Path $repoRoot 'README.md'
 $sourceReadme = Join-Path $sourceRoot 'README.md'
 $usageGuide = Join-Path $repoRoot 'docs\AI採掘機_使い方.txt'
 $configTemplate = Join-Path $repoRoot 'config\AI採掘機.ini'
-$companionValidation = Join-Path $repoRoot 'fivem-resource\ai_miner_companion\tests\Validate-Resource.ps1'
 $toolRoot = Join-Path $repoRoot 'tools\AutoHotkey'
 $autoHotkey = Join-Path $toolRoot 'AutoHotkey64.exe'
 $ahk2Exe = Join-Path $toolRoot 'Compiler\Ahk2Exe.exe'
@@ -36,13 +43,12 @@ if (-not $SkipToolBootstrap) {
 }
 
 foreach ($requiredFile in @($mainSource, $bridgeSource, $updaterSource, $rootReadme,
-        $sourceReadme, $usageGuide, $configTemplate, $companionValidation, $autoHotkey, $ahk2Exe)) {
+        $sourceReadme, $usageGuide, $configTemplate, $autoHotkey,
+        $ahk2Exe, $uiWebPackage, $uiWebLock, $uiHostProject, $uiHostLock)) {
     if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
         throw "Required build input is missing: $requiredFile"
     }
 }
-
-& $companionValidation
 
 $mainText = Get-Content -LiteralPath $mainSource -Raw
 $versionMatch = [regex]::Match(
@@ -86,20 +92,83 @@ foreach ($versionedDocument in @($rootReadme, $sourceReadme, $usageGuide, $confi
     Assert-EmbeddedReleaseVersion -Path $versionedDocument -ExpectedVersion $Version
 }
 
+$node = Get-Command node.exe -ErrorAction Stop
+$nodeVersionText = (& $node.Source --version).Trim().TrimStart('v')
+$nodeVersion = $null
+if ($LASTEXITCODE -ne 0 -or -not [Version]::TryParse($nodeVersionText, [ref]$nodeVersion) -or
+    $nodeVersion.Major -lt 20) {
+    throw "Node.js 20 or newer is required; found '$nodeVersionText'."
+}
+
+$uiPackage = Get-Content -LiteralPath $uiWebPackage -Raw | ConvertFrom-Json
+if ($uiPackage.version -ne $Version) {
+    throw "Web UI version '$($uiPackage.version)' does not match requested version '$Version'."
+}
+if ($uiPackage.dependencies.framework7 -cne '9.1.3') {
+    throw 'package.json must pin Framework7 exactly to 9.1.3.'
+}
+
+$lockValidator = @'
+const fs = require('node:fs');
+const lock = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+const root = lock.packages && lock.packages[''];
+const framework = lock.packages && lock.packages['node_modules/framework7'];
+const valid = lock.lockfileVersion === 3 && root && framework
+  && root.version === process.argv[2]
+  && root.dependencies && root.dependencies.framework7 === '9.1.3'
+  && framework.version === '9.1.3'
+  && framework.integrity === 'sha512-1HCK58FbplWdKpHpSiF38H0UaAiCHpGA421ArxMopd5cvKbFg9TD22htYfNZw217QNgSKcw2FDcodUjXfGgOFg==';
+if (!valid) process.exit(9);
+'@
+& $node.Source -e $lockValidator -- $uiWebLock $Version
+if ($LASTEXITCODE -ne 0) {
+    throw 'package-lock.json does not contain the expected locked Framework7 9.1.3 dependency.'
+}
+
+[xml]$uiHostProjectXml = Get-Content -LiteralPath $uiHostProject -Raw
+$uiHostProperties = $uiHostProjectXml.Project.PropertyGroup |
+    Where-Object { $_.TargetFramework } | Select-Object -First 1
+$webViewReference = $uiHostProjectXml.Project.ItemGroup.PackageReference |
+    Where-Object { $_.Include -eq 'Microsoft.Web.WebView2' } | Select-Object -First 1
+if ($uiHostProperties.TargetFramework -cne 'net48' -or
+    $uiHostProperties.PlatformTarget -cne 'x64' -or
+    $webViewReference.Version -cne '[1.0.4191.47]') {
+    throw 'The UI host must remain an x64 net48 application locked to WebView2 SDK 1.0.4191.47.'
+}
+
+$uiHostLockData = Get-Content -LiteralPath $uiHostLock -Raw | ConvertFrom-Json
+$uiHostNet48 = $uiHostLockData.dependencies.PSObject.Properties['.NETFramework,Version=v4.8'].Value
+$lockedWebView = $uiHostNet48.PSObject.Properties['Microsoft.Web.WebView2'].Value
+$uiHostX64 = $uiHostLockData.dependencies.PSObject.Properties['.NETFramework,Version=v4.8/win7-x64'].Value
+$lockedWebViewX64 = $uiHostX64.PSObject.Properties['Microsoft.Web.WebView2'].Value
+if ($lockedWebView.requested -cne '[1.0.4191.47, 1.0.4191.47]' -or
+    $lockedWebView.resolved -cne '1.0.4191.47' -or
+    $lockedWebView.contentHash -cne 'Snb6mlTpuz6ZFjWMwIdg28Xp6kAUMy3zaLUyGbFSaw+/AJKlwoX8EiaWJ1eUMfKyJHksPkFjJHl1LIB7kX+0AQ==' -or
+    $lockedWebViewX64.requested -cne '[1.0.4191.47, 1.0.4191.47]' -or
+    $lockedWebViewX64.resolved -cne '1.0.4191.47' -or
+    $lockedWebViewX64.contentHash -cne $lockedWebView.contentHash) {
+    throw 'packages.lock.json does not lock WebView2 SDK exactly to 1.0.4191.47.'
+}
+
 if (Test-Path -LiteralPath $stageRoot) {
     Remove-Item -LiteralPath $stageRoot -Recurse -Force
 }
 if (Test-Path -LiteralPath $distRoot) {
     Remove-Item -LiteralPath $distRoot -Recurse -Force
 }
+if (Test-Path -LiteralPath $uiHostOutput) {
+    Remove-Item -LiteralPath $uiHostOutput -Recurse -Force
+}
 New-Item -ItemType Directory -Path $stageRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $distRoot -Force | Out-Null
+New-Item -ItemType Directory -Path $uiHostOutput -Force | Out-Null
 & (Join-Path $PSScriptRoot 'Build-AppIcon.ps1') -Output $appIcon | Out-Null
 if (-not (Test-Path -LiteralPath $appIcon -PathType Leaf)) {
     throw 'Application icon generation failed.'
 }
 
-Copy-Item -Path (Join-Path $sourceRoot '*') -Destination $stageRoot -Recurse -Force
+$stagedMain = Join-Path $stageRoot 'mining-auto.ahk'
+Copy-Item -LiteralPath $mainSource -Destination $stagedMain -Force
 $assetRoot = Join-Path $sourceRoot 'assets'
 if (Test-Path -LiteralPath $assetRoot -PathType Container) {
     Get-ChildItem -LiteralPath $assetRoot -File | Copy-Item -Destination $stageRoot -Force
@@ -169,14 +238,127 @@ $bridgeOutput = Join-Path $stageRoot 'AI採掘機_Background.exe'
 $updaterOutput = Join-Path $stageRoot 'AI採掘機_Updater.exe'
 Invoke-CSharpBuild -Source $bridgeSource -Output $bridgeOutput
 Invoke-CSharpBuild -Source $updaterSource -Output $updaterOutput
-Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'CAPS 7 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HEALTH COMPANION'
+Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'CAPS 9 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HOTBAR INVENTORYKEY HEALTH COMPANION'
 Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'SELFTEST OK' -Mode 'self-test'
 & (Join-Path $PSScriptRoot 'Test-BackgroundBridge.ps1') -Bridge $bridgeOutput
 Invoke-CapabilitySmokeTest -Executable $updaterOutput -Expected 'UPDATE_CAPS 1 CHECK DOWNLOAD APPLY'
 
-$stagedMain = Join-Path $stageRoot 'mining-auto.ahk'
-Push-Location $stageRoot
+$npm = Get-Command npm.cmd -ErrorAction Stop
+Push-Location $uiWebRoot
 try {
+    & $npm.Source ci --ignore-scripts --no-audit --no-fund
+    if ($LASTEXITCODE -ne 0) { throw 'npm ci failed for the offline UI.' }
+    & $npm.Source run check
+    if ($LASTEXITCODE -ne 0) { throw 'Web UI checks failed.' }
+    & $npm.Source run build
+    if ($LASTEXITCODE -ne 0) { throw 'Web UI build failed.' }
+}
+finally {
+    Pop-Location
+}
+
+$dotnet = Get-Command dotnet.exe -ErrorAction Stop
+New-Item -ItemType Directory -Path $nugetPackageRoot -Force | Out-Null
+& $dotnet.Source restore $uiHostProject --locked-mode --packages $nugetPackageRoot
+if ($LASTEXITCODE -ne 0) { throw 'Locked UI host restore failed.' }
+& $dotnet.Source build $uiHostProject --configuration Release --no-restore `
+    --output $uiHostOutput -p:TreatWarningsAsErrors=true -p:ApplicationIcon=$appIcon
+if ($LASTEXITCODE -ne 0) { throw 'UI host build failed.' }
+
+$uiHostExecutable = Join-Path $uiHostOutput 'AiMiner.UiHost.exe'
+$uiHostConfig = $uiHostExecutable + '.config'
+$uiCore = Join-Path $uiHostOutput 'Microsoft.Web.WebView2.Core.dll'
+$uiWinForms = Join-Path $uiHostOutput 'Microsoft.Web.WebView2.WinForms.dll'
+$uiLoader = Join-Path $uiHostOutput 'WebView2Loader.dll'
+if (-not (Test-Path -LiteralPath $uiLoader -PathType Leaf)) {
+    $uiLoader = Join-Path $uiHostOutput 'runtimes\win-x64\native\WebView2Loader.dll'
+}
+foreach ($uiFile in @($uiHostExecutable, $uiHostConfig, $uiCore, $uiWinForms, $uiLoader,
+        (Join-Path $uiWebOutput 'index.html'), (Join-Path $uiWebOutput 'app.css'),
+        (Join-Path $uiWebOutput 'app.js'), (Join-Path $uiWebOutput 'build-info.json'),
+        (Join-Path $uiWebOutput 'vendor\framework7-bundle.min.css'),
+        (Join-Path $uiWebOutput 'vendor\framework7-bundle.min.js'))) {
+    if (-not (Test-Path -LiteralPath $uiFile -PathType Leaf)) {
+        throw "Required UI build output is missing: $uiFile"
+    }
+}
+
+$expectedUiFiles = @(
+    'app.css',
+    'app.js',
+    'build-info.json',
+    'index.html',
+    'vendor/framework7-bundle.min.css',
+    'vendor/framework7-bundle.min.js'
+)
+$uiOutputPrefix = $uiWebOutput.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+$actualUiFiles = @(
+    Get-ChildItem -LiteralPath $uiWebOutput -Recurse -File |
+        ForEach-Object { $_.FullName.Substring($uiOutputPrefix.Length).Replace('\', '/') } |
+        Sort-Object
+)
+if ($actualUiFiles.Count -ne $expectedUiFiles.Count -or
+    (Compare-Object -ReferenceObject $expectedUiFiles -DifferenceObject $actualUiFiles -CaseSensitive)) {
+    throw 'Offline UI output contains missing or unexpected files.'
+}
+
+$uiBuildInfo = Get-Content -LiteralPath (Join-Path $uiWebOutput 'build-info.json') -Raw |
+    ConvertFrom-Json
+if ([int]$uiBuildInfo.schema -ne 1 -or $uiBuildInfo.version -ne $Version -or
+    $uiBuildInfo.framework -cne 'Framework7' -or
+    $uiBuildInfo.frameworkVersion -cne '9.1.3' -or $uiBuildInfo.offline -ne $true) {
+    throw 'Offline UI build metadata is inconsistent with this release.'
+}
+
+function Assert-X64PortableExecutable {
+    param([Parameter(Mandatory)] [string]$Path)
+
+    [byte[]]$bytes = [System.IO.File]::ReadAllBytes($Path)
+    if ($bytes.Length -lt 256 -or $bytes[0] -ne 0x4d -or $bytes[1] -ne 0x5a) {
+        throw "Not a valid Windows executable: $Path"
+    }
+    $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+    if ($peOffset -lt 0 -or $peOffset + 6 -gt $bytes.Length -or
+        [BitConverter]::ToUInt32($bytes, $peOffset) -ne 0x00004550 -or
+        [BitConverter]::ToUInt16($bytes, $peOffset + 4) -ne 0x8664) {
+        throw "Executable is not x64 PE32+: $Path"
+    }
+}
+
+Assert-X64PortableExecutable -Path $uiHostExecutable
+Assert-X64PortableExecutable -Path $uiLoader
+
+$uiTestResult = Join-Path $stageRoot 'ui-host-test.txt'
+$uiArgumentLine = '--self-test "' + $uiTestResult.Replace('"', '""') `
+    + '" --assets "' + $uiWebOutput.Replace('"', '""') + '"'
+$uiTestProcess = Start-Process -FilePath $uiHostExecutable -ArgumentList $uiArgumentLine `
+    -PassThru -WindowStyle Hidden
+if (-not $uiTestProcess.WaitForExit(20000)) {
+    try { $uiTestProcess.Kill() } catch { }
+    throw 'UI host self-test timed out.'
+}
+$uiTestFailed = $uiTestProcess.ExitCode -ne 0 `
+    -or -not (Test-Path -LiteralPath $uiTestResult -PathType Leaf) `
+    -or (Get-Content -LiteralPath $uiTestResult -Raw).Trim() -ne 'SELFTEST OK'
+if ($uiTestFailed) {
+    throw 'UI host self-test failed.'
+}
+
+$uiRuntimeHost = Join-Path $stageRoot 'ui-runtime\host'
+$uiRuntimeWeb = Join-Path $stageRoot 'ui-runtime\web'
+New-Item -ItemType Directory -Path $uiRuntimeHost -Force | Out-Null
+New-Item -ItemType Directory -Path $uiRuntimeWeb -Force | Out-Null
+Copy-Item -LiteralPath $uiHostExecutable -Destination $uiRuntimeHost -Force
+Copy-Item -LiteralPath $uiHostConfig -Destination $uiRuntimeHost -Force
+Copy-Item -LiteralPath $uiCore -Destination $uiRuntimeHost -Force
+Copy-Item -LiteralPath $uiWinForms -Destination $uiRuntimeHost -Force
+Copy-Item -LiteralPath $uiLoader -Destination (Join-Path $uiRuntimeHost 'WebView2Loader.dll') -Force
+Copy-Item -Path (Join-Path $uiWebOutput '*') -Destination $uiRuntimeWeb -Recurse -Force
+
+Push-Location $stageRoot
+$previousAhkCompileFlag = [Environment]::GetEnvironmentVariable('AI_MINER_AHK_COMPILE', 'Process')
+try {
+    [Environment]::SetEnvironmentVariable('AI_MINER_AHK_COMPILE', '1', 'Process')
     $quotedMain = '"' + $stagedMain + '"'
     $quotedOutput = '"' + $outputExe + '"'
     $quotedBase = '"' + $autoHotkey + '"'
@@ -190,18 +372,29 @@ try {
     }
 }
 finally {
+    [Environment]::SetEnvironmentVariable('AI_MINER_AHK_COMPILE', $previousAhkCompileFlag, 'Process')
     Pop-Location
 }
 
 foreach ($testMode in @('--validate', '--smoke-test')) {
     $testProcess = Start-Process -FilePath $outputExe -ArgumentList $testMode -PassThru -WindowStyle Hidden
-    if (-not $testProcess.WaitForExit(30000)) {
+    # A cold WebView2 profile may consume most of the app's own 27-second
+    # handshake + smoke window on slower PCs. Keep validation strict but give
+    # the full UI round-trip enough wall-clock headroom.
+    $testTimeoutMs = if ($testMode -eq '--smoke-test') { 60000 } else { 30000 }
+    if (-not $testProcess.WaitForExit($testTimeoutMs)) {
         try { $testProcess.Kill() } catch { }
         throw "Compiled application $testMode timed out."
     }
     if ($testProcess.ExitCode -ne 0) {
         throw "Compiled application $testMode failed with exit code $($testProcess.ExitCode)."
     }
+}
+
+Assert-X64PortableExecutable -Path $outputExe
+$distFiles = @(Get-ChildItem -LiteralPath $distRoot -Recurse -File)
+if ($distFiles.Count -ne 1 -or $distFiles[0].FullName -cne $outputExe) {
+    throw 'The build output must contain one self-contained application executable only.'
 }
 
 $builtFile = Get-Item -LiteralPath $outputExe

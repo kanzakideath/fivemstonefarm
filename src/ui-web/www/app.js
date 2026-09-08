@@ -74,6 +74,8 @@
       backgroundMode: { value: true, enabled: true },
       hideWhileRunning: { value: true, enabled: true },
       correctionEnabled: { value: true, enabled: true },
+      autoEat: { value: true, enabled: true },
+      foodKey: { value: 1, enabled: true },
       autoCheckUpdates: { value: true, enabled: true },
       minimumFreeWeight: { value: 2000, enabled: true },
       settingsSave: { text: '設定を保存', enabled: true },
@@ -131,7 +133,8 @@
     'vehicle-enabled', 'capacity-value', 'capacity-fill', 'capacity-detail',
     'companion-status', 'companion-detail', 'vehicle-register', 'vehicle-register-label',
     'vehicle-delete', 'start-hotkey', 'stop-hotkey', 'setting-background', 'setting-hide',
-    'setting-correction', 'setting-auto-update', 'minimum-free-weight', 'settings-save',
+    'setting-correction', 'setting-auto-eat', 'food-key', 'setting-auto-update',
+    'minimum-free-weight', 'settings-save',
     'settings-save-label', 'settings-feedback', 'current-version', 'update-status',
     'update-integrity', 'update-check', 'update-check-label', 'update-feedback',
     'update-badge', 'sidebar-connection', 'sidebar-connection-dot', 'action-popover',
@@ -490,6 +493,8 @@
       control('correctionEnabled', 'washCorrectionControl'),
       'correctionEnabled',
     );
+    updateSwitch(elements.settingAutoEat, control('autoEat', 'autoEatControl'), 'autoEat');
+    updateInput(elements.foodKey, control('foodKey', 'foodKeyControl'), 'foodKey');
     updateSwitch(elements.settingAutoUpdate, control('autoCheckUpdates', 'autoUpdateControl'), 'autoCheckUpdates');
     updateInput(
       elements.minimumFreeWeight,
@@ -766,6 +771,8 @@
         backgroundMode: { value: payload.backgroundMode, enabled: true },
         hideWhileRunning: { value: payload.hideWhileRunning, enabled: true },
         correctionEnabled: { value: payload.correctionEnabled, enabled: true },
+        autoEat: { value: payload.autoEat, enabled: true },
+        foodKey: { value: payload.foodKey, enabled: true },
         autoCheckUpdates: { value: payload.autoCheckUpdates, enabled: true },
         minimumFreeWeight: { value: payload.minimumFreeWeight, enabled: true },
         settingsFeedback: { text: '設定を保存しました', tone: 'success' },
@@ -825,6 +832,8 @@
       [elements.settingBackground, 'backgroundMode'],
       [elements.settingHide, 'hideWhileRunning'],
       [elements.settingCorrection, 'correctionEnabled'],
+      [elements.settingAutoEat, 'autoEat'],
+      [elements.foodKey, 'foodKey'],
       [elements.settingAutoUpdate, 'autoCheckUpdates'],
       [elements.minimumFreeWeight, 'minimumFreeWeight'],
     ]);
@@ -839,6 +848,13 @@
     elements.settingsSave.addEventListener('click', () => {
       if (elements.settingsSave.classList.contains('is-pending')) return;
       const minimumFreeWeight = Number(elements.minimumFreeWeight.value);
+      const foodKey = Number(elements.foodKey.value);
+      if (!Number.isInteger(foodKey) || foodKey < 1 || foodKey > 5) {
+        setText(elements.settingsFeedback, '食料スロットは1〜5で指定してください');
+        setTone(elements.settingsFeedback, 'error');
+        elements.foodKey.focus();
+        return;
+      }
       if (!Number.isInteger(minimumFreeWeight) || minimumFreeWeight < 250 || minimumFreeWeight > 20000) {
         setText(elements.settingsFeedback, '残り重量は250〜20,000gで指定してください');
         setTone(elements.settingsFeedback, 'error');
@@ -852,6 +868,8 @@
         backgroundMode: elements.settingBackground.checked,
         hideWhileRunning: elements.settingHide.checked,
         correctionEnabled: elements.settingCorrection.checked,
+        autoEat: elements.settingAutoEat.checked,
+        foodKey,
         autoCheckUpdates: elements.settingAutoUpdate.checked,
         minimumFreeWeight,
       });
@@ -900,7 +918,9 @@
       actionPicker: Boolean(actionSheet && actionPopover && actionButton),
       focusVisible: CSS.supports('selector(:focus-visible)'),
       offlineAssets: [...document.scripts, ...document.querySelectorAll('link[rel="stylesheet"]')]
-        .every((node) => !/^https?:/i.test(node.src || node.href || '')),
+        .every((node) => !/^(?:https?:)?\/\//i.test(
+          node.getAttribute('src') || node.getAttribute('href') || '',
+        )),
     };
     const failures = Object.entries(checks).filter(([, ok]) => !ok).map(([name]) => name);
     const result = failures.length ? `ERROR:${failures.join(',')}` : 'OK';

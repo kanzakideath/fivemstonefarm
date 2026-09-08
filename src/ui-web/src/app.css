@@ -675,6 +675,10 @@ svg .fill-path {
   text-transform: uppercase;
 }
 
+.compact-number {
+  width: 72px;
+}
+
 .unit-input {
   display: flex;
   flex: 0 0 auto;

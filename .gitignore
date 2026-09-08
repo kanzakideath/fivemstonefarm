@@ -21,6 +21,7 @@ id_ecdsa*
 tools/
 .cache/
 .packages/
+node_modules/
 
 # 生成物
 build/

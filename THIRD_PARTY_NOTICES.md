@@ -20,4 +20,31 @@ AI採掘機の作者が作成したソースコードは、ルートの `LICENSE
 
 Ahk2Exe はビルド時だけ使用し、Releaseの配布ZIPには含めません。
 
+## Framework7 9.1.3
+
+- Copyright: 2014 Vladimir Kharlampidi
+- ライセンス: MIT License
+- 公式ソース: <https://github.com/framework7io/framework7>
+
+オフラインUIにはiOSテーマのminified CSS/JavaScriptを同梱します。ライセンス原文は配布ZIPの `licenses/Framework7-LICENSE.txt` にあります。
+
+Framework7 bundleに含まれる実行時依存関係も、ロックファイルで次の版に固定しています。
+
+- Dom7 4.0.6 — MIT License — `licenses/Dom7-LICENSE.txt`
+- HTM 3.1.1 — Apache License 2.0 — `licenses/HTM-LICENSE.txt`
+- path-to-regexp 6.3.0 — MIT License — `licenses/Path-to-RegExp-LICENSE.txt`
+- Skeleton Elements 4.0.1 — MIT License — `licenses/Skeleton-Elements-LICENSE.txt`
+- SSR Window 4.0.2 / 5.0.1 — MIT License — `licenses/SSR-Window-4-LICENSE.txt` / `licenses/SSR-Window-5-LICENSE.txt`
+- Swiper 12.2.0 — MIT License — `licenses/Swiper-LICENSE.txt`
+
+Skeleton Elementsのnpm配布物は `license: MIT` と公式LICENSEへの参照を含みますが、LICENSEファイル自体を含まないため、配布ZIPには公式LICENSEと同じMITライセンス文を明示的に収録します。
+
+## Microsoft Edge WebView2 SDK 1.0.4191.47
+
+- Copyright: Microsoft Corporation
+- ライセンス: Microsoft.Web.WebView2 NuGet packageに付属する条件
+- 公式配布: <https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.4191.47>
+
+UIホストへ必要なSDK DLLとLoaderを同梱します。ライセンスとNOTICEは配布ZIPの `licenses/WebView2-LICENSE.txt` と `licenses/WebView2-NOTICE.txt` にあります。WebView2 Evergreen Runtime自体は本プロジェクトのZIPへ同梱しません。
+
 Microsoft Windows、FiveM、Grand Theft Auto V、および記載される製品名は各権利者に帰属します。本プロジェクトはそれらの権利者による公式製品・公認製品ではありません。

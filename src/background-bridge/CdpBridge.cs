@@ -19,7 +19,7 @@ internal static class CdpBridge
     private const string CompanionFramePart = "cfx-nui-ai_miner_companion/ui/index.html";
     private const string CompanionProtocol = "ai-miner-companion";
     private const string CompanionResource = "ai_miner_companion";
-    private const string Capabilities = "CAPS 7 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HEALTH COMPANION";
+    private const string Capabilities = "CAPS 9 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HOTBAR INVENTORYKEY HEALTH COMPANION";
     private const int MaximumRouteSteps = 240;
     private const int MaximumRouteMilliseconds = 90000;
     private const int RouteHealthIntervalMilliseconds = 2500;
@@ -69,12 +69,15 @@ internal static class CdpBridge
         bool routeMode = (args.Length == 4 || args.Length == 5) && mode == "play-route";
         bool routeHealthMode = args.Length == 5 && mode == "play-route-health";
         bool viewMode = (args.Length == 4 || args.Length == 5) && mode == "set-view";
+        bool hotbarMode = (args.Length == 5 || args.Length == 6) && mode == "press-hotbar";
+        bool inventoryKeyMode = (args.Length == 4 || args.Length == 5) && mode == "press-inventory";
         bool testDeactivateMode = args.Length == 4 && mode == "deactivate-test";
         bool depositMode = args.Length == 6 && mode == "deposit-delta";
         bool cancelOperationMode = args.Length == 3 && mode == "cancel-operation";
         bool companionCommandMode = (args.Length == 3 || args.Length == 4)
             && mode == "companion-command";
         if (!twoArgumentMode && !nudgeMode && !routeMode && !routeHealthMode && !viewMode
+            && !hotbarMode && !inventoryKeyMode
             && !testDeactivateMode && !depositMode && !cancelOperationMode
             && !companionCommandMode)
             return 64;
@@ -133,6 +136,34 @@ internal static class CdpBridge
                     || !IsValidViewMask(mask))
                     return 64;
                 result = SetViewInput(port, mask);
+            }
+            else if (hotbarMode)
+            {
+                int port;
+                int slot;
+                int milliseconds;
+                bool testPortAuthorized;
+                string testToken = args.Length == 6 ? args[5] : null;
+                if (!TryParseDevConPort(args[2], testToken, out port, out testPortAuthorized)
+                    || !Int32.TryParse(args[3], NumberStyles.None, CultureInfo.InvariantCulture, out slot)
+                    || slot < 1 || slot > 5
+                    || !Int32.TryParse(args[4], NumberStyles.None, CultureInfo.InvariantCulture, out milliseconds)
+                    || milliseconds < 30 || milliseconds > 1000)
+                    return 64;
+                result = PressHotbar(port, slot, milliseconds);
+            }
+            else if (inventoryKeyMode)
+            {
+                int port;
+                int milliseconds;
+                bool testPortAuthorized;
+                string testToken = args.Length == 5 ? args[4] : null;
+                if (!TryParseDevConPort(args[2], testToken, out port, out testPortAuthorized)
+                    || !Int32.TryParse(args[3], NumberStyles.None, CultureInfo.InvariantCulture,
+                        out milliseconds)
+                    || milliseconds < 30 || milliseconds > 1000)
+                    return 64;
+                result = PressInventory(port, milliseconds);
             }
             else if (depositMode)
             {
@@ -242,6 +273,8 @@ internal static class CdpBridge
             || result.StartsWith("NUDGED ", StringComparison.Ordinal)
             || result.StartsWith("ROUTE ", StringComparison.Ordinal)
             || result.StartsWith("VIEW ", StringComparison.Ordinal)
+            || result.StartsWith("HOTBAR ", StringComparison.Ordinal)
+            || result.StartsWith("INVENTORY ", StringComparison.Ordinal)
             || result.StartsWith("HEALTH READY ", StringComparison.Ordinal)
             || result.StartsWith("COMPANION 1 ", StringComparison.Ordinal)
             || result.StartsWith("COMPANION_DONE ", StringComparison.Ordinal)
@@ -368,6 +401,9 @@ internal static class CdpBridge
             || !RouteIsRejected("150:256")
             || routeCommand.ToString().IndexOf(";+move_up_only", StringComparison.Ordinal) < 0
             || routeCommand.ToString().IndexOf(";+look_left", StringComparison.Ordinal) < 0
+            || InputReleaseCommand().IndexOf(";-hotkey1", StringComparison.Ordinal) < 0
+            || InputReleaseCommand().IndexOf(";-hotkey5", StringComparison.Ordinal) < 0
+            || InputReleaseCommand().IndexOf(";-inv", StringComparison.Ordinal) < 0
             || viewCommand.ToString().IndexOf(";+look_down", StringComparison.Ordinal) < 0
             || viewCommand.ToString().IndexOf(";+look_right", StringComparison.Ordinal) < 0
             || !baseline.TryGetValue("1\nore\n{}", out count) || count != 10
@@ -1464,10 +1500,58 @@ internal static class CdpBridge
             + mask.ToString(CultureInfo.InvariantCulture);
     }
 
+    private static string PressHotbar(int port, int slot, int milliseconds)
+    {
+        string commandName = "hotkey" + slot.ToString(CultureInfo.InvariantCulture);
+        bool pressed = false;
+        try
+        {
+            // ox_lib registers ox_inventory hotbar mappings as +hotkey1..+hotkey5.
+            // Drive that registered command instead of synthesising a foreground key.
+            if (!TrySendDevCon(port, "-" + commandName + ";+" + commandName, 0))
+                throw new InvalidOperationException("HOTBAR_UNAVAILABLE");
+            pressed = true;
+            Thread.Sleep(milliseconds);
+            if (!TrySendDevCon(port, "-" + commandName, 0))
+                throw new InvalidOperationException("HOTBAR_RELEASE_UNAVAILABLE");
+            pressed = false;
+            return "HOTBAR " + port.ToString(CultureInfo.InvariantCulture) + " "
+                + slot.ToString(CultureInfo.InvariantCulture);
+        }
+        finally
+        {
+            if (pressed)
+                TrySendDevCon(port, "-" + commandName, 0);
+        }
+    }
+
+    private static string PressInventory(int port, int milliseconds)
+    {
+        bool pressed = false;
+        try
+        {
+            // ox_inventory registers its main keybind as "inv" through ox_lib.
+            if (!TrySendDevCon(port, "-inv;+inv", 0))
+                throw new InvalidOperationException("INVENTORY_KEY_UNAVAILABLE");
+            pressed = true;
+            Thread.Sleep(milliseconds);
+            if (!TrySendDevCon(port, "-inv", 0))
+                throw new InvalidOperationException("INVENTORY_KEY_RELEASE_UNAVAILABLE");
+            pressed = false;
+            return "INVENTORY " + port.ToString(CultureInfo.InvariantCulture);
+        }
+        finally
+        {
+            if (pressed)
+                TrySendDevCon(port, "-inv", 0);
+        }
+    }
+
     private static string InputReleaseCommand()
     {
         return "-move_up_only;-move_left_only;-move_down_only;-move_right_only;"
-            + ViewReleaseCommand();
+            + ViewReleaseCommand()
+            + ";-hotkey1;-hotkey2;-hotkey3;-hotkey4;-hotkey5;-inv";
     }
 
     private static string ViewReleaseCommand()

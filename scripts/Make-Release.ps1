@@ -19,8 +19,6 @@ $artifactRoot = Join-Path $repoRoot ("artifacts\$tag")
 $packageRoot = Join-Path $repoRoot ("build\package-$tag")
 $directExecutable = Join-Path $artifactRoot 'ai-miner-win-x64.exe'
 $zipPath = Join-Path $artifactRoot ("AI-Miner-$tag.zip")
-$companionZipPath = Join-Path $artifactRoot ("AI-Miner-Companion-$tag.zip")
-$companionSource = Join-Path $repoRoot 'fivem-resource\ai_miner_companion'
 $manifestPath = Join-Path $artifactRoot 'update-manifest.json'
 $signaturePath = Join-Path $artifactRoot 'update-manifest.sig'
 $sumsPath = Join-Path $artifactRoot 'SHA256SUMS.txt'
@@ -60,10 +58,6 @@ Copy-Item -LiteralPath (Join-Path $repoRoot 'config\AI採掘機.ini') -Destinati
 Copy-Item -LiteralPath (Join-Path $repoRoot 'docs\AI採掘機_使い方.txt') -Destination $packageRoot -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination $packageRoot -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot 'THIRD_PARTY_NOTICES.md') -Destination $packageRoot -Force
-$serverResourceRoot = Join-Path $packageRoot 'server-resource'
-New-Item -ItemType Directory -Path $serverResourceRoot -Force | Out-Null
-Copy-Item -LiteralPath $companionSource -Destination $serverResourceRoot -Recurse -Force
-
 $autoHotkeyLicense = Join-Path $repoRoot 'tools\AutoHotkey\license.txt'
 if (-not (Test-Path -LiteralPath $autoHotkeyLicense -PathType Leaf)) {
     throw 'AutoHotkey license.txt was not found in the verified toolchain.'
@@ -71,6 +65,81 @@ if (-not (Test-Path -LiteralPath $autoHotkeyLicense -PathType Leaf)) {
 $licenseDirectory = Join-Path $packageRoot 'licenses'
 New-Item -ItemType Directory -Path $licenseDirectory -Force | Out-Null
 Copy-Item -LiteralPath $autoHotkeyLicense -Destination (Join-Path $licenseDirectory 'AutoHotkey-license.txt') -Force
+$nodeModulesRoot = Join-Path $repoRoot 'src\ui-web\node_modules'
+$webLicenseSpecs = @(
+    @{ Package = 'framework7'; Version = '9.1.3'; License = 'MIT'; Source = 'framework7\LICENSE'; Output = 'Framework7-LICENSE.txt' },
+    @{ Package = 'dom7'; Version = '4.0.6'; License = 'MIT'; Source = 'dom7\LICENSE'; Output = 'Dom7-LICENSE.txt' },
+    @{ Package = 'htm'; Version = '3.1.1'; License = 'Apache-2.0'; Source = 'htm\LICENSE'; Output = 'HTM-LICENSE.txt' },
+    @{ Package = 'path-to-regexp'; Version = '6.3.0'; License = 'MIT'; Source = 'path-to-regexp\LICENSE'; Output = 'Path-to-RegExp-LICENSE.txt' },
+    @{ Package = 'ssr-window'; Version = '5.0.1'; License = 'MIT'; Source = 'ssr-window\LICENSE'; Output = 'SSR-Window-5-LICENSE.txt' },
+    @{ Package = 'ssr-window'; Version = '4.0.2'; License = 'MIT'; Source = 'dom7\node_modules\ssr-window\LICENSE'; PackageJson = 'dom7\node_modules\ssr-window\package.json'; Output = 'SSR-Window-4-LICENSE.txt' },
+    @{ Package = 'swiper'; Version = '12.2.0'; License = 'MIT'; Source = 'swiper\LICENSE'; Output = 'Swiper-LICENSE.txt' }
+)
+foreach ($spec in $webLicenseSpecs) {
+    $packageJsonRelative = if ($spec.ContainsKey('PackageJson')) {
+        $spec.PackageJson
+    } else {
+        $spec.Package + '\package.json'
+    }
+    $packageJsonPath = Join-Path $nodeModulesRoot $packageJsonRelative
+    $licensePath = Join-Path $nodeModulesRoot $spec.Source
+    if (-not (Test-Path -LiteralPath $packageJsonPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $licensePath -PathType Leaf)) {
+        throw "Locked web dependency or its license is missing: $($spec.Package) $($spec.Version)"
+    }
+    $packageMetadata = Get-Content -LiteralPath $packageJsonPath -Raw | ConvertFrom-Json
+    if ($packageMetadata.version -cne $spec.Version -or $packageMetadata.license -cne $spec.License) {
+        throw "Unexpected web dependency metadata: $($spec.Package) $($packageMetadata.version)"
+    }
+    Copy-Item -LiteralPath $licensePath -Destination (Join-Path $licenseDirectory $spec.Output) -Force
+}
+
+# skeleton-elements 4.0.1 declares MIT in its package metadata but its npm
+# package omits LICENSE. Include the exact upstream MIT notice explicitly.
+$skeletonPackage = Get-Content -LiteralPath (Join-Path $nodeModulesRoot 'skeleton-elements\package.json') -Raw |
+    ConvertFrom-Json
+if ($skeletonPackage.version -cne '4.0.1' -or $skeletonPackage.license -cne 'MIT') {
+    throw 'Unexpected skeleton-elements dependency metadata.'
+}
+$skeletonLicense = @'
+MIT License
+
+Copyright (c) 2020 Vladimir Kharlampidi
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+'@
+[System.IO.File]::WriteAllText(
+    (Join-Path $licenseDirectory 'Skeleton-Elements-LICENSE.txt'),
+    $skeletonLicense + "`n",
+    $utf8NoBom
+)
+
+$webViewPackageRoot = Join-Path $repoRoot 'build\nuget-packages\microsoft.web.webview2\1.0.4191.47'
+$webViewLicense = Join-Path $webViewPackageRoot 'LICENSE.txt'
+$webViewNotice = Join-Path $webViewPackageRoot 'NOTICE.txt'
+foreach ($webViewLegalFile in @($webViewLicense, $webViewNotice)) {
+    if (-not (Test-Path -LiteralPath $webViewLegalFile -PathType Leaf)) {
+        throw "WebView2 legal file was not found after the locked UI host build: $webViewLegalFile"
+    }
+}
+Copy-Item -LiteralPath $webViewLicense -Destination (Join-Path $licenseDirectory 'WebView2-LICENSE.txt') -Force
+Copy-Item -LiteralPath $webViewNotice -Destination (Join-Path $licenseDirectory 'WebView2-NOTICE.txt') -Force
 
 Add-Type -AssemblyName System.IO.Compression
 $zipStream = [System.IO.File]::Open($zipPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::ReadWrite)
@@ -101,39 +170,6 @@ try {
 finally {
     $zip.Dispose()
     $zipStream.Dispose()
-}
-
-# Ship the server-admin component separately as well. Its archive keeps the
-# required resource folder name so it can be extracted directly below
-# resources/[local]/ without copying any desktop binaries to the server.
-$companionZipStream = [System.IO.File]::Open($companionZipPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::ReadWrite)
-$companionZip = [System.IO.Compression.ZipArchive]::new(
-    $companionZipStream,
-    [System.IO.Compression.ZipArchiveMode]::Create,
-    $false,
-    [System.Text.Encoding]::UTF8
-)
-try {
-    $fixedTimestamp = $publishedDate.ToUniversalTime()
-    if ($fixedTimestamp.Year -lt 1980) { $fixedTimestamp = [DateTimeOffset]::new(1980, 1, 1, 0, 0, 0, [TimeSpan]::Zero) }
-
-    $companionFiles = Get-ChildItem -LiteralPath $companionSource -Recurse -File | Sort-Object FullName
-    foreach ($file in $companionFiles) {
-        $relative = [System.IO.Path]::GetRelativePath((Split-Path -Parent $companionSource), $file.FullName).Replace('\', '/')
-        $entry = $companionZip.CreateEntry($relative, [System.IO.Compression.CompressionLevel]::Optimal)
-        $entry.LastWriteTime = $fixedTimestamp
-        $entryStream = $entry.Open()
-        $inputStream = $file.OpenRead()
-        try { $inputStream.CopyTo($entryStream) }
-        finally {
-            $inputStream.Dispose()
-            $entryStream.Dispose()
-        }
-    }
-}
-finally {
-    $companionZip.Dispose()
-    $companionZipStream.Dispose()
 }
 
 $exeItem = Get-Item -LiteralPath $directExecutable
@@ -250,7 +286,7 @@ finally {
     $signingKeyText = $null
 }
 
-$sumAssets = @($directExecutable, $zipPath, $companionZipPath, $manifestPath, $signaturePath)
+$sumAssets = @($directExecutable, $zipPath, $manifestPath, $signaturePath)
 $sumLines = foreach ($path in $sumAssets) {
     $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
     "$hash  $([System.IO.Path]::GetFileName($path))"

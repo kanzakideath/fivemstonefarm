@@ -1,6 +1,10 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 
+; Ahk2Exeの/iLib解析子プロセスは通常のGUIを起動せず即終了させます。
+if !A_IsCompiled && EnvGet("AI_MINER_AHK_COMPILE") = "1"
+    ExitApp 0
+
 Persistent
 SendMode "Event"
 SetMouseDelay 25
@@ -10,8 +14,11 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "7.0.0"
+global AppVersion := "8.0.0"
 processId := DllCall("GetCurrentProcessId")
+isUiSmokeTest := HasCommandLineArgument("--smoke-test")
+isVisualTest := HasCommandLineArgument("--visual-test")
+isUiTestRun := isUiSmokeTest || isVisualTest
 buttonTemplatePath := A_Temp "\codex-mining-button-" processId ".png"
 windowedButtonTemplatePath := A_Temp "\codex-mining-button-windowed-" processId ".png"
 hungerTemplatePath := A_Temp "\codex-hunger-icon-" processId ".png"
@@ -25,7 +32,9 @@ FileInstall "hunger-icon-template.png", hungerTemplatePath, true
 FileInstall "stone-marker-template.png", stoneMarkerTemplatePath, true
 FileInstall "AI採掘機_Background.exe", backgroundBridgePath, true
 FileInstall "AI採掘機_Updater.exe", updaterHelperPath, true
-settingsPath := A_ScriptDir "\AI採掘機.ini"
+settingsPath := isUiTestRun
+    ? A_Temp "\ai-miner-ui-test-" processId ".ini"
+    : A_ScriptDir "\AI採掘機.ini"
 legacySettingsPath := A_ScriptDir "\自動採掘マクロ.ini"
 if !FileExist(settingsPath) && FileExist(legacySettingsPath) {
     try FileCopy legacySettingsPath, settingsPath, false
@@ -72,6 +81,13 @@ global Config := {
     gaugeSettleMs: ReadIntegerSetting(settingsPath, "Eating", "GaugeSettleMs", 1200, 0, 10000),
     eatCooldownMs: ReadIntegerSetting(settingsPath, "Eating", "EatCooldownMs", 45000, 5000, 300000),
     postEatResumeMs: ReadIntegerSetting(settingsPath, "Eating", "PostEatResumeMs", 350, 100, 5000),
+    backgroundEatFallback: ReadIntegerSetting(settingsPath, "Eating", "BackgroundFallback", 1, 0, 1),
+    backgroundFirstEatDelayMs: ReadIntegerSetting(settingsPath, "Eating", "BackgroundFirstEatDelayMs", 60000, 15000, 900000),
+    backgroundEatIntervalMs: ReadIntegerSetting(settingsPath, "Eating", "BackgroundEatIntervalMs", 480000, 120000, 1800000),
+    failedEatRetryMs: ReadIntegerSetting(settingsPath, "Eating", "FailedEatRetryMs", 30000, 10000, 300000),
+    workViewLock: ReadIntegerSetting(settingsPath, "ViewLock", "Enabled", 1, 0, 1),
+    workViewDownPulseMs: ReadIntegerSetting(settingsPath, "ViewLock", "DownPulseMs", 450, 100, 1500),
+    workViewIntervalMs: ReadIntegerSetting(settingsPath, "ViewLock", "ReapplyIntervalMs", 4000, 1500, 30000),
     washCycleMs: ReadIntegerSetting(settingsPath, "Washing", "CycleMs", 9000, 7000, 20000),
     washForwardCorrection: ReadIntegerSetting(settingsPath, "Washing", "ForwardCorrection", 1, 0, 1),
     washForwardPulseMs: ReadIntegerSetting(settingsPath, "Washing", "ForwardPulseMs", 100, 50, 250),
@@ -87,7 +103,7 @@ global Config := {
     vehicleStorageId: ReadTextSetting(settingsPath, "VehicleStorage", "StorageId", ""),
     vehicleStorageType: ReadTextSetting(settingsPath, "VehicleStorage", "StorageType", ""),
     vehicleWorkMode: ReadVehicleWorkMode(settingsPath),
-    vehicleRouteFormat: ReadIntegerSetting(settingsPath, "VehicleStorage", "RouteFormat", 0, 0, 4),
+    vehicleRouteFormat: ReadIntegerSetting(settingsPath, "VehicleStorage", "RouteFormat", 0, 0, 5),
     vehicleCompanionProtocol: ReadIntegerSetting(settingsPath, "VehicleStorage", "CompanionProtocol", 0, 0, 1),
     vehicleRegistrationId: ReadTextSetting(settingsPath, "VehicleStorage", "CompanionRegistrationId", ""),
     vehicleOutboundRoute: ReadTextSetting(settingsPath, "VehicleStorage", "OutboundRoute", ""),
@@ -168,6 +184,11 @@ global State := {
     lastMarkerY: 0,
     nextHungerCheckAt: 0,
     nextEatAllowedAt: 0,
+    nextBackgroundEatAt: 0,
+    backgroundHungerUnknownLogged: false,
+    backgroundEatFailures: 0,
+    lastWorkViewAt: 0,
+    workViewFailures: 0,
     diagnosticPath: A_ScriptDir "\AI採掘機_診断.log",
     diagnosticLines: 0,
     startHotIf: 0,
@@ -186,6 +207,8 @@ global State := {
     automationPhase: "stopped",
     inventoryBaseline: "",
     nextCapacityCheckAt: 0,
+    storagePending: false,
+    storageRecoveryAttempted: false,
     capacityProbeFailures: 0,
     workpointProbeFailures: 0,
     serverEpoch: "",
@@ -198,8 +221,12 @@ global State := {
     storageTrips: 0,
     lastStorageResult: "未実行",
     lastStorageProbeResult: "",
+    lastTargetProbeResult: "",
+    lastTargetProbeFatal: false,
     registrationActive: false,
     registrationCancelled: false,
+    registrationOverlay: 0,
+    registrationDeadline: 0,
     companionReady: false,
     companionEpoch: "",
     companionResourceVersion: "",
@@ -217,7 +244,25 @@ global State := {
     page: "overview",
     pages: Map(),
     ui: {},
-    layoutReady: false
+    layoutReady: false,
+    visualTest: isVisualTest,
+    uiSmokeTest: isUiSmokeTest,
+    uiBackendGui: 0,
+    uiHostPath: "",
+    uiAssetsPath: "",
+    uiRuntimeRoot: "",
+    uiHostPid: 0,
+    uiHwnd: 0,
+    uiReady: false,
+    uiSession: "",
+    uiRevision: 0,
+    uiFlushPending: false,
+    uiActionPending: false,
+    uiActionQueue: [],
+    uiControls: Map(),
+    uiWindowVisible: true,
+    uiSmokeResult: "",
+    uiHostError: ""
 }
 
 ; コンパイル前後の構文・埋め込み画像チェック用です。
@@ -248,10 +293,10 @@ if A_Args.Length && A_Args[1] = "--validate" {
     testUncertainCommitRetryAllowed := CompanionCommitRetryAllowed(
         "ERROR COMPANION_REGISTRATION_TRANSACTION_NOT_FOUND", false)
     testVehicleProfile := {
-        vehicleRegistered: 1, vehicleCompanionProtocol: 1,
-        vehicleRegistrationId: testRegistrationId,
+        vehicleRegistered: 1, vehicleCompanionProtocol: 0,
+        vehicleRegistrationId: "",
         vehicleStorageId: "dHJ1bmsxMjM=", vehicleStorageType: "dHJ1bms=",
-        vehicleWorkMode: "mining", vehicleRouteFormat: 4,
+        vehicleWorkMode: "mining", vehicleRouteFormat: 5,
         vehicleOutboundRoute: "", vehicleReturnRoute: ""
     }
     exitCode := !FileExist(State.buttonTemplates[1].path) ? 11
@@ -261,7 +306,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
         : !FileExist(State.backgroundBridgePath) ? 15
         : !FileExist(State.updaterPath) ? 16
         : MonotonicMs() <= 0 ? 17
-        : RunBackgroundBridge("capabilities") != "CAPS 7 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HEALTH COMPANION" ? 18
+        : RunBackgroundBridge("capabilities") != "CAPS 9 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HOTBAR INVENTORYKEY HEALTH COMPANION" ? 18
         : updaterCapabilities != "UPDATE_CAPS 1 CHECK DOWNLOAD APPLY" ? 19
         : !IsSafeConfiguredHotkey("F8") ? 20
         : IsSafeConfiguredHotkey("A") ? 21
@@ -288,6 +333,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
         : IsValidRoute("150:192") ? 42
         : IsValidRoute("150:256") ? 43
         : RouteViewSegmentCount("150:1,150:64,150:128") != 2 ? 44
+        : RouteTotalMs("150:64", false) != 150 ? 68
         : AutomationStartAllowed(false, true) ? 45
         : !AutomationStartAllowed(false, false) ? 46
         : !ParseServerHealth("HEALTH READY YWJjZGVmZ2g", &testEpoch) ? 47
@@ -322,7 +368,11 @@ if A_Args.Length && A_Args[1] = "--validate" {
             used: 2, slots: 20}, &testCapacityReason, &testFreeWeight) ? 55
         : !CapacityNeedsStorage({weight: 1000, maxWeight: 10000,
             used: 20, slots: 20}, &testCapacityReason, &testFreeWeight) ? 56
-        : testCapacityReason != "slots" ? 57 : 0
+        : testCapacityReason != "slots" ? 57
+        : WorkViewDownRoute(450) != "450:32" ? 69
+        : !InventorySlotWasConsumed("0001.food.e30=2", "0001.food.e30=1", 1) ? 70
+        : InventorySlotWasConsumed("0001.food.e30=2", "0001.food.e30=2", 1) ? 71
+        : !InventorySlotWasConsumed("0001.food.e30=1", "-", 1) ? 72 : 0
     if exitCode = 19
         try FileAppend "UPDATER_CAPS=" updaterCapabilities "`r`n",
             State.diagnosticPath, "UTF-8"
@@ -343,8 +393,9 @@ if needsUpdateSettingsMigration {
     try IniWrite 1, settingsPath, "Updates", "AutoCheck"
 }
 
-BuildGui()
+BuildWebGui()
 ConfigureTrayMenu()
+if !isUiTestRun {
 try RegisterConfiguredHotkeys()
 catch as err {
     ; 手編集されたINIのキーが壊れていても、アプリ自体は既定キーで起動します。
@@ -362,253 +413,575 @@ catch as err {
     try IniWrite Config.stopHotkey, settingsPath, "Controls", "StopHotkey"
     WriteDiagnostic("HOTKEY_FALLBACK=" err.Message)
 }
+}
 OnExit Cleanup
 
-if A_Args.Length && A_Args[1] = "--smoke-test" {
+if isUiSmokeTest {
     smokeExitCode := RunUiSmokeTest()
     State.gui.Hide()
     ExitApp smokeExitCode
 }
 
+if isVisualTest
+    ApplyVisualTestFixture()
+
 if A_Args.Length && A_Args[1] = "--updated"
     State.statusLabel.Text := "●  v" AppVersion " への更新が完了しました"
 else if A_Args.Length && A_Args[1] = "--update-failed"
     State.statusLabel.Text := "●  更新に失敗したため以前の版へ戻しました"
-else if !A_Args.Length && Config.autoCheckUpdates && A_IsCompiled
+else if !A_Args.Length && Config.autoCheckUpdates && A_IsCompiled && !isUiTestRun
     SetTimer((*) => BeginUpdateCheck(true), -1800)
 
-BuildGui() {
+HasCommandLineArgument(argumentName) {
+    for argument in A_Args {
+        if argument = argumentName
+            return true
+    }
+    return false
+}
+
+class WebUiControl {
+    __New(key, text := "", value := "", enabled := true) {
+        global State
+        this.Key := key
+        this._text := String(text)
+        this._value := value
+        this._enabled := enabled ? true : false
+        this._visible := true
+        this._tone := "default"
+        this.Hwnd := 0
+        State.uiControls[key] := this
+    }
+
+    Text {
+        get => this._text
+        set {
+            nextValue := String(value)
+            if this._text != nextValue {
+                this._text := nextValue
+                QueueWebUiFlush()
+            }
+            return value
+        }
+    }
+
+    Value {
+        get => this._value
+        set {
+            if this._value != value {
+                this._value := value
+                QueueWebUiFlush()
+            }
+            return value
+        }
+    }
+
+    Enabled {
+        get => this._enabled
+        set {
+            nextValue := value ? true : false
+            if this._enabled != nextValue {
+                this._enabled := nextValue
+                QueueWebUiFlush()
+            }
+            return value
+        }
+    }
+
+    Visible {
+        get => this._visible
+        set {
+            nextValue := value ? true : false
+            if this._visible != nextValue {
+                this._visible := nextValue
+                QueueWebUiFlush()
+            }
+            return value
+        }
+    }
+
+    Tone {
+        get => this._tone
+        set {
+            nextValue := String(value)
+            if this._tone != nextValue {
+                this._tone := nextValue
+                QueueWebUiFlush()
+            }
+            return value
+        }
+    }
+
+    Choose(index) {
+        this.Value := index
+    }
+
+    Opt(options) {
+        if InStr(options, "cB42318")
+            this.Tone := "error"
+        else if InStr(options, "c248A3D")
+            this.Tone := "success"
+        return this
+    }
+
+    Move(*) {
+    }
+}
+
+class WebUiWindow {
+    __New(hwnd) {
+        this.Hwnd := hwnd
+    }
+
+    Show(options := "") {
+        global State
+        State.uiWindowVisible := true
+        EnsureWebUiHost()
+        SendWebUiCommand(InStr(options, "NoActivate") ? "SHOWNOACTIVATE" : "SHOW")
+        QueueWebUiFlush()
+    }
+
+    Hide() {
+        global State
+        State.uiWindowVisible := false
+        SendWebUiCommand("HIDE")
+        QueueWebUiFlush()
+    }
+}
+
+BuildWebGui() {
     global State, Config, AppVersion
 
-    ; 広い画面はiPadOSの設定に近いサイドバー＋内容ペイン、狭い画面は
-    ; 上部ナビゲーションへ切り替え、520x640でも主要操作を画面内に保ちます。
-    State.gui := Gui("+Resize +MinSize520x640", "AI採掘機")
-    State.gui.BackColor := "F5F5F7"
-    State.gui.MarginX := 0
-    State.gui.MarginY := 0
-    State.pages := Map("overview", [], "vehicle", [], "settings", [], "update", [])
-    State.ui := {}
+    State.uiSession := CreateWebUiSessionToken()
+    State.uiBackendGui := Gui("+ToolWindow -Caption", "AI採掘機 Backend " State.uiSession)
+    State.uiBackendGui.Show("Hide w1 h1")
+    State.gui := WebUiWindow(State.uiBackendGui.Hwnd)
+    State.pages := Map("overview", true, "vehicle", true, "settings", true, "update", true)
+    State.ui := {
+        deleteArmed: false,
+        capacitySurface: true
+    }
 
-    State.gui.SetFont("s14 w600 c1D1D1F", "Segoe UI Variable Text")
-    State.ui.appTitle := State.gui.AddText("x24 y17 w420 h30", "AI採掘機")
-    State.gui.SetFont("s9 w400 c6E6E73", "Segoe UI Variable Text")
-    State.ui.version := State.gui.AddText("x650 y25 w110 h22 Right", "v" AppVersion)
-    State.ui.appSubtitle := State.gui.AddText("x24 y45 w500 h20",
-        "FiveM ユーティリティ")
+    State.taglineLabel := WebUiControl("taglineLabel", "画面を奪わず、選んだ作業を続けます")
+    State.statusLabel := WebUiControl("statusLabel", "停止中")
+    State.connectionLabel := WebUiControl("connectionLabel", "FiveM　確認中")
+    State.modeLabel := WebUiControl("modeLabel", Config.backgroundMode
+        ? "操作　バックグラウンド" : "操作　前面のみ")
+    actionIndex := Config.actionMode = "washing" ? 2 : Config.actionMode = "gold" ? 3 : 1
+    State.actionControl := WebUiControl("actionControl", "", actionIndex)
+    State.mainButton := WebUiControl("mainButton", "自動操作を開始")
+    State.countLabel := WebUiControl("countLabel", "採掘回数`n0")
+    State.mealLabel := WebUiControl("mealLabel", "食事回数`n0")
+    State.vehicleTripLabel := WebUiControl("vehicleTripLabel", "自動収納`n0")
+    State.footerLabel := WebUiControl("footerLabel",
+        "開始 " Config.startHotkey "　停止 " Config.stopHotkey)
 
-    State.ui.sidebarSurface := State.gui.AddText(
-        "x16 y76 w176 h224 Disabled BackgroundFFFFFF", "")
-    State.ui.selectionBar := State.gui.AddText(
-        "x16 y88 w4 h44 Disabled Background0A84FF", "")
-    State.gui.SetFont("s10 w600 c1D1D1F", "Segoe UI Variable Text")
-    State.ui.navOverview := State.gui.AddButton("x28 y100 w152 h44", "概要")
-    State.ui.navVehicle := State.gui.AddButton("x28 y152 w152 h44", "車両")
-    State.ui.navSettings := State.gui.AddButton("x28 y204 w152 h44", "設定")
-    State.ui.navUpdate := State.gui.AddButton("x28 y256 w152 h44", "アップデート")
-    State.ui.navOverview.OnEvent("Click", (*) => ShowPage("overview"))
-    State.ui.navVehicle.OnEvent("Click", (*) => ShowPage("vehicle"))
-    State.ui.navSettings.OnEvent("Click", (*) => ShowPage("settings"))
-    State.ui.navUpdate.OnEvent("Click", (*) => ShowPage("update"))
+    State.vehicleStatusLabel := WebUiControl("vehicleStatusLabel", "未登録")
+    State.vehicleNameEdit := WebUiControl("vehicleNameEdit", "", Config.vehicleName)
+    State.vehicleEnabledControl := WebUiControl("vehicleEnabledControl", "",
+        Config.vehicleStorageEnabled)
+    State.capacityStatusLabel := WebUiControl("capacityStatusLabel",
+        "所持重量　開始後に確認します")
+    State.capacityProgress := WebUiControl("capacityProgress", "", 0)
+    State.capacityDetailLabel := WebUiControl("capacityDetailLabel",
+        "重量を優先し、空きスロットも安全確認します")
+    State.routeStatusLabel := WebUiControl("routeStatusLabel", "ローカル登録　未確認")
+    State.routeDetailLabel := WebUiControl("routeDetailLabel",
+        "登録を開始し、対象車両のストレージを一度だけ開いてください。")
+    State.vehicleRegisterButton := WebUiControl("vehicleRegisterButton",
+        "車両を登録")
+    State.vehicleDeleteButton := WebUiControl("vehicleDeleteButton", "登録を削除", "", false)
 
-    BuildOverviewPage()
-    BuildVehiclePage()
-    BuildSettingsPage()
-    BuildUpdatePage()
+    State.startHotkeyControl := WebUiControl("startHotkeyControl", "", Config.startHotkey)
+    State.stopHotkeyControl := WebUiControl("stopHotkeyControl", "", Config.stopHotkey)
+    State.backgroundControl := WebUiControl("backgroundControl", "", Config.backgroundMode)
+    State.hideControl := WebUiControl("hideControl", "", Config.hideWhileRunning)
+    State.washCorrectionControl := WebUiControl("washCorrectionControl", "",
+        Config.washForwardCorrection && Config.goldRecoveryEnabled && Config.workViewLock)
+    State.autoEatControl := WebUiControl("autoEatControl", "", Config.autoEat)
+    State.foodKeyControl := WebUiControl("foodKeyControl", "", Config.foodKey)
+    State.autoUpdateControl := WebUiControl("autoUpdateControl", "", Config.autoCheckUpdates)
+    State.minimumFreeWeightControl := WebUiControl("minimumFreeWeightControl", "",
+        Config.minimumFreeWeight)
+    State.settingsButton := WebUiControl("settingsButton", "設定を保存")
+    State.settingsErrorLabel := WebUiControl("settingsErrorLabel", "")
 
-    State.gui.OnEvent("Close", (*) => ExitApp())
-    State.gui.OnEvent("Escape", HandleMainEscape)
-    State.gui.OnEvent("Size", LayoutMainWindow)
-    State.gui.Show("w820 h640")
-    ApplyRoundedWindowCorners(State.gui.Hwnd)
-    State.layoutReady := true
-    LayoutMainWindow(State.gui, 0, 820, 640)
-    ShowPage("overview")
+    State.currentVersionLabel := WebUiControl("currentVersionLabel", "v" AppVersion)
+    State.updatePageStatus := WebUiControl("updatePageStatus", "未確認")
+    State.updateButton := WebUiControl("updateButton", "アップデートを確認")
+    State.ui.navUpdate := WebUiControl("navUpdate", "アップデート")
+
+    OnMessage(0x004A, ReceiveWebUiCopyData)
+    PrepareWebUiRuntime()
+    EnsureWebUiHost()
     UpdateActionUi()
     UpdateConnectionStatus()
     RefreshVehicleUi()
     RefreshUpdateUi()
+    SetTimer UpdateConnectionStatus, 2000
 }
 
-AddPageControl(pageName, control) {
-    global State
-    State.pages[pageName].Push(control)
-    control.Visible := false
-    return control
+CreateWebUiSessionToken() {
+    return Format("{:08X}{:08X}{:08X}", DllCall("GetCurrentProcessId"),
+        A_TickCount & 0xFFFFFFFF, Random(0, 0x7FFFFFFF))
 }
 
-BuildOverviewPage() {
-    global State, Config
-    gui := State.gui
-    gui.SetFont("s20 w600 c1D1D1F", "Segoe UI Variable Text")
-    State.ui.overviewTitle := AddPageControl("overview", gui.AddText("x0 y0 w400 h38", "自動操作"))
-    gui.SetFont("s9 w400 c6E6E73", "Segoe UI Variable Text")
-    State.taglineLabel := AddPageControl("overview", gui.AddText("x0 y0 w400 h36",
-        "画面を奪わず、選んだ作業を続けます"))
-    State.ui.statusSurface := AddPageControl("overview",
-        gui.AddText("x0 y0 w400 h142 Disabled Background17171C", ""))
-    ; 動的な状態文が狭幅でも1行で読める密度にします。
-    gui.SetFont("s11 w600 cFFFFFF", "Segoe UI Variable Text")
-    State.statusLabel := AddPageControl("overview",
-        gui.AddText("x0 y0 w400 h32 BackgroundTrans", "停止中"))
-    State.ui.statusSeparator1 := AddPageControl("overview",
-        gui.AddText("x0 y0 w400 h1 Background3A3A3C"))
-    gui.SetFont("s10 w400 cD1D1D6", "Segoe UI Variable Text")
-    State.connectionLabel := AddPageControl("overview",
-        gui.AddText("x0 y0 w400 h28 BackgroundTrans", "FiveM　確認中"))
-    State.ui.statusSeparator2 := AddPageControl("overview",
-        gui.AddText("x0 y0 w400 h1 Background3A3A3C"))
-    State.modeLabel := AddPageControl("overview",
-        gui.AddText("x0 y0 w400 h28 BackgroundTrans", "バックグラウンド操作"))
-    gui.SetFont("s9 w600 c6E6E73", "Segoe UI Variable Text")
-    State.ui.actionCaption := AddPageControl("overview", gui.AddText("x0 y0 w100 h24", "作業") )
-    gui.SetFont("s10 w400 c1D1D1F", "Segoe UI Variable Text")
-    actionIndex := Config.actionMode = "washing" ? 2 : Config.actionMode = "gold" ? 3 : 1
-    State.actionControl := AddPageControl("overview", gui.AddDropDownList("x0 y0 w300 Choose" actionIndex,
-        ["鉱石を採掘する", "石を洗う", "砂金採りトレイ"]))
-    State.actionControl.OnEvent("Change", ChangeActionMode)
-    gui.SetFont("s11 w600", "Segoe UI Variable Text")
-    State.mainButton := AddPageControl("overview",
-        gui.AddButton("x0 y0 w300 h50 Default", "自動操作を開始"))
-    State.mainButton.OnEvent("Click", ToggleMining)
-    State.ui.metricsSurface := AddPageControl("overview",
-        gui.AddText("x0 y0 w400 h78 Disabled BackgroundFFFFFF", ""))
-    gui.SetFont("s9 w600 c1D1D1F", "Segoe UI Variable Text")
-    State.countLabel := AddPageControl("overview",
-        gui.AddText("x0 y0 w120 h40 Center 0x200 BackgroundTrans", "採掘回数`n0"))
-    State.mealLabel := AddPageControl("overview",
-        gui.AddText("x0 y0 w120 h40 Center 0x200 BackgroundTrans", "食事回数`n0"))
-    State.vehicleTripLabel := AddPageControl("overview",
-        gui.AddText("x0 y0 w120 h40 Center 0x200 BackgroundTrans", "自動収納`n0"))
-    gui.SetFont("s9 w400 c6E6E73", "Segoe UI Variable Text")
-    State.footerLabel := AddPageControl("overview", gui.AddText("x0 y0 w400 h24 Center",
-        "開始 " Config.startHotkey "　停止 " Config.stopHotkey))
-}
-
-BuildVehiclePage() {
-    global State, Config
-    gui := State.gui
-    gui.SetFont("s20 w600 c1D1D1F", "Segoe UI Variable Text")
-    State.ui.vehicleTitle := AddPageControl("vehicle", gui.AddText("x0 y0 w400 h38", "車両収納"))
-    gui.SetFont("s9 w400 c6E6E73", "Segoe UI Variable Text")
-    State.ui.vehicleSubtitle := AddPageControl("vehicle", gui.AddText("x0 y0 w480 h36",
-        "登録車両の現在位置を取得し、荷台まで自動で移動します"))
-    State.ui.vehicleSurface := AddPageControl("vehicle",
-        gui.AddText("x0 y0 w400 h160 Disabled BackgroundFFFFFF", ""))
-    gui.SetFont("s11 w600 c1C1C1E", "Segoe UI Variable Text")
-    State.vehicleStatusLabel := AddPageControl("vehicle",
-        gui.AddText("x0 y0 w400 h30 BackgroundTrans", "未登録"))
-    State.ui.vehicleSeparator1 := AddPageControl("vehicle", gui.AddText("x0 y0 w400 h1 BackgroundD1D1D6"))
-    gui.SetFont("s9 w400 c3A3A3C", "Segoe UI Variable Text")
-    State.ui.vehicleNameCaption := AddPageControl("vehicle",
-        gui.AddText("x0 y0 w100 h28 0x200 BackgroundTrans", "表示名"))
-    State.vehicleNameEdit := AddPageControl("vehicle", gui.AddEdit("x0 y0 w240 h30", Config.vehicleName))
-    State.ui.vehicleSeparator2 := AddPageControl("vehicle", gui.AddText("x0 y0 w400 h1 BackgroundD1D1D6"))
-    State.vehicleEnabledControl := AddPageControl("vehicle",
-        gui.AddCheckbox("x0 y0 w360 h32", "容量不足時に自動収納"))
-    State.vehicleEnabledControl.Value := Config.vehicleStorageEnabled
-    State.vehicleEnabledControl.OnEvent("Click", ToggleVehicleStorage)
-    State.ui.capacitySurface := AddPageControl("vehicle",
-        gui.AddText("x0 y0 w400 h82 Disabled BackgroundFFFFFF", ""))
-    gui.SetFont("s10 w600 c1D1D1F", "Segoe UI Variable Text")
-    State.capacityStatusLabel := AddPageControl("vehicle",
-        gui.AddText("x0 y0 w400 h28 BackgroundTrans", "所持重量　開始後に確認します"))
-    State.capacityProgress := AddPageControl("vehicle",
-        gui.AddProgress("x0 y0 w400 h6 Disabled BackgroundE5E5EA c0A84FF Range0-100", 0))
-    gui.SetFont("s9 w400 c6E6E73", "Segoe UI Variable Text")
-    State.capacityDetailLabel := AddPageControl("vehicle",
-        gui.AddText("x0 y0 w400 h22 BackgroundTrans", "重量を優先し、空きスロットも安全確認します"))
-    State.ui.routeSurface := AddPageControl("vehicle",
-        gui.AddText("x0 y0 w400 h104 Disabled BackgroundFFFFFF", ""))
-    gui.SetFont("s10 w600 c1C1C1E", "Segoe UI Variable Text")
-    State.routeStatusLabel := AddPageControl("vehicle",
-        gui.AddText("x0 y0 w400 h28 BackgroundTrans", "ゲーム内連携　未確認"))
-    gui.SetFont("s9 w400 c636366", "Segoe UI Variable Text")
-    State.routeDetailLabel := AddPageControl("vehicle", gui.AddText("x0 y0 w400 h48 BackgroundTrans",
-        "正規のFiveM補助リソースへ接続すると、車両を現在位置から追跡できます。"))
-    gui.SetFont("s10 w600 c1C1C1E", "Segoe UI Variable Text")
-    State.vehicleRegisterButton := AddPageControl("vehicle",
-        gui.AddButton("x0 y0 w240 h48", "ゲーム内で車両を登録"))
-    State.vehicleDeleteButton := AddPageControl("vehicle",
-        gui.AddButton("x0 y0 w160 h48", "登録を削除"))
-    State.vehicleRegisterButton.OnEvent("Click", BeginVehicleRegistration)
-    State.vehicleDeleteButton.OnEvent("Click", DeleteVehicleRegistration)
-    gui.SetFont("s9 w400 c636366", "Segoe UI Variable Text")
-    State.ui.vehicleHelp := AddPageControl("vehicle", gui.AddText("x0 y0 w460 h72",
-        "開始前から持っていた道具・食料・所持品は移動しません。`n"
-        "ゲーム内で車両を見て「AI採掘機に登録」を選びます。車両の現在位置は自動追跡します。"))
-}
-
-BuildSettingsPage() {
-    global State, Config
-    gui := State.gui
-    gui.SetFont("s20 w600 c1D1D1F", "Segoe UI Variable Text")
-    State.ui.settingsTitle := AddPageControl("settings", gui.AddText("x0 y0 w400 h38", "設定"))
-    gui.SetFont("s9 w400 c6E6E73", "Segoe UI Variable Text")
-    State.ui.settingsSubtitle := AddPageControl("settings", gui.AddText("x0 y0 w460 h36",
-        "キーボード操作とバックグラウンド動作"))
-    State.ui.keysSurface := AddPageControl("settings",
-        gui.AddText("x0 y0 w400 h126 Disabled BackgroundFFFFFF", ""))
-    gui.SetFont("s10 w400 c1C1C1E", "Segoe UI Variable Text")
-    State.ui.startKeyCaption := AddPageControl("settings",
-        gui.AddText("x0 y0 w150 h30 0x200 BackgroundTrans", "開始キー"))
-    State.startHotkeyControl := AddPageControl("settings", gui.AddHotkey("x0 y0 w180 h32", Config.startHotkey))
-    State.ui.keysSeparator := AddPageControl("settings", gui.AddText("x0 y0 w400 h1 BackgroundD1D1D6"))
-    State.ui.stopKeyCaption := AddPageControl("settings",
-        gui.AddText("x0 y0 w150 h30 0x200 BackgroundTrans", "停止キー"))
-    State.stopHotkeyControl := AddPageControl("settings", gui.AddHotkey("x0 y0 w180 h32", Config.stopHotkey))
-    State.ui.optionsSurface := AddPageControl("settings",
-        gui.AddText("x0 y0 w400 h214 Disabled BackgroundFFFFFF", ""))
-    State.backgroundControl := AddPageControl("settings",
-        gui.AddCheckbox("x0 y0 w400 h36", "バックグラウンドで操作する"))
-    State.backgroundControl.Value := Config.backgroundMode
-    State.hideControl := AddPageControl("settings",
-        gui.AddCheckbox("x0 y0 w400 h36", "開始後にこの画面を隠す"))
-    State.hideControl.Value := Config.hideWhileRunning
-    State.washCorrectionControl := AddPageControl("settings",
-        gui.AddCheckbox("x0 y0 w400 h36", "洗浄・砂金採りの位置ずれを補正"))
-    State.washCorrectionControl.Value := Config.washForwardCorrection && Config.goldRecoveryEnabled
-    State.autoUpdateControl := AddPageControl("settings",
-        gui.AddCheckbox("x0 y0 w400 h36", "起動時にアップデートを確認"))
-    State.autoUpdateControl.Value := Config.autoCheckUpdates
-    State.ui.minimumFreeWeightCaption := AddPageControl("settings",
-        gui.AddText("x0 y0 w220 h34 0x200 BackgroundTrans", "自動収納を始める残り重量 (g)"))
-    State.minimumFreeWeightControl := AddPageControl("settings",
-        gui.AddEdit("x0 y0 w120 h32 Number", Config.minimumFreeWeight))
-    gui.SetFont("s10 w600 c1C1C1E", "Segoe UI Variable Text")
-    State.settingsButton := AddPageControl("settings", gui.AddButton("x0 y0 w220 h48 Default", "設定を保存"))
-    State.settingsButton.OnEvent("Click", SaveInlineSettings)
-    gui.SetFont("s9 w400 cB42318", "Segoe UI Variable Text")
-    State.settingsErrorLabel := AddPageControl("settings", gui.AddText("x0 y0 w460 h44", ""))
-}
-
-BuildUpdatePage() {
+PrepareWebUiRuntime() {
     global State, AppVersion
-    gui := State.gui
-    gui.SetFont("s20 w600 c1D1D1F", "Segoe UI Variable Text")
-    State.ui.updateTitle := AddPageControl("update", gui.AddText("x0 y0 w400 h38", "アップデート"))
-    gui.SetFont("s9 w400 c636366", "Segoe UI Variable Text")
-    State.ui.updateSubtitle := AddPageControl("update", gui.AddText("x0 y0 w460 h36",
-        "署名を検証してから安全に更新します"))
-    State.ui.updateSurface := AddPageControl("update",
-        gui.AddText("x0 y0 w400 h170 Disabled BackgroundFFFFFF", ""))
-    gui.SetFont("s10 w400 c1C1C1E", "Segoe UI Variable Text")
-    State.ui.currentVersionCaption := AddPageControl("update",
-        gui.AddText("x0 y0 w160 h30 BackgroundTrans", "現在のバージョン"))
-    State.currentVersionLabel := AddPageControl("update",
-        gui.AddText("x0 y0 w180 h30 Right BackgroundTrans", "v" AppVersion))
-    State.ui.updateSeparator1 := AddPageControl("update", gui.AddText("x0 y0 w400 h1 BackgroundD1D1D6"))
-    State.updatePageStatus := AddPageControl("update",
-        gui.AddText("x0 y0 w400 h34 BackgroundTrans", "未確認"))
-    State.ui.updateSeparator2 := AddPageControl("update", gui.AddText("x0 y0 w400 h1 BackgroundD1D1D6"))
-    gui.SetFont("s9 w400 c636366", "Segoe UI Variable Text")
-    State.ui.signatureLabel := AddPageControl("update", gui.AddText("x0 y0 w400 h42 BackgroundTrans",
-        "ECDSA署名・SHA-256・起動検証・失敗時ロールバック"))
-    gui.SetFont("s10 w600 c1C1C1E", "Segoe UI Variable Text")
-    State.updateButton := AddPageControl("update", gui.AddButton("x0 y0 w240 h48", "アップデートを確認"))
-    State.updateButton.OnEvent("Click", CheckForUpdates)
-    gui.SetFont("s9 w400 c636366", "Segoe UI Variable Text")
-    State.ui.updateHelp := AddPageControl("update", gui.AddText("x0 y0 w460 h64",
-        "新しいバージョンがあると、この画面とサイドバーに表示します。"))
+
+    if A_IsCompiled {
+        State.uiRuntimeRoot := A_Temp "\ai-miner-ui-" DllCall("GetCurrentProcessId")
+        State.uiHostPath := State.uiRuntimeRoot "\AiMiner.UiHost.exe"
+        State.uiAssetsPath := State.uiRuntimeRoot "\web"
+        DirCreate State.uiRuntimeRoot
+        DirCreate State.uiAssetsPath "\vendor"
+        FileInstall "ui-runtime\host\AiMiner.UiHost.exe", State.uiHostPath, true
+        FileInstall "ui-runtime\host\AiMiner.UiHost.exe.config",
+            State.uiHostPath ".config", true
+        FileInstall "ui-runtime\host\Microsoft.Web.WebView2.Core.dll",
+            State.uiRuntimeRoot "\Microsoft.Web.WebView2.Core.dll", true
+        FileInstall "ui-runtime\host\Microsoft.Web.WebView2.WinForms.dll",
+            State.uiRuntimeRoot "\Microsoft.Web.WebView2.WinForms.dll", true
+        FileInstall "ui-runtime\host\WebView2Loader.dll",
+            State.uiRuntimeRoot "\WebView2Loader.dll", true
+        FileInstall "ui-runtime\web\index.html", State.uiAssetsPath "\index.html", true
+        FileInstall "ui-runtime\web\app.css", State.uiAssetsPath "\app.css", true
+        FileInstall "ui-runtime\web\app.js", State.uiAssetsPath "\app.js", true
+        FileInstall "ui-runtime\web\build-info.json",
+            State.uiAssetsPath "\build-info.json", true
+        FileInstall "ui-runtime\web\vendor\framework7-bundle.min.css",
+            State.uiAssetsPath "\vendor\framework7-bundle.min.css", true
+        FileInstall "ui-runtime\web\vendor\framework7-bundle.min.js",
+            State.uiAssetsPath "\vendor\framework7-bundle.min.js", true
+    } else {
+        repositoryRoot := RegExReplace(A_ScriptDir, "\\src$")
+        State.uiRuntimeRoot := repositoryRoot "\build\ui-host"
+        State.uiHostPath := State.uiRuntimeRoot "\AiMiner.UiHost.exe"
+        State.uiAssetsPath := A_ScriptDir "\ui-web\www"
+    }
+
+    required := [State.uiHostPath, State.uiHostPath ".config",
+        State.uiRuntimeRoot "\Microsoft.Web.WebView2.Core.dll",
+        State.uiRuntimeRoot "\Microsoft.Web.WebView2.WinForms.dll",
+        State.uiRuntimeRoot "\WebView2Loader.dll", State.uiAssetsPath "\index.html",
+        State.uiAssetsPath "\app.css", State.uiAssetsPath "\app.js",
+        State.uiAssetsPath "\build-info.json",
+        State.uiAssetsPath "\vendor\framework7-bundle.min.css",
+        State.uiAssetsPath "\vendor\framework7-bundle.min.js"]
+    for path in required {
+        if !FileExist(path)
+            throw Error("UI runtime file is missing: " path)
+    }
+}
+
+EnsureWebUiHost(*) {
+    global State
+    if State.uiHostPid && ProcessExist(State.uiHostPid)
+        return true
+    if !FileExist(State.uiHostPath)
+        return false
+
+    State.uiReady := false
+    State.uiHwnd := 0
+    State.uiHostError := ""
+    commandLine := QuoteCommandArg(State.uiHostPath)
+        . " --backend-hwnd " State.uiBackendGui.Hwnd
+        . " --backend-pid " DllCall("GetCurrentProcessId")
+        . " --session " State.uiSession
+        . " --assets " QuoteCommandArg(State.uiAssetsPath)
+    try Run commandLine,,, &childPid
+    catch as err {
+        State.uiHostError := err.Message
+        return false
+    }
+    State.uiHostPid := childPid
+    SetTimer MonitorWebUiHost, 1000
+    return true
+}
+
+MonitorWebUiHost(*) {
+    global State
+    if !State.uiHostPid || ProcessExist(State.uiHostPid)
+        return
+    State.uiHostPid := 0
+    State.uiHwnd := 0
+    State.uiReady := false
+    SetTimer MonitorWebUiHost, 0
+}
+
+ReceiveWebUiCopyData(wParam, lParam, *) {
+    global State
+    try {
+        if NumGet(lParam, 0, "Ptr") != 0x31495541
+            return false
+        byteCount := NumGet(lParam, A_PtrSize, "UInt")
+        dataPointer := NumGet(lParam, A_PtrSize = 8 ? 16 : 8, "Ptr")
+        if !dataPointer || byteCount < 2 || byteCount > 131072 || Mod(byteCount, 2)
+            return false
+        message := StrGet(dataPointer, byteCount // 2 - 1, "UTF-16")
+        parts := StrSplit(message, "`t")
+        if parts.Length < 3 || parts[1] != "AIUI1" || parts[2] != State.uiSession
+            return false
+
+        senderPid := 0
+        DllCall("user32\GetWindowThreadProcessId", "Ptr", wParam, "UInt*", &senderPid)
+        if senderPid != State.uiHostPid
+            return false
+        if parts[3] = "hello" {
+            if parts.Length != 7 || parts[4] != "1" || parts[5] != "Framework7"
+                || parts[6] != "9.1.3" || (parts[7] != "0" && parts[7] != "1")
+                return false
+            State.uiHwnd := wParam
+            State.uiReady := true
+            SendWebUiCommand(State.uiWindowVisible ? "SHOW" : "HIDE")
+            QueueWebUiFlush(true)
+            return true
+        }
+        if !State.uiReady || wParam != State.uiHwnd
+            return false
+
+        if parts[3] = "smoke.result" {
+            State.uiSmokeResult := parts.Length >= 4 ? parts[4] : "ERROR"
+            return true
+        }
+        State.uiActionQueue.Push(parts)
+        if !State.uiActionPending {
+            State.uiActionPending := true
+            SetTimer ProcessWebUiActions, -1
+        }
+        return true
+    } catch as err {
+        WriteDiagnostic("UI_MESSAGE_ERROR=" err.Message)
+        return false
+    }
+}
+
+ProcessWebUiActions(*) {
+    global State, Config
+    State.uiActionPending := false
+    while State.uiActionQueue.Length {
+        parts := State.uiActionQueue.RemoveAt(1)
+        action := parts[3]
+        try {
+            if action = "nav" && parts.Length = 4 {
+                ShowPage(parts[4])
+            } else if action = "action.select" && parts.Length = 4 {
+                mode := parts[4]
+                if mode = "mining" || mode = "washing" || mode = "gold" {
+                    State.actionControl.Choose(mode = "washing" ? 2 : mode = "gold" ? 3 : 1)
+                    ChangeActionMode(State.actionControl)
+                }
+            } else if action = "run.toggle" && parts.Length = 3 {
+                if State.visualTest
+                    ToggleVisualTestRun()
+                else
+                    ToggleMining()
+            } else if action = "vehicle.toggle" && parts.Length = 4 {
+                if State.visualTest {
+                    State.vehicleEnabledControl.Value := parts[4] = "1"
+                    Config.vehicleStorageEnabled := State.vehicleEnabledControl.Value
+                } else {
+                    State.vehicleEnabledControl.Value := parts[4] = "1"
+                    ToggleVehicleStorage(State.vehicleEnabledControl)
+                }
+            } else if action = "vehicle.register" && parts.Length = 3 {
+                if State.visualTest
+                    State.vehicleStatusLabel.Text := "登録する車両のストレージを開いてください"
+                else
+                    BeginVehicleRegistration()
+            } else if action = "vehicle.delete" && parts.Length = 3 {
+                if State.visualTest {
+                    State.vehicleStatusLabel.Text := "未登録"
+                    State.vehicleDeleteButton.Enabled := false
+                } else
+                    DeleteVehicleRegistration()
+            } else if action = "settings.save" && parts.Length = 12 {
+                ApplyWebUiSettings(parts)
+            } else if action = "update.check" && parts.Length = 3 {
+                if State.visualTest {
+                    State.updatePageStatus.Text := "新しいバージョン v8.1.0 があります"
+                    State.updateButton.Text := "ダウンロードして更新"
+                    State.ui.navUpdate.Text := "アップデート •"
+                } else
+                    CheckForUpdates()
+            } else if action = "window.close" && parts.Length = 3 {
+                ExitApp()
+            }
+        } catch as err {
+            WriteDiagnostic("UI_ACTION_ERROR action=" action " error=" err.Message)
+            State.settingsErrorLabel.Opt("cB42318")
+            State.settingsErrorLabel.Text := "操作を完了できませんでした。"
+        }
+    }
+    QueueWebUiFlush()
+}
+
+ApplyWebUiSettings(parts) {
+    global State, Config
+    if State.registrationActive {
+        State.settingsErrorLabel.Opt("cB42318")
+        State.settingsErrorLabel.Text := "車両登録を中止してから設定を変更してください。"
+        QueueWebUiFlush()
+        return
+    }
+    State.startHotkeyControl.Value := parts[4]
+    State.stopHotkeyControl.Value := parts[5]
+    State.backgroundControl.Value := parts[6] = "1"
+    State.hideControl.Value := parts[7] = "1"
+    State.washCorrectionControl.Value := parts[8] = "1"
+    State.autoEatControl.Value := parts[9] = "1"
+    State.foodKeyControl.Value := parts[10]
+    State.autoUpdateControl.Value := parts[11] = "1"
+    State.minimumFreeWeightControl.Value := parts[12]
+    if !State.visualTest {
+        SaveInlineSettings()
+        return
+    }
+    Config.startHotkey := parts[4]
+    Config.stopHotkey := parts[5]
+    Config.backgroundMode := parts[6] = "1"
+    Config.hideWhileRunning := parts[7] = "1"
+    Config.washForwardCorrection := parts[8] = "1"
+    Config.goldRecoveryEnabled := parts[8] = "1"
+    Config.workViewLock := parts[8] = "1"
+    Config.autoEat := parts[9] = "1"
+    try Config.foodKey := Integer(parts[10])
+    Config.autoCheckUpdates := parts[11] = "1"
+    try Config.minimumFreeWeight := Integer(parts[12])
+    State.footerLabel.Text := "開始 " Config.startHotkey "　停止 " Config.stopHotkey
+    State.settingsErrorLabel.Opt("c248A3D")
+    State.settingsErrorLabel.Text := "設定を保存しました。"
+    UpdateConnectionStatus()
+}
+
+ToggleVisualTestRun() {
+    global State
+    State.running := !State.running
+    State.mainButton.Text := State.running ? "自動操作を停止" : "自動操作を開始"
+    State.actionControl.Enabled := !State.running
+    State.statusLabel.Text := State.running ? "●  砂金を採っています" : "●  停止中"
+    if State.running {
+        State.successes := 22
+        State.nudges := 2
+        State.countLabel.Text := "砂金採り回数`n22"
+        State.mealLabel.Text := "位置補正`n2"
+    }
+}
+
+ApplyVisualTestFixture() {
+    global State, Config
+    Config.actionMode := "gold"
+    State.actionControl.Value := 3
+    State.connectionLabel.Text := "FiveM　接続済み"
+    State.modeLabel.Text := "操作　バックグラウンド"
+    State.taglineLabel.Text := "画面を奪わず、位置ずれも検知して砂金を採ります"
+    State.statusLabel.Text := "●  停止中"
+    State.countLabel.Text := "砂金採り回数`n22"
+    State.mealLabel.Text := "位置補正`n0"
+    State.vehicleTripLabel.Text := "自動収納`n0"
+    State.vehicleStatusLabel.Text := "登録済み　作業用トラック"
+    State.vehicleNameEdit.Value := "作業用トラック"
+    State.vehicleEnabledControl.Enabled := true
+    State.routeStatusLabel.Text := "ローカル登録　準備完了"
+    State.routeDetailLabel.Text := "作業: 砂金採りトレイ　·　現在位置を取得できます"
+    State.capacityStatusLabel.Text := "所持重量　8.0 kg / 20.0 kg　40%"
+    State.capacityProgress.Value := 40
+    State.capacityDetailLabel.Text := "残り 12.0 kg　·　収納開始 2.0 kg"
+    State.updatePageStatus.Text := "最新バージョンです"
+    QueueWebUiFlush(true)
+}
+
+QueueWebUiFlush(immediate := false) {
+    global State
+    if State.uiFlushPending
+        return
+    State.uiFlushPending := true
+    SetTimer FlushWebUiState, immediate ? -1 : -16
+}
+
+FlushWebUiState(*) {
+    global State
+    State.uiFlushPending := false
+    if !State.uiReady || !State.uiHwnd
+        return
+    State.uiRevision += 1
+    payload := BuildWebUiStateJson()
+    if !SendWebUiCopyData(State.uiHwnd,
+        "AIUISTATE1`t" State.uiSession "`t" payload) {
+        State.uiReady := false
+        State.uiHwnd := 0
+    }
+}
+
+BuildWebUiStateJson() {
+    global State, Config, AppVersion
+    controlsJson := ""
+    for key, control in State.uiControls {
+        if controlsJson
+            controlsJson .= ","
+        controlsJson .= JsonQuote(key) ":{"
+            . '"text":' JsonQuote(control.Text) ","
+            . '"value":' JsonScalar(control.Value) ","
+            . '"enabled":' (control.Enabled ? "true" : "false") ","
+            . '"visible":' (control.Visible ? "true" : "false") ","
+            . '"tone":' JsonQuote(control.Tone) "}"
+    }
+    actionMode := State.running ? State.runMode : Config.actionMode
+    return '{"type":"state","revision":' State.uiRevision
+        . ',"version":' JsonQuote(AppVersion)
+        . ',"page":' JsonQuote(State.page)
+        . ',"running":' (State.running ? "true" : "false")
+        . ',"registrationActive":' (State.registrationActive ? "true" : "false")
+        . ',"actionMode":' JsonQuote(actionMode)
+        . ',"windowVisible":' (State.uiWindowVisible ? "true" : "false")
+        . ',"visualTest":' (State.visualTest ? "true" : "false")
+        . ',"controls":{' controlsJson '}}'
+}
+
+JsonScalar(value) {
+    valueType := Type(value)
+    if valueType = "Integer" || valueType = "Float"
+        return String(value)
+    return JsonQuote(value)
+}
+
+JsonQuote(value) {
+    value := String(value)
+    value := StrReplace(value, "\", "\\")
+    value := StrReplace(value, Chr(34), "\" Chr(34))
+    value := StrReplace(value, "`b", "\b")
+    value := StrReplace(value, "`f", "\f")
+    value := StrReplace(value, "`r", "\r")
+    value := StrReplace(value, "`n", "\n")
+    value := StrReplace(value, "`t", "\t")
+    return Chr(34) value Chr(34)
+}
+
+SendWebUiCommand(command) {
+    global State
+    if !State.uiReady || !State.uiHwnd
+        return false
+    return SendWebUiCopyData(State.uiHwnd,
+        "AIUICMD1`t" State.uiSession "`t" command)
+}
+
+SendWebUiCopyData(targetHwnd, message) {
+    global State
+    if !targetHwnd || !DllCall("user32\IsWindow", "Ptr", targetHwnd, "Int")
+        return false
+    messageBuffer := Buffer((StrLen(message) + 1) * 2, 0)
+    StrPut(message, messageBuffer, "UTF-16")
+    copyDataSize := A_PtrSize = 8 ? 24 : 12
+    copyData := Buffer(copyDataSize, 0)
+    NumPut("Ptr", 0x31495541, copyData, 0)
+    NumPut("UInt", messageBuffer.Size, copyData, A_PtrSize)
+    NumPut("Ptr", messageBuffer.Ptr, copyData, A_PtrSize = 8 ? 16 : 8)
+    sendResult := 0
+    try return !!DllCall("user32\SendMessageTimeoutW", "Ptr", targetHwnd,
+        "UInt", 0x004A, "Ptr", State.uiBackendGui.Hwnd, "Ptr", copyData.Ptr,
+        "UInt", 0x0002, "UInt", 2000, "Ptr*", &sendResult, "Ptr")
+    catch
+        return false
 }
 
 ShowPage(pageName, *) {
@@ -616,11 +989,6 @@ ShowPage(pageName, *) {
     if !State.pages.Has(pageName)
         return
     State.page := pageName
-    for name, controls in State.pages {
-        visible := name = pageName
-        for control in controls
-            control.Visible := visible
-    }
     RefreshNavigationSelection()
     if pageName = "vehicle" {
         RefreshVehicleUi()
@@ -628,91 +996,41 @@ ShowPage(pageName, *) {
             SetTimer CheckCompanionStatusForUi, -30
     } else if pageName = "update"
         RefreshUpdateUi()
-    try {
-        State.gui.GetPos(,, &width, &height)
-        LayoutMainWindow(State.gui, 0, width, height)
-    }
+    QueueWebUiFlush()
 }
 
 RefreshNavigationSelection() {
     global State
-    ; 選択状態は青いバーで表現します。選択中の項目も通常のボタンとして
-    ; 有効にしておくことで、「選択中」と「操作不能」を混同させません。
-    for control in [State.ui.navOverview, State.ui.navVehicle,
-        State.ui.navSettings, State.ui.navUpdate]
-        control.Enabled := true
+    QueueWebUiFlush()
 }
 
 RunUiSmokeTest() {
     global State
-
-    ; 装飾面が有効だと前面の透明な壁になり、下のボタンや入力欄を
-    ; Windowのhit-testから隠します。実際に起きた回帰を起動テストで防ぎます。
-    for surface in [State.ui.sidebarSurface, State.ui.selectionBar,
-        State.ui.statusSurface, State.ui.metricsSurface, State.ui.vehicleSurface,
-        State.ui.capacitySurface, State.ui.routeSurface, State.ui.keysSurface, State.ui.optionsSurface,
-        State.ui.updateSurface] {
-        if surface.Enabled
-            return 41
-    }
-    for nav in [State.ui.navOverview, State.ui.navVehicle,
-        State.ui.navSettings, State.ui.navUpdate] {
-        if !nav.Enabled
-            return 42
-    }
-    ; 実際のBM_CLICKを通して各ナビゲーションのイベント配線も確認します。
-    ; Enabled確認だけでは見つからない無反応の配線回帰を防ぎます。
-    for navCase in [
-        {control: State.ui.navOverview, page: "overview"},
-        {control: State.ui.navVehicle, page: "vehicle"},
-        {control: State.ui.navSettings, page: "settings"},
-        {control: State.ui.navUpdate, page: "update"}
-    ] {
-        DllCall("user32\PostMessageW", "Ptr", navCase.control.Hwnd,
-            "UInt", 0x00F5, "Ptr", 0, "Ptr", 0, "Int")
-        Sleep 25
-        if State.page != navCase.page
-            return 59
-    }
-    for interactive in [State.actionControl, State.mainButton,
-        State.vehicleNameEdit,
-        State.backgroundControl, State.startHotkeyControl,
-        State.stopHotkeyControl, State.minimumFreeWeightControl,
-        State.settingsButton, State.updateButton] {
-        if !interactive.Enabled
-            return 57
-    }
+    deadline := MonotonicMs() + 15000
+    while !State.uiReady && MonotonicMs() < deadline
+        Sleep 50
+    if !State.uiReady || !State.uiHwnd
+        return 41
+    if State.uiControls.Count < 20 || !State.uiControls.Has("mainButton")
+        || !State.uiControls.Has("vehicleNameEdit")
+        || !State.uiControls.Has("settingsButton")
+        || !State.uiControls.Has("updateButton")
+        return 42
+    State.uiSmokeResult := ""
+    if !SendWebUiCommand("SMOKE")
+        return 43
+    deadline := MonotonicMs() + 12000
+    while !State.uiSmokeResult && MonotonicMs() < deadline
+        Sleep 50
+    if State.uiSmokeResult != "OK"
+        return 44
     for pageName in ["overview", "vehicle", "settings", "update"] {
         ShowPage(pageName)
         if State.page != pageName
-            return 43
-    }
-    compactChecks := Map(
-        "overview", [State.mainButton, State.ui.metricsSurface, State.footerLabel],
-        "vehicle", [State.ui.vehicleSurface, State.ui.routeSurface,
-            State.vehicleRegisterButton, State.vehicleDeleteButton],
-        "settings", [State.ui.optionsSurface, State.settingsButton,
-            State.settingsErrorLabel],
-        "update", [State.ui.updateSurface, State.updateButton, State.ui.updateHelp])
-    for pageName, controls in compactChecks {
-        ShowPage(pageName)
-        LayoutMainWindow(State.gui, 0, 520, 640)
-        for control in controls {
-            if !ControlFitsLayout(control, 520, 640)
-                return 58
-        }
+            return 45
     }
     ShowPage("overview")
-    LayoutMainWindow(State.gui, 0, 820, 640)
     return 0
-}
-
-ControlFitsLayout(control, clientWidth, clientHeight) {
-    try control.GetPos(&x, &y, &width, &height)
-    catch
-        return false
-    return x >= 0 && y >= 0 && width > 0 && height > 0
-        && x + width <= clientWidth && y + height <= clientHeight
 }
 
 HandleMainEscape(*) {
@@ -721,171 +1039,6 @@ HandleMainEscape(*) {
         ShowPage("overview")
     else
         State.gui.Hide()
-}
-
-LayoutMainWindow(guiObj, minMax, width, height) {
-    global State
-    if minMax = -1 || !State.layoutReady && width < 100
-        return
-    State.ui.lastWidth := width
-    State.ui.lastHeight := height
-    wide := width >= 700
-    margin := wide ? 24 : 16
-    if wide {
-        sidebarX := 16, sidebarY := 76, sidebarW := 176, sidebarH := 224
-        availableW := Max(420, width - 248)
-        contentW := Min(760, availableW)
-        contentX := 224 + Floor((availableW - contentW) / 2)
-        contentY := 20
-        State.ui.sidebarSurface.Move(sidebarX, sidebarY, sidebarW, sidebarH)
-        navY := [88, 140, 192, 244]
-        for index, control in [State.ui.navOverview, State.ui.navVehicle,
-            State.ui.navSettings, State.ui.navUpdate]
-            control.Move(28, navY[index], 152, 44)
-        selectedIndex := State.page = "vehicle" ? 2 : State.page = "settings" ? 3
-            : State.page = "update" ? 4 : 1
-        State.ui.selectionBar.Move(16, navY[selectedIndex], 4, 44)
-    } else {
-        sidebarX := 16, sidebarY := 60, sidebarW := width - 32, sidebarH := 52
-        contentX := 16, contentY := 120, contentW := width - 32
-        State.ui.sidebarSurface.Move(sidebarX, sidebarY, sidebarW, sidebarH)
-        gap := 6
-        navW := Floor((sidebarW - 24 - gap * 3) / 4)
-        navX := sidebarX + 12
-        for index, control in [State.ui.navOverview, State.ui.navVehicle,
-            State.ui.navSettings, State.ui.navUpdate] {
-            control.Move(navX + (index - 1) * (navW + gap), sidebarY + 6, navW, 40)
-        }
-        selectedIndex := State.page = "vehicle" ? 2 : State.page = "settings" ? 3
-            : State.page = "update" ? 4 : 1
-        State.ui.selectionBar.Move(navX + (selectedIndex - 1) * (navW + gap),
-            sidebarY + 47, navW, 3)
-    }
-
-    State.ui.appTitle.Move(margin, 15, wide ? 168 : Max(260, width - 190), 30)
-    State.ui.appSubtitle.Move(margin, 43, wide ? 168 : Max(300, width - 180), 20)
-    State.ui.version.Move(Max(margin, width - 132), 22, 108, 22)
-    State.ui.appSubtitle.Visible := wide
-    ApplyRoundedControlCorners(State.ui.sidebarSurface.Hwnd, 12)
-
-    ; 概要
-    State.ui.overviewTitle.Move(contentX, contentY, contentW, 38)
-    State.taglineLabel.Move(contentX, contentY + 38, contentW, 32)
-    State.ui.statusSurface.Move(contentX, contentY + 76, contentW, 142)
-    State.statusLabel.Move(contentX + 18, contentY + 91, contentW - 36, 32)
-    State.ui.statusSeparator1.Move(contentX + 18, contentY + 127, contentW - 18, 1)
-    State.connectionLabel.Move(contentX + 18, contentY + 137, contentW - 36, 28)
-    State.ui.statusSeparator2.Move(contentX + 18, contentY + 174, contentW - 18, 1)
-    State.modeLabel.Move(contentX + 18, contentY + 184, contentW - 36, 28)
-    State.ui.actionCaption.Move(contentX, contentY + 238, 100, 24)
-    State.actionControl.Move(contentX, contentY + 264, contentW, 34)
-    State.mainButton.Move(contentX, contentY + 312, contentW, 50)
-    State.ui.metricsSurface.Move(contentX, contentY + 382, contentW, 78)
-    metricW := Floor(contentW / 3)
-    State.countLabel.Move(contentX, contentY + 399, metricW, 44)
-    State.mealLabel.Move(contentX + metricW, contentY + 399, metricW, 44)
-    State.vehicleTripLabel.Move(contentX + metricW * 2, contentY + 399,
-        contentW - metricW * 2, 44)
-    State.footerLabel.Move(contentX, Min(height - 30, contentY + 478), contentW, 24)
-    ApplyRoundedControlCorners(State.ui.statusSurface.Hwnd, 14)
-    ApplyRoundedControlCorners(State.ui.metricsSurface.Hwnd, 12)
-    ApplyRoundedControlCorners(State.mainButton.Hwnd, 12)
-
-    ; 車両
-    vehicleShift := wide ? 0 : -32
-    State.ui.vehicleSubtitle.Visible := wide && State.page = "vehicle"
-    State.ui.vehicleHelp.Visible := wide && State.page = "vehicle"
-    State.ui.vehicleTitle.Move(contentX, contentY, contentW, 38)
-    State.ui.vehicleSubtitle.Move(contentX, contentY + 38, contentW, 34)
-    State.ui.vehicleSurface.Move(contentX, contentY + 76 + vehicleShift, contentW, 160)
-    State.vehicleStatusLabel.Move(contentX + 18, contentY + 90 + vehicleShift, contentW - 36, 30)
-    State.ui.vehicleSeparator1.Move(contentX + 18, contentY + 125 + vehicleShift, contentW - 18, 1)
-    State.ui.vehicleNameCaption.Move(contentX + 18, contentY + 135 + vehicleShift, 96, 30)
-    State.vehicleNameEdit.Move(contentX + 118, contentY + 134 + vehicleShift, contentW - 136, 32)
-    State.ui.vehicleSeparator2.Move(contentX + 18, contentY + 175 + vehicleShift, contentW - 18, 1)
-    State.vehicleEnabledControl.Move(contentX + 18, contentY + 187 + vehicleShift, contentW - 36, 34)
-    State.ui.capacitySurface.Move(contentX, contentY + 250 + vehicleShift, contentW, 82)
-    State.capacityStatusLabel.Move(contentX + 18, contentY + 260 + vehicleShift, contentW - 36, 24)
-    State.capacityProgress.Move(contentX + 18, contentY + 289 + vehicleShift, contentW - 36, 6)
-    State.capacityDetailLabel.Move(contentX + 18, contentY + 301 + vehicleShift, contentW - 36, 22)
-    State.ui.routeSurface.Move(contentX, contentY + 346 + vehicleShift, contentW, 104)
-    State.routeStatusLabel.Move(contentX + 18, contentY + 360 + vehicleShift, contentW - 36, 28)
-    State.routeDetailLabel.Move(contentX + 18, contentY + 391 + vehicleShift, contentW - 36, 48)
-    buttonGap := 12
-    registerW := Max(210, Floor((contentW - buttonGap) * 0.62))
-    deleteW := contentW - registerW - buttonGap
-    State.vehicleRegisterButton.Move(contentX, contentY + 466 + vehicleShift, registerW, 48)
-    State.vehicleDeleteButton.Move(contentX + registerW + buttonGap,
-        contentY + 466 + vehicleShift, deleteW, 48)
-    State.ui.vehicleHelp.Move(contentX, contentY + 528 + vehicleShift, contentW, 58)
-    ApplyRoundedControlCorners(State.ui.vehicleSurface.Hwnd, 12)
-    ApplyRoundedControlCorners(State.ui.capacitySurface.Hwnd, 12)
-    ApplyRoundedControlCorners(State.ui.routeSurface.Hwnd, 12)
-    ApplyRoundedControlCorners(State.vehicleRegisterButton.Hwnd, 12)
-    ApplyRoundedControlCorners(State.vehicleDeleteButton.Hwnd, 12)
-
-    ; 設定
-    settingsShift := wide ? 0 : -32
-    State.ui.settingsSubtitle.Visible := wide && State.page = "settings"
-    State.ui.settingsTitle.Move(contentX, contentY, contentW, 38)
-    State.ui.settingsSubtitle.Move(contentX, contentY + 38, contentW, 34)
-    State.ui.keysSurface.Move(contentX, contentY + 76 + settingsShift, contentW, 126)
-    State.ui.startKeyCaption.Move(contentX + 18, contentY + 90 + settingsShift, 150, 32)
-    State.startHotkeyControl.Move(contentX + contentW - 208,
-        contentY + 88 + settingsShift, 190, 34)
-    State.ui.keysSeparator.Move(contentX + 18, contentY + 137 + settingsShift, contentW - 18, 1)
-    State.ui.stopKeyCaption.Move(contentX + 18, contentY + 151 + settingsShift, 150, 32)
-    State.stopHotkeyControl.Move(contentX + contentW - 208,
-        contentY + 149 + settingsShift, 190, 34)
-    State.ui.optionsSurface.Move(contentX, contentY + 222 + settingsShift, contentW, 214)
-    for index, control in [State.backgroundControl, State.hideControl,
-        State.washCorrectionControl, State.autoUpdateControl]
-        control.Move(contentX + 18, contentY + 229 + settingsShift
-            + (index - 1) * 39, contentW - 36, 34)
-    State.ui.minimumFreeWeightCaption.Move(contentX + 18,
-        contentY + 385 + settingsShift, contentW - 174, 34)
-    State.minimumFreeWeightControl.Move(contentX + contentW - 148,
-        contentY + 386 + settingsShift, 130, 32)
-    State.settingsButton.Move(contentX, contentY + 456 + settingsShift, Min(250, contentW), 48)
-    State.settingsErrorLabel.Move(contentX, contentY + 514 + settingsShift,
-        contentW, wide ? 44 : 38)
-    ApplyRoundedControlCorners(State.ui.keysSurface.Hwnd, 12)
-    ApplyRoundedControlCorners(State.ui.optionsSurface.Hwnd, 12)
-    ApplyRoundedControlCorners(State.settingsButton.Hwnd, 12)
-
-    ; アップデート
-    updateShift := wide ? 0 : -32
-    State.ui.updateSubtitle.Visible := wide && State.page = "update"
-    State.ui.updateTitle.Move(contentX, contentY, contentW, 38)
-    State.ui.updateSubtitle.Move(contentX, contentY + 38, contentW, 34)
-    State.ui.updateSurface.Move(contentX, contentY + 76 + updateShift, contentW, 170)
-    State.ui.currentVersionCaption.Move(contentX + 18, contentY + 92 + updateShift, 180, 30)
-    State.currentVersionLabel.Move(contentX + contentW - 198,
-        contentY + 92 + updateShift, 180, 30)
-    State.ui.updateSeparator1.Move(contentX + 18,
-        contentY + 132 + updateShift, contentW - 18, 1)
-    State.updatePageStatus.Move(contentX + 18,
-        contentY + 145 + updateShift, contentW - 36, 34)
-    State.ui.updateSeparator2.Move(contentX + 18,
-        contentY + 184 + updateShift, contentW - 18, 1)
-    State.ui.signatureLabel.Move(contentX + 18,
-        contentY + 198 + updateShift, contentW - 36, 40)
-    State.updateButton.Move(contentX, contentY + 270 + updateShift, Min(280, contentW), 48)
-    State.ui.updateHelp.Move(contentX, contentY + 338 + updateShift, contentW, 64)
-    ApplyRoundedControlCorners(State.ui.updateSurface.Hwnd, 12)
-    ApplyRoundedControlCorners(State.updateButton.Hwnd, 12)
-}
-
-ApplyRoundedControlCorners(hwnd, radius := 16) {
-    try {
-        WinGetPos(,, &width, &height, "ahk_id " hwnd)
-        if width <= 0 || height <= 0
-            return
-        region := DllCall("gdi32\CreateRoundRectRgn", "Int", 0, "Int", 0,
-            "Int", width + 1, "Int", height + 1, "Int", radius, "Int", radius, "Ptr")
-        if region
-            DllCall("user32\SetWindowRgn", "Ptr", hwnd, "Ptr", region, "Int", true)
-    }
 }
 
 ToggleMining(*) {
@@ -935,8 +1088,9 @@ ShowMainWindow(*) {
 
 ChangeActionMode(control, *) {
     global State, Config, settingsPath
-    if State.running {
-        control.Choose(State.runMode = "washing" ? 2 : State.runMode = "gold" ? 3 : 1)
+    if State.running || State.registrationActive {
+        activeMode := State.running ? State.runMode : Config.actionMode
+        control.Choose(activeMode = "washing" ? 2 : activeMode = "gold" ? 3 : 1)
         return
     }
     oldMode := Config.actionMode
@@ -1042,6 +1196,10 @@ ShowSettings(*) {
 SaveInlineSettings(*) {
     global State, Config, settingsPath
     State.settingsErrorLabel.Opt("cB42318")
+    if State.registrationActive {
+        State.settingsErrorLabel.Text := "車両登録を中止してから設定を変更してください。"
+        return
+    }
     if State.running {
         ; 実行中もボタン自体は反応させ、何も起きないように見える状態を避けます。
         StopMining()
@@ -1064,6 +1222,15 @@ SaveInlineSettings(*) {
         return
     }
     newBackground := State.backgroundControl.Value ? 1 : 0
+    try newFoodKey := Integer(Trim(State.foodKeyControl.Value))
+    catch {
+        State.settingsErrorLabel.Text := "食料スロットは1～5で指定してください。"
+        return
+    }
+    if newFoodKey < 1 || newFoodKey > 5 {
+        State.settingsErrorLabel.Text := "食料スロットは1～5で指定してください。"
+        return
+    }
     try newMinimumFreeWeight := Integer(Trim(State.minimumFreeWeightControl.Value))
     catch {
         State.settingsErrorLabel.Text := "残り重量は250～20000gの数値で指定してください。"
@@ -1086,6 +1253,9 @@ SaveInlineSettings(*) {
         autoCheckUpdates: Config.autoCheckUpdates,
         washForwardCorrection: Config.washForwardCorrection,
         goldRecoveryEnabled: Config.goldRecoveryEnabled,
+        workViewLock: Config.workViewLock,
+        autoEat: Config.autoEat,
+        foodKey: Config.foodKey,
         minimumFreeWeight: Config.minimumFreeWeight
     }
     UnregisterConfiguredHotkeys()
@@ -1105,6 +1275,9 @@ SaveInlineSettings(*) {
     Config.autoCheckUpdates := State.autoUpdateControl.Value ? 1 : 0
     Config.washForwardCorrection := State.washCorrectionControl.Value ? 1 : 0
     Config.goldRecoveryEnabled := State.washCorrectionControl.Value ? 1 : 0
+    Config.workViewLock := State.washCorrectionControl.Value ? 1 : 0
+    Config.autoEat := State.autoEatControl.Value ? 1 : 0
+    Config.foodKey := newFoodKey
     Config.minimumFreeWeight := newMinimumFreeWeight
     try {
         SaveAllSettingsAtomically()
@@ -1117,6 +1290,9 @@ SaveInlineSettings(*) {
         Config.autoCheckUpdates := oldConfig.autoCheckUpdates
         Config.washForwardCorrection := oldConfig.washForwardCorrection
         Config.goldRecoveryEnabled := oldConfig.goldRecoveryEnabled
+        Config.workViewLock := oldConfig.workViewLock
+        Config.autoEat := oldConfig.autoEat
+        Config.foodKey := oldConfig.foodKey
         Config.minimumFreeWeight := oldConfig.minimumFreeWeight
         try RegisterConfiguredHotkeys()
         State.settingsErrorLabel.Text := "設定を保存できません: " err.Message
@@ -1147,6 +1323,23 @@ SaveAllSettingsAtomically() {
         IniWrite Config.goldRecoveryAfterMs, temporarySettingsPath, "GoldPanning", "RecoveryAfterMs"
         IniWrite Config.goldRecoveryPulseMs, temporarySettingsPath, "GoldPanning", "RecoveryPulseMs"
         IniWrite Config.goldRecoverySettleMs, temporarySettingsPath, "GoldPanning", "RecoverySettleMs"
+        IniWrite Config.foodKey, temporarySettingsPath, "Eating", "FoodKey"
+        IniWrite Config.foodKeyHoldMs, temporarySettingsPath, "Eating", "FoodKeyHoldMs"
+        IniWrite Config.autoEat, temporarySettingsPath, "Eating", "AutoEat"
+        IniWrite Config.hungerCheckIntervalMs, temporarySettingsPath, "Eating", "HungerCheckIntervalMs"
+        IniWrite Config.hungerConfirmFrames, temporarySettingsPath, "Eating", "HungerConfirmFrames"
+        IniWrite Config.hungerConfirmGapMs, temporarySettingsPath, "Eating", "HungerConfirmGapMs"
+        IniWrite Config.eatAnimationMs, temporarySettingsPath, "Eating", "EatAnimationMs"
+        IniWrite Config.gaugeSettleMs, temporarySettingsPath, "Eating", "GaugeSettleMs"
+        IniWrite Config.eatCooldownMs, temporarySettingsPath, "Eating", "EatCooldownMs"
+        IniWrite Config.postEatResumeMs, temporarySettingsPath, "Eating", "PostEatResumeMs"
+        IniWrite Config.backgroundEatFallback, temporarySettingsPath, "Eating", "BackgroundFallback"
+        IniWrite Config.backgroundFirstEatDelayMs, temporarySettingsPath, "Eating", "BackgroundFirstEatDelayMs"
+        IniWrite Config.backgroundEatIntervalMs, temporarySettingsPath, "Eating", "BackgroundEatIntervalMs"
+        IniWrite Config.failedEatRetryMs, temporarySettingsPath, "Eating", "FailedEatRetryMs"
+        IniWrite Config.workViewLock, temporarySettingsPath, "ViewLock", "Enabled"
+        IniWrite Config.workViewDownPulseMs, temporarySettingsPath, "ViewLock", "DownPulseMs"
+        IniWrite Config.workViewIntervalMs, temporarySettingsPath, "ViewLock", "ReapplyIntervalMs"
         IniWrite Config.vehicleStorageEnabled, temporarySettingsPath, "VehicleStorage", "Enabled"
         IniWrite Config.vehicleRegistered, temporarySettingsPath, "VehicleStorage", "Registered"
         IniWrite Config.vehicleName, temporarySettingsPath, "VehicleStorage", "DisplayName"
@@ -1171,8 +1364,311 @@ SaveAllSettingsAtomically() {
     }
 }
 
+ToggleLocalVehicleStorage(control) {
+    global State, Config
+    if State.running || State.registrationActive {
+        control.Value := Config.vehicleStorageEnabled
+        return
+    }
+
+    requested := control.Value ? 1 : 0
+    if requested && !IsValidVehicleProfile(Config) {
+        control.Value := 0
+        Config.vehicleStorageEnabled := 0
+        State.vehicleStatusLabel.Text := "先に登録する車両のストレージを一度開いてください"
+        RefreshLocalVehicleUi()
+        return
+    }
+    if requested && !Config.backgroundMode {
+        control.Value := 0
+        Config.vehicleStorageEnabled := 0
+        State.vehicleStatusLabel.Text := "車両収納にはバックグラウンド操作が必要です"
+        RefreshLocalVehicleUi()
+        return
+    }
+
+    previous := Config.vehicleStorageEnabled
+    Config.vehicleStorageEnabled := requested
+    try SaveAllSettingsAtomically()
+    catch as err {
+        Config.vehicleStorageEnabled := previous
+        control.Value := previous
+        State.vehicleStatusLabel.Text := "設定を保存できません: " err.Message
+        QueueWebUiFlush()
+        return
+    }
+    RefreshLocalVehicleUi()
+}
+
+RefreshLocalVehicleUi(*) {
+    global State, Config
+    if !IsObject(State.vehicleStatusLabel)
+        return
+
+    valid := IsValidVehicleProfile(Config)
+    Config.vehicleStorageEnabled := Config.vehicleStorageEnabled && valid ? 1 : 0
+    State.vehicleEnabledControl.Value := Config.vehicleStorageEnabled
+    State.vehicleEnabledControl.Enabled := valid && !State.running && !State.registrationActive
+    State.vehicleNameEdit.Value := Config.vehicleName
+    State.vehicleNameEdit.Enabled := !State.running && !State.registrationActive
+    State.vehicleRegisterButton.Enabled := !State.running && !State.registrationActive
+    State.vehicleRegisterButton.Text := valid ? "別の車両を登録" : "車両を登録"
+    State.vehicleDeleteButton.Enabled := valid && !State.running && !State.registrationActive
+
+    if State.registrationActive {
+        State.vehicleStatusLabel.Text := "登録する車両のストレージを開いてください"
+        State.routeStatusLabel.Text := "ストレージを待っています"
+        State.routeDetailLabel.Text := "通常どおり荷台を開くと、端末内への登録が自動で完了します。"
+    } else if valid {
+        State.vehicleStatusLabel.Text := "登録済み　" Config.vehicleName
+        State.routeStatusLabel.Text := "ローカル登録　準備完了"
+        State.routeDetailLabel.Text := "満重量になると近くの同じストレージだけを探し、採集分を収納して作業へ戻ります。"
+    } else {
+        State.vehicleStatusLabel.Text := "未登録"
+        State.routeStatusLabel.Text := "サーバー側への導入は不要です"
+        State.routeDetailLabel.Text := "登録を開始し、対象車両のストレージを一度だけ手動で開いてください。"
+    }
+    RefreshCapacityUi()
+    QueueWebUiFlush()
+}
+
+BeginLocalVehicleRegistration(*) {
+    global State, Config
+    if State.running || State.updateOperation || State.registrationActive
+        return
+    if !Config.backgroundMode {
+        State.vehicleStatusLabel.Text := "設定でバックグラウンド操作をオンにしてください"
+        QueueWebUiFlush()
+        return
+    }
+
+    targetHwnd := FindFiveMWindow()
+    if !targetHwnd {
+        State.vehicleStatusLabel.Text := "FiveMが見つかりません"
+        QueueWebUiFlush()
+        return
+    }
+    try targetPid := WinGetPID("ahk_id " targetHwnd)
+    catch
+        targetPid := 0
+    healthResult := RunBackgroundBridge("health")
+    if !targetPid || !ParseServerHealth(healthResult, &registrationEpoch) {
+        State.vehicleStatusLabel.Text := "FiveMのインベントリ接続を確認できません"
+        WriteDiagnostic("LOCAL_REGISTRATION_PREFLIGHT_ERROR=" healthResult)
+        QueueWebUiFlush()
+        return
+    }
+
+    ; 登録開始前から開かれていた別ストレージを誤登録しないよう、必ず閉じた状態を作ります。
+    closeResult := RunBackgroundBridge("close-inventory")
+    if closeResult != "CLOSED" {
+        State.vehicleStatusLabel.Text := "インベントリを閉じてから、もう一度登録してください"
+        WriteDiagnostic("LOCAL_REGISTRATION_CLOSE_ERROR=" closeResult)
+        QueueWebUiFlush()
+        return
+    }
+
+    previousProfile := SnapshotVehicleProfile()
+    finalStatus := ""
+    registrationSucceeded := false
+    State.registrationActive := true
+    State.registrationCancelled := false
+    State.registrationDeadline := MonotonicMs() + 75000
+    State.targetHwnd := targetHwnd
+    State.targetPid := targetPid
+    State.serverEpoch := registrationEpoch
+    State.actionControl.Enabled := false
+    SetConfigurationEnabled(false)
+    State.settingsButton.Enabled := false
+    State.vehicleStatusLabel.Text := "登録する車両のストレージを開いてください"
+    RefreshLocalVehicleUi()
+    State.gui.Hide()
+    ShowLocalRegistrationOverlay(targetHwnd)
+    try WinActivate "ahk_id " targetHwnd
+
+    try {
+        nextHealthAt := 0
+        loop {
+            if State.registrationCancelled {
+                finalStatus := "車両登録を中止しました"
+                break
+            }
+            if !IsTargetIdentityAlive() {
+                finalStatus := "FiveMが終了したため登録を中止しました"
+                break
+            }
+            now := MonotonicMs()
+            if now >= State.registrationDeadline {
+                finalStatus := "時間内にストレージを確認できませんでした"
+                break
+            }
+            UpdateLocalRegistrationOverlay(Ceil((State.registrationDeadline - now) / 1000))
+            if now >= nextHealthAt {
+                liveHealth := RunBackgroundBridgeCancelable(0, "health")
+                if !ParseServerHealth(liveHealth, &liveEpoch) || liveEpoch != registrationEpoch {
+                    finalStatus := "サーバー再起動または再接続を検知したため登録を中止しました"
+                    WriteDiagnostic("LOCAL_REGISTRATION_EPOCH_ERROR=" liveHealth)
+                    break
+                }
+                nextHealthAt := MonotonicMs() + 2200
+            }
+
+            captureResult := RunBackgroundBridgeCancelable(0, "capture-storage")
+            State.lastStorageProbeResult := captureResult
+            if ParseStorageCapture(captureResult, &storageInfo) {
+                ; 保存直前にも同じFiveMプロセスとNUIセッションであることを照合します。
+                finalHealth := RunBackgroundBridgeCancelable(0, "health")
+                if !ParseServerHealth(finalHealth, &finalEpoch)
+                    || finalEpoch != registrationEpoch || !IsTargetIdentityAlive() {
+                    finalStatus := "接続状態が変わったため車両を登録しませんでした"
+                    WriteDiagnostic("LOCAL_REGISTRATION_FINAL_EPOCH_ERROR=" finalHealth)
+                    break
+                }
+
+                displayName := Trim(StrReplace(StrReplace(State.vehicleNameEdit.Value,
+                    "`r", " "), "`n", " "))
+                if !displayName
+                    displayName := "登録車両"
+                if StrLen(displayName) > 40
+                    displayName := SubStr(displayName, 1, 40)
+                commitCancelled := false
+                Critical "On"
+                try {
+                    if State.registrationCancelled || !IsTargetIdentityAlive() {
+                        commitCancelled := true
+                    } else {
+                        Config.vehicleName := displayName
+                        Config.vehicleStorageId := storageInfo.id
+                        Config.vehicleStorageType := storageInfo.type
+                        Config.vehicleWorkMode := Config.actionMode
+                        Config.vehicleCompanionProtocol := 0
+                        Config.vehicleRegistrationId := ""
+                        Config.vehicleRouteFormat := 5
+                        Config.vehicleOutboundRoute := ""
+                        Config.vehicleReturnRoute := ""
+                        Config.vehicleRegistered := 1
+                        Config.vehicleStorageEnabled := 1
+                        SaveAllSettingsAtomically()
+                        registrationSucceeded := true
+                        finalStatus := "登録完了　" Config.vehicleName
+                        State.lastStorageResult := "登録済み"
+                        WriteDiagnostic("LOCAL_REGISTRATION_COMPLETE type=" storageInfo.type
+                            " weight=" storageInfo.weight " max=" storageInfo.maxWeight)
+                    }
+                } catch as err {
+                    RestoreVehicleProfile(previousProfile)
+                    finalStatus := "登録を保存できません: " err.Message
+                    WriteDiagnostic("LOCAL_REGISTRATION_SAVE_ERROR=" err.Message)
+                } finally {
+                    Critical "Off"
+                }
+                if commitCancelled
+                    finalStatus := "車両登録を中止しました"
+                break
+            }
+            Sleep 220
+        }
+    } catch as err {
+        if !registrationSucceeded
+            RestoreVehicleProfile(previousProfile)
+        finalStatus := "車両登録を完了できませんでした"
+        WriteDiagnostic("LOCAL_REGISTRATION_ERROR=" err.Message)
+    } finally {
+        CloseLocalRegistrationOverlay()
+        ReleaseBackgroundTarget(true)
+        RunBackgroundBridge("close-inventory")
+        State.registrationActive := false
+        State.registrationCancelled := false
+        State.registrationDeadline := 0
+        State.targetHwnd := 0
+        State.targetPid := 0
+        State.serverEpoch := ""
+        State.actionControl.Enabled := true
+        SetConfigurationEnabled(true)
+        State.settingsButton.Enabled := true
+        RefreshLocalVehicleUi()
+        if finalStatus
+            State.vehicleStatusLabel.Text := finalStatus
+        ShowPage("vehicle")
+        ShowMainWindow()
+        QueueWebUiFlush(true)
+    }
+}
+
+ShowLocalRegistrationOverlay(targetHwnd) {
+    global State, Config
+    CloseLocalRegistrationOverlay()
+    overlay := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x20")
+    overlay.BackColor := "F2F2F7"
+    overlay.MarginX := 22
+    overlay.MarginY := 15
+    overlay.SetFont("s12 w600 c1C1C1E", "Segoe UI")
+    overlay.AddText("w396 Center", "登録する車両のストレージを開いてください")
+    overlay.SetFont("s9 w400 c6C6C70", "Segoe UI")
+    countdown := overlay.AddText("y+7 w396 Center", "開くと自動で登録されます　·　"
+        Config.stopHotkey "で中止")
+    State.registrationOverlay := {gui: overlay, countdown: countdown}
+    try WinGetPos(&windowX, &windowY, &windowW, &windowH, "ahk_id " targetHwnd)
+    catch {
+        windowX := 0
+        windowY := 0
+        windowW := A_ScreenWidth
+    }
+    overlayW := 440
+    overlayH := 78
+    overlayX := windowX + Floor((windowW - overlayW) / 2)
+    overlayY := windowY + 56
+    overlay.Show("x" overlayX " y" overlayY " w" overlayW " h" overlayH " NoActivate")
+    ApplyRoundedWindowCorners(overlay.Hwnd)
+}
+
+UpdateLocalRegistrationOverlay(secondsRemaining) {
+    global State, Config
+    if !IsObject(State.registrationOverlay)
+        return
+    try State.registrationOverlay.countdown.Text := "開くと自動で登録されます　·　残り "
+        . Max(0, secondsRemaining) "秒　·　" Config.stopHotkey "で中止"
+}
+
+CloseLocalRegistrationOverlay() {
+    global State
+    if IsObject(State.registrationOverlay) {
+        try State.registrationOverlay.gui.Destroy()
+    }
+    State.registrationOverlay := 0
+}
+
+DeleteLocalVehicleRegistration(*) {
+    global State, Config
+    if State.running || State.registrationActive || !IsValidVehicleProfile(Config)
+        return
+    previousProfile := SnapshotVehicleProfile()
+    Config.vehicleStorageEnabled := 0
+    Config.vehicleRegistered := 0
+    Config.vehicleStorageId := ""
+    Config.vehicleStorageType := ""
+    Config.vehicleCompanionProtocol := 0
+    Config.vehicleRegistrationId := ""
+    Config.vehicleRouteFormat := 0
+    Config.vehicleOutboundRoute := ""
+    Config.vehicleReturnRoute := ""
+    try SaveAllSettingsAtomically()
+    catch as err {
+        RestoreVehicleProfile(previousProfile)
+        State.vehicleStatusLabel.Text := "登録を削除できません: " err.Message
+        QueueWebUiFlush()
+        return
+    }
+    State.lastStorageResult := "登録なし"
+    RefreshLocalVehicleUi()
+}
+
 ToggleVehicleStorage(control, *) {
     global State, Config
+    ToggleLocalVehicleStorage(control)
+    return
+
+    ; v7 companion implementation retained below only for settings migration reference.
     if State.running || State.registrationActive {
         control.Value := Config.vehicleStorageEnabled
         return
@@ -1234,6 +1730,10 @@ ToggleVehicleStorage(control, *) {
 
 RefreshVehicleUi(*) {
     global State, Config
+    RefreshLocalVehicleUi()
+    return
+
+    ; v7 companion implementation retained below only for settings migration reference.
     if !IsObject(State.vehicleStatusLabel)
         return
     valid := IsValidVehicleProfile(Config)
@@ -1303,6 +1803,11 @@ RefreshVehicleUi(*) {
 
 CheckCompanionStatusForUi(*) {
     global State
+    UpdateConnectionStatus()
+    RefreshLocalVehicleUi()
+    return
+
+    ; v7 companion implementation retained below only for settings migration reference.
     if State.running || State.registrationActive
         return
     QueryCompanionStatus(&companionInfo)
@@ -1571,6 +2076,10 @@ ActionModeLabel(mode) {
 
 BeginVehicleRegistration(*) {
     global State, Config
+    BeginLocalVehicleRegistration()
+    return
+
+    ; v7 companion implementation retained below only for migration compatibility.
     if State.running || State.updateOperation || State.registrationActive
         return
     if !Config.backgroundMode {
@@ -2216,7 +2725,8 @@ OpenCompanionCargoAndCapture(registrationId, expectedGeneration, &storageId,
     if Trim(cargoResult) = "ERROR COMPANION_UNSUPPORTED" {
         ; arrival_only構成だけは、companionが所有権確認済みの登録車両後端へ
         ; 到着した後に限り、既存の構造化target操作で荷台を開きます。
-        if OpenStorageAndCapture(&storageId, &storageType, expectedGeneration)
+        if OpenStorageAndCapture(&storageId, &storageType, expectedGeneration,
+            &fatalFailure)
             return true
         failureResult := State.lastStorageProbeResult
             ? State.lastStorageProbeResult : cargoResult
@@ -2270,42 +2780,68 @@ ProbeWorkTarget(actionMode, expectedGeneration := 0) {
 
 ProbeTargetOption(probeMode, expectedResult, expectedGeneration := 0) {
     global State
-    if !ReleaseBackgroundTarget(true)
+    State.lastTargetProbeResult := ""
+    State.lastTargetProbeFatal := false
+    if !ReleaseBackgroundTarget(true) {
+        State.lastTargetProbeResult := "ERROR INPUT_RELEASE"
+        State.lastTargetProbeFatal := true
         return false
+    }
     activateResult := RunBridgeForContext(expectedGeneration, "activate")
-    if !RegExMatch(activateResult, "^ACTIVATED (29200|29300)$", &portMatch)
+    State.lastTargetProbeResult := activateResult
+    if !RegExMatch(activateResult, "^ACTIVATED (29200|29300)$", &portMatch) {
+        State.lastTargetProbeFatal := true
         return false
+    }
     State.backgroundTargetActive := true
     State.backgroundDevConPort := portMatch[1] + 0
     State.lastDevConPort := State.backgroundDevConPort
     Sleep 350
     if expectedGeneration && !IsCurrentRun(expectedGeneration) {
-        ReleaseBackgroundTarget(true)
+        if !ReleaseBackgroundTarget(true) {
+            State.lastTargetProbeResult := "ERROR INPUT_RELEASE"
+            State.lastTargetProbeFatal := true
+        }
         return false
     }
     result := RunBridgeForContext(expectedGeneration, probeMode)
     released := ReleaseBackgroundTarget(true)
-    return released && result = expectedResult
+    State.lastTargetProbeResult := result
+    if !released {
+        State.lastTargetProbeResult := "ERROR INPUT_RELEASE"
+        State.lastTargetProbeFatal := true
+        return false
+    }
+    if result = expectedResult
+        return true
+    expectedMissing := StrReplace(expectedResult, "PRESENT ", "MISSING ")
+    if result != expectedMissing
+        State.lastTargetProbeFatal := true
+    return false
 }
 
-OpenStorageAndCapture(&storageId, &storageType, expectedGeneration := 0) {
+OpenStorageAndCapture(&storageId, &storageType, expectedGeneration, &fatalFailure) {
     global State
     storageId := ""
     storageType := ""
+    fatalFailure := false
     State.lastStorageProbeResult := ""
     ; 以前の入力を先に解放し、rightInventoryを誤認しないよう閉じた状態から開始します。
     if !ReleaseBackgroundTarget(true) {
         State.lastStorageProbeResult := "ERROR INPUT_RELEASE"
+        fatalFailure := true
         return false
     }
     closeResult := RunBridgeForContext(expectedGeneration, "close-inventory")
     if closeResult != "CLOSED" {
         State.lastStorageProbeResult := closeResult
+        fatalFailure := true
         return false
     }
     activateResult := RunBridgeForContext(expectedGeneration, "activate")
     if !RegExMatch(activateResult, "^ACTIVATED (29200|29300)$", &portMatch) {
         State.lastStorageProbeResult := activateResult
+        fatalFailure := true
         return false
     }
     State.backgroundTargetActive := true
@@ -2315,33 +2851,44 @@ OpenStorageAndCapture(&storageId, &storageType, expectedGeneration := 0) {
     probeResult := RunBridgeForContext(expectedGeneration, "probe-storage")
     State.lastStorageProbeResult := probeResult
     if probeResult != "PRESENT STORAGE" {
-        if !ReleaseBackgroundTarget(true)
+        if !ReleaseBackgroundTarget(true) {
             State.lastStorageProbeResult := "ERROR INPUT_RELEASE"
+            fatalFailure := true
+        } else if probeResult != "MISSING STORAGE"
+            && probeResult != "AMBIGUOUS STORAGE" {
+            fatalFailure := true
+        }
         return false
     }
     clickResult := RunBridgeForContext(expectedGeneration, "click-storage")
     State.lastStorageProbeResult := clickResult
     if clickResult != "CLICKED STORAGE" {
-        CloseInventoryAfterStorageFailure(clickResult)
+        cleanupOk := CloseInventoryAfterStorageFailure(clickResult)
+        fatalFailure := !cleanupOk || (clickResult != "MISSING STORAGE"
+            && clickResult != "AMBIGUOUS STORAGE")
         return false
     }
     if !ReleaseBackgroundTarget(true) {
         State.lastStorageProbeResult := "ERROR INPUT_RELEASE"
         CloseInventoryAfterStorageFailure(State.lastStorageProbeResult)
+        fatalFailure := true
         return false
     }
     deadline := MonotonicMs() + 5000
     while MonotonicMs() < deadline {
         if expectedGeneration && !IsCurrentRun(expectedGeneration) {
-            CloseInventoryAfterStorageFailure(State.lastStorageProbeResult)
+            fatalFailure := !CloseInventoryAfterStorageFailure(
+                State.lastStorageProbeResult)
             return false
         }
         if State.registrationActive && State.registrationCancelled {
-            CloseInventoryAfterStorageFailure(State.lastStorageProbeResult)
+            fatalFailure := !CloseInventoryAfterStorageFailure(
+                State.lastStorageProbeResult)
             return false
         }
         if !State.registrationActive && !State.running {
-            CloseInventoryAfterStorageFailure(State.lastStorageProbeResult)
+            fatalFailure := !CloseInventoryAfterStorageFailure(
+                State.lastStorageProbeResult)
             return false
         }
         capture := RunBridgeForContext(expectedGeneration, "capture-storage")
@@ -2354,7 +2901,13 @@ OpenStorageAndCapture(&storageId, &storageType, expectedGeneration := 0) {
         }
         Sleep 180
     }
-    CloseInventoryAfterStorageFailure(State.lastStorageProbeResult)
+    captureFailure := State.lastStorageProbeResult
+    cleanupOk := CloseInventoryAfterStorageFailure(captureFailure)
+    ; ボタンを押した後にtrunk identityを取得できない状態は、単なる候補なしでは
+    ; ありません。close成功時も次の移動へ進まず、このrunを安全停止します。
+    fatalFailure := true
+    WriteDiagnostic("STORAGE_CAPTURE_FATAL result=" captureFailure
+        " cleanup=" cleanupOk)
     return false
 }
 
@@ -2390,6 +2943,10 @@ ParseStorageCapture(result, &storageInfo) {
 
 DeleteVehicleRegistration(*) {
     global State, Config
+    DeleteLocalVehicleRegistration()
+    return
+
+    ; v7 companion implementation retained below only for migration compatibility.
     if State.running || State.registrationActive || !IsValidVehicleProfile(Config)
         return
     if !State.ui.HasOwnProp("deleteArmed") || !State.ui.deleteArmed {
@@ -2549,6 +3106,11 @@ IsSafeConfiguredHotkey(value) {
 CheckForUpdates(*) {
     global State
     ShowPage("update")
+    if State.registrationActive {
+        State.updatePageStatus.Text := "車両登録を中止してから更新してください。"
+        QueueWebUiFlush()
+        return
+    }
     if State.running {
         StopMining()
         ShowPage("update")
@@ -2565,6 +3127,11 @@ OpenUpdatePage(*) {
     global State
     ShowMainWindow()
     ShowPage("update")
+    if State.registrationActive {
+        State.updatePageStatus.Text := "車両登録中は更新を開始できません。"
+        QueueWebUiFlush()
+        return
+    }
     ; 起動時の静かな確認で見つかった更新も、利用者が画面の
     ; 「ダウンロードして更新」を押すまでは適用しません。
     if !State.updateVersion && !State.updateOperation
@@ -2574,6 +3141,11 @@ OpenUpdatePage(*) {
 BeginUpdateCheck(silent := false) {
     global State, AppVersion
 
+    if State.registrationActive {
+        if !silent
+            State.updatePageStatus.Text := "車両登録を中止してから更新してください。"
+        return
+    }
     if State.running {
         State.statusLabel.Text := "●  自動操作を停止してから更新してください"
         return
@@ -2933,12 +3505,7 @@ StartMining(*) {
             return
         }
         if !IsValidVehicleProfile(Config) {
-            State.statusLabel.Text := "ゲーム内連携から車両を登録してから開始してください"
-            ShowPage("vehicle")
-            return
-        }
-        if Config.vehicleWorkMode != Config.actionMode {
-            State.statusLabel.Text := "この作業用に車両を登録し直してください"
+            State.statusLabel.Text := "車両画面でストレージを登録してから開始してください"
             ShowPage("vehicle")
             return
         }
@@ -2965,7 +3532,7 @@ StartMining(*) {
         return
     }
     companionEpoch := ""
-    if Config.vehicleStorageEnabled {
+    if Config.vehicleStorageEnabled && Config.vehicleCompanionProtocol = 1 {
         if !QueryCompanionStatus(&preflightCompanion) {
             State.statusLabel.Text := "●  登録車両のゲーム内連携を確認できないため開始しません"
             ShowPage("vehicle")
@@ -3007,6 +3574,11 @@ StartMining(*) {
     ResetGoldRecoveryState()
     State.nextHungerCheckAt := 0
     State.nextEatAllowedAt := 0
+    State.nextBackgroundEatAt := MonotonicMs() + Config.backgroundFirstEatDelayMs
+    State.backgroundHungerUnknownLogged := false
+    State.backgroundEatFailures := 0
+    State.lastWorkViewAt := 0
+    State.workViewFailures := 0
     State.waitingForStone := false
     State.stoneGoneObserved := false
     State.stoneAbsentVotes := 0
@@ -3021,6 +3593,8 @@ StartMining(*) {
     State.inventoryBaseline := ""
     State.workpointProbeFailures := 0
     State.nextCapacityCheckAt := 0
+    State.storagePending := false
+    State.storageRecoveryAttempted := false
     State.capacityProbeFailures := 0
     State.serverEpoch := serverEpoch
     State.serverHealthFailures := 0
@@ -3063,9 +3637,29 @@ StartMining(*) {
         }
     }
 
-    if Config.vehicleStorageEnabled && IsCurrentRun(runGeneration) {
+    if Config.backgroundMode && (Config.autoEat || Config.vehicleStorageEnabled) {
+        State.automationPhase := "priming_inventory"
+        State.statusLabel.Text := "●  インベントリ状態を準備しています"
+        inventoryReady := EnsureBackgroundInventoryReady(runGeneration,
+            &primedInventory)
+        if !IsCurrentRun(runGeneration)
+            return
+        if !inventoryReady {
+            StopMining()
+            State.statusLabel.Text := "●  インベントリを確認できないため開始しませんでした"
+            WriteDiagnostic("INVENTORY_PRIME_FAILED")
+            return
+        }
+        State.automationPhase := "preparing"
+    }
+
+    if Config.vehicleStorageEnabled && Config.vehicleCompanionProtocol = 1
+        && IsCurrentRun(runGeneration) {
         State.statusLabel.Text := "現在の作業地点をゲーム内連携へ登録しています"
-        if !ProbeWorkTarget(State.runMode, runGeneration) {
+        workTargetPresent := ProbeWorkTarget(State.runMode, runGeneration)
+        if !IsCurrentRun(runGeneration)
+            return
+        if !workTargetPresent {
             StopMining()
             State.statusLabel.Text := "作業ボタンを確認できないため開始しませんでした"
             ShowPage("vehicle")
@@ -3114,6 +3708,12 @@ StartMining(*) {
             " max=" inventoryInfo.maxWeight " used=" inventoryInfo.used)
     }
 
+    if Config.vehicleStorageEnabled && Config.vehicleCompanionProtocol = 0
+        && IsCurrentRun(runGeneration) {
+        if !InitializeLocalVehicleRun(runGeneration)
+            return
+    }
+
     if !Config.backgroundMode && IsCurrentRun(runGeneration)
         && !WinActive("ahk_id " targetHwnd) {
         try WinActivate "ahk_id " targetHwnd
@@ -3126,7 +3726,7 @@ StartMining(*) {
 }
 
 StopMining(*) {
-    global State
+    global State, Config
 
     if State.registrationActive && !State.running {
         CancelVehicleRegistration()
@@ -3134,16 +3734,24 @@ StopMining(*) {
     }
 
     previousPhase := State.automationPhase
-    cancelCompanion := State.companionReady || State.companionEpoch
+    cancelCompanion := Config.vehicleCompanionProtocol = 1
+        && (State.companionReady || State.companionEpoch)
     State.running := false
     State.generation += 1
     State.automationPhase := "stopped"
     State.inventoryBaseline := ""
     State.capacityProbeFailures := 0
     State.workpointProbeFailures := 0
+    State.storagePending := false
+    State.storageRecoveryAttempted := false
     State.serverEpoch := ""
     State.serverHealthFailures := 0
     State.nextServerHealthAt := 0
+    State.nextBackgroundEatAt := 0
+    State.backgroundHungerUnknownLogged := false
+    State.backgroundEatFailures := 0
+    State.lastWorkViewAt := 0
+    State.workViewFailures := 0
     State.targetPid := 0
 
     if IsObject(State.timerFn) {
@@ -3156,8 +3764,10 @@ StopMining(*) {
         RunCompanionCommand("cancel")
     ReleaseAllInputs()
     ReleaseBackgroundTarget(true)
-    ; 収納中の停止はUIを閉じ、bridge側の次スタック処理もfail-closedさせます。
-    if previousPhase = "depositing"
+    ; 車両探索・収納・復帰中の停止はUIを閉じ、移動入力もfail-closedさせます。
+    if previousPhase = "find_registered_vehicle" || previousPhase = "depositing"
+        || previousPhase = "return_to_work" || previousPhase = "verify_workpoint"
+        || previousPhase = "priming_inventory" || previousPhase = "eating"
         RunBackgroundBridge("close-inventory")
     State.companionEpoch := ""
     State.companionHealthFailures := 0
@@ -3174,7 +3784,8 @@ SetConfigurationEnabled(enabled) {
     global State
     for control in [State.startHotkeyControl, State.stopHotkeyControl,
         State.backgroundControl, State.hideControl,
-        State.washCorrectionControl, State.autoUpdateControl, State.vehicleEnabledControl,
+        State.washCorrectionControl, State.autoEatControl, State.foodKeyControl,
+        State.autoUpdateControl, State.vehicleEnabledControl,
         State.vehicleRegisterButton, State.vehicleNameEdit,
         State.minimumFreeWeightControl] {
         try control.Enabled := enabled
@@ -3230,6 +3841,8 @@ ValidateServerEpochCheckpoint(expectedGeneration, checkpoint) {
 
 ValidateCompanionEpochCheckpoint(expectedGeneration, checkpoint) {
     global State, Config
+    if Config.vehicleCompanionProtocol = 0
+        return true
     if !Config.vehicleStorageEnabled
         return true
     if !IsCurrentRun(expectedGeneration) || !State.companionEpoch
@@ -3281,7 +3894,7 @@ MaybeHandleServerHealth(expectedGeneration) {
         }
         State.serverEpoch := epoch
         State.serverHealthFailures := 0
-        if Config.vehicleStorageEnabled {
+        if Config.vehicleStorageEnabled && Config.vehicleCompanionProtocol = 1 {
             if QueryCompanionStatus(&companionInfo, State.companionEpoch,
                 expectedGeneration) {
                 State.companionHealthFailures := 0
@@ -3332,7 +3945,7 @@ MaybeHandleVehicleCapacity(expectedGeneration) {
     if !Config.vehicleStorageEnabled || !IsCurrentRun(expectedGeneration)
         return false
     now := MonotonicMs()
-    if now < State.nextCapacityCheckAt
+    if !State.storagePending && now < State.nextCapacityCheckAt
         return false
     State.nextCapacityCheckAt := now + Config.capacityCheckIntervalMs
     State.automationPhase := "capacity_check"
@@ -3355,9 +3968,17 @@ MaybeHandleVehicleCapacity(expectedGeneration) {
     UpdateInventoryCapacityState(inventoryInfo)
     needsStorage := CapacityNeedsStorage(inventoryInfo, &capacityReason, &freeWeight)
     if !needsStorage {
+        State.storagePending := false
+        State.storageRecoveryAttempted := false
         State.automationPhase := "working"
         return false
     }
+    if !State.storagePending {
+        State.storagePending := true
+        State.storageRecoveryAttempted := false
+    }
+    ; 一度容量不足になったら、収納完了または停止まで通常の採集へ戻しません。
+    State.nextCapacityCheckAt := 0
     if !InventorySpecHasIncrease(inventoryInfo.items, State.inventoryBaseline) {
         StopAutomationWithFault("開始前の持ち物で容量が不足しています。所持品を整理してください", "vehicle")
         return true
@@ -3367,26 +3988,73 @@ MaybeHandleVehicleCapacity(expectedGeneration) {
     WriteDiagnostic("VEHICLE_CAPACITY_TRIGGER reason=" capacityReason
         " weight=" inventoryInfo.weight " max=" inventoryInfo.maxWeight
         " free=" freeWeight " used=" inventoryInfo.used " slots=" inventoryInfo.slots)
-    if !ProbeWorkTarget(State.runMode, expectedGeneration) {
-        ; 再出現待ちや洗浄・砂金の位置ずれ中には車両移動を始めません。
-        ; 容量不足中は追加採集も止めたまま作業対象を再確認します。
-        State.workpointProbeFailures += 1
-        State.nextCapacityCheckAt := 0
-        State.automationPhase := "verify_workpoint"
-        State.statusLabel.Text := "収納前に現在の作業位置を確認中（"
-            State.workpointProbeFailures "/10）"
-        WriteDiagnostic("VEHICLE_WORKPOINT_PENDING attempt=" State.workpointProbeFailures)
-        if State.workpointProbeFailures >= 10 {
-            StopAutomationWithFault("現在の作業位置を確認できないため安全停止しました", "vehicle")
+    ; 容量到達時も先に視点を作業方向へ戻します。通常cycleより前にreturnする
+    ; 経路なので、ここで強制しないと視点ずれを対象消失と誤認します。
+    if !MaintainBackgroundWorkView(expectedGeneration, true)
+        return true
+    workTargetPresent := ProbeWorkTarget(State.runMode, expectedGeneration)
+    if !IsCurrentRun(expectedGeneration)
+        return true
+    if !workTargetPresent {
+        if State.lastTargetProbeFatal {
+            StopAutomationWithFault(
+                "収納前の作業対象を安全に確認できないため停止しました", "vehicle")
             return true
         }
-        ScheduleNext(expectedGeneration, 850)
-        return true
+        cooldownRemaining := WorkTargetCooldownRemainingMs()
+        if cooldownRemaining > 0 {
+            State.automationPhase := "verify_workpoint"
+            State.statusLabel.Text := "収納前に作業ボタンの再表示を待っています"
+            ScheduleNext(expectedGeneration, Min(850, cooldownRemaining))
+            return true
+        }
+        if !State.storageRecoveryAttempted {
+            State.storageRecoveryAttempted := true
+            workTargetPresent := RecoverLocalWorkTarget(expectedGeneration)
+            if !IsCurrentRun(expectedGeneration)
+                return true
+            if !workTargetPresent && State.lastTargetProbeFatal {
+                StopAutomationWithFault(
+                    "収納前の作業対象を安全に再確認できないため停止しました", "vehicle")
+                return true
+            }
+        }
+        if workTargetPresent {
+            State.workpointProbeFailures := 0
+        } else {
+        ; 再出現待ちや洗浄・砂金の位置ずれ中には車両移動を始めません。
+        ; 容量不足中は追加採集も止めたまま作業対象を再確認します。
+            State.workpointProbeFailures += 1
+            State.nextCapacityCheckAt := 0
+            State.automationPhase := "verify_workpoint"
+            State.statusLabel.Text := "収納前に現在の作業位置を確認中（"
+                State.workpointProbeFailures "/10）"
+            WriteDiagnostic("VEHICLE_WORKPOINT_PENDING attempt="
+                State.workpointProbeFailures)
+            if State.workpointProbeFailures >= 10 {
+                StopAutomationWithFault(
+                    "現在の作業位置を確認できないため安全停止しました", "vehicle")
+                return true
+            }
+            ScheduleNext(expectedGeneration, 850)
+            return true
+        }
     }
     State.workpointProbeFailures := 0
+    State.storageRecoveryAttempted := false
     State.timerFn := 0
     RunVehicleStorageCycle(expectedGeneration)
     return true
+}
+
+WorkTargetCooldownRemainingMs() {
+    global State, Config
+    if !State.lastMineAt
+        return 0
+    cooldownMs := State.runMode = "washing" ? Config.washCycleMs + 750
+        : State.runMode = "gold" ? Config.goldCycleMs + 750
+        : Config.stoneResyncAfterMs
+    return Max(0, State.lastMineAt + cooldownMs - MonotonicMs())
 }
 
 CapacityNeedsStorage(inventoryInfo, &reason, &freeWeight) {
@@ -3459,6 +4127,29 @@ IsValidInventorySpec(spec) {
     return true
 }
 
+InventorySpecSlotState(spec, slotNumber, &itemKey, &itemCount) {
+    itemKey := ""
+    itemCount := 0
+    if slotNumber < 1 || slotNumber > 1000 || !IsValidInventorySpec(spec)
+        return false
+    for row in InventorySpecToRows(spec) {
+        if row.slot != slotNumber
+            continue
+        itemKey := row.key
+        itemCount := row.count
+        return true
+    }
+    return false
+}
+
+InventorySlotWasConsumed(beforeSpec, afterSpec, slotNumber) {
+    if !InventorySpecSlotState(beforeSpec, slotNumber, &beforeKey, &beforeCount)
+        return false
+    if !InventorySpecSlotState(afterSpec, slotNumber, &afterKey, &afterCount)
+        return true
+    return StrCompare(beforeKey, afterKey, true) = 0 && afterCount < beforeCount
+}
+
 InventorySpecHasIncrease(currentSpec, baselineSpec) {
     currentRows := InventorySpecToRows(currentSpec)
     baselineRows := InventorySpecToRows(baselineSpec)
@@ -3529,8 +4220,457 @@ InventorySpecToRows(spec) {
     return rows
 }
 
+InitializeLocalVehicleRun(expectedGeneration) {
+    global State, Config
+    State.statusLabel.Text := "作業位置と満重量判定を確認しています"
+    workTargetPresent := ProbeWorkTarget(State.runMode, expectedGeneration)
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    if !workTargetPresent {
+        StopMining()
+        State.statusLabel.Text := "作業ボタンを確認できないため開始しませんでした"
+        ShowPage("vehicle")
+        return false
+    }
+    epochValid := ValidateServerEpochCheckpoint(expectedGeneration, "local_work_start")
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    if !epochValid {
+        StopMining()
+        State.statusLabel.Text := "接続状態が変わったため開始しませんでした"
+        ShowPage("vehicle")
+        return false
+    }
+
+    State.statusLabel.Text := "開始前の所持品を保護しています"
+    snapshotResult := RunBackgroundBridgeCancelable(expectedGeneration, "inventory-snapshot")
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    if !ParseInventorySnapshot(snapshotResult, &inventoryInfo) {
+        WriteDiagnostic("LOCAL_INVENTORY_BASELINE_ERROR=" snapshotResult)
+        StopMining()
+        State.statusLabel.Text := "インベントリ状態を取得できないため開始しませんでした"
+        ShowPage("vehicle")
+        return false
+    }
+    State.inventoryBaseline := inventoryInfo.items
+    UpdateInventoryCapacityState(inventoryInfo)
+    if CapacityNeedsStorage(inventoryInfo, &startReason, &startFreeWeight) {
+        WriteDiagnostic("LOCAL_INVENTORY_START_CAPACITY reason=" startReason
+            " free=" startFreeWeight)
+        StopMining()
+        State.statusLabel.Text := startReason = "weight"
+            ? "開始前から残り重量が少ないため、所持品を整理してください"
+            : "開始前から空きスロットがないため、所持品を整理してください"
+        ShowPage("vehicle")
+        return false
+    }
+    State.nextCapacityCheckAt := MonotonicMs() + Config.capacityCheckIntervalMs
+    WriteDiagnostic("LOCAL_INVENTORY_BASELINE weight=" inventoryInfo.weight
+        " max=" inventoryInfo.maxWeight " used=" inventoryInfo.used
+        " slots=" inventoryInfo.slots)
+    return true
+}
+
+RunLocalVehicleStorageCycle(expectedGeneration) {
+    global State, Config
+    if !IsCurrentRun(expectedGeneration)
+        return
+
+    State.automationPhase := "find_registered_vehicle"
+    State.statusLabel.Text := "近くの登録車両を探しています"
+    WriteDiagnostic("LOCAL_STORAGE_TRIP_START trip=" (State.storageTrips + 1))
+    epochValid := ValidateServerEpochCheckpoint(expectedGeneration,
+        "local_vehicle_departure")
+    if !IsCurrentRun(expectedGeneration)
+        return
+    if !epochValid {
+        StopAutomationWithFault("移動前の接続状態が変わったため安全停止しました", "vehicle")
+        return
+    }
+
+    movementHistory := []
+    matchedViewRoute := ""
+    try storageFound := FindRegisteredStorageNearby(expectedGeneration, &movementHistory,
+        &matchedViewRoute, &searchFailure)
+    catch as err {
+        storageFound := false
+        searchFailure := "登録車両の探索中にエラーが発生しました"
+        WriteDiagnostic("LOCAL_STORAGE_SEARCH_ERROR=" err.Message)
+    }
+    if !IsCurrentRun(expectedGeneration)
+        return
+    if !storageFound {
+        cleanupOk := CloseLocalStorageUi()
+        if !cleanupOk
+            searchFailure := "探索画面を安全に閉じられないため停止しました"
+        if IsCurrentRun(expectedGeneration)
+            StopAutomationWithFault(searchFailure ? searchFailure
+                : "近くに登録車両を確認できませんでした", "vehicle")
+        return
+    }
+
+    depositOk := false
+    failureMessage := ""
+    closeResult := ""
+    releaseOk := false
+    try {
+        epochValid := ValidateServerEpochCheckpoint(expectedGeneration,
+            "local_before_deposit")
+        if !IsCurrentRun(expectedGeneration) {
+            failureMessage := ""
+        } else if !epochValid {
+            failureMessage := "収納直前に接続状態が変わったため停止しました"
+        } else {
+            State.automationPhase := "depositing"
+            State.statusLabel.Text := "開始後に増えた持ち物だけを収納しています"
+            depositResult := RunBackgroundBridgeCancelable(expectedGeneration,
+                "deposit-delta", Config.vehicleStorageId,
+                Config.vehicleStorageType, State.inventoryBaseline)
+            if RegExMatch(depositResult, "^DEPOSITED (\d+) (\d+)$", &depositParts)
+                && depositParts[1] + 0 > 0 {
+                postResult := RunBackgroundBridgeCancelable(expectedGeneration,
+                    "inventory-snapshot")
+                if !ParseInventorySnapshot(postResult, &postInfo)
+                    || InventorySpecHasIncrease(postInfo.items, State.inventoryBaseline) {
+                    failureMessage := "収納後の所持品を確認できなかったため停止します"
+                    WriteDiagnostic("LOCAL_DEPOSIT_VERIFY_ERROR=" postResult)
+                } else {
+                    State.inventoryBaseline := postInfo.items
+                    UpdateInventoryCapacityState(postInfo)
+                    depositOk := true
+                    State.lastStorageResult := depositParts[1] "個を収納"
+                    WriteDiagnostic("LOCAL_DEPOSIT count=" depositParts[1]
+                        " stacks=" depositParts[2])
+                }
+            } else {
+                failureMessage := DepositFailureMessage(depositResult)
+                WriteDiagnostic("LOCAL_DEPOSIT_ERROR=" depositResult)
+            }
+        }
+    } catch as err {
+        failureMessage := "収納処理でエラーが発生しました"
+        WriteDiagnostic("LOCAL_STORAGE_CYCLE_ERROR=" err.Message)
+    } finally {
+        releaseOk := ReleaseBackgroundTarget(true)
+        closeResult := RunBackgroundBridge("close-inventory")
+    }
+
+    if !IsCurrentRun(expectedGeneration)
+        return
+    cleanupOk := releaseOk && closeResult = "CLOSED"
+    if !cleanupOk
+        cleanupOk := CloseLocalStorageUi()
+    if !cleanupOk {
+        WriteDiagnostic("LOCAL_STORAGE_CLOSE_ERROR=" closeResult)
+        StopAutomationWithFault("インベントリを安全に閉じられないため停止しました", "vehicle")
+        return
+    }
+    State.automationPhase := "return_to_work"
+    State.statusLabel.Text := "作業位置へ戻っています"
+    poseRestored := RestoreLocalSearchPose(expectedGeneration, movementHistory,
+        matchedViewRoute)
+    if !IsCurrentRun(expectedGeneration)
+        return
+    if !poseRestored {
+        StopAutomationWithFault("作業位置へ安全に戻れないため停止しました", "vehicle")
+        return
+    }
+    epochValid := ValidateServerEpochCheckpoint(expectedGeneration, "local_work_return")
+    if !IsCurrentRun(expectedGeneration)
+        return
+    if !epochValid {
+        StopAutomationWithFault("収納中のサーバー再起動または再接続を検知しました", "vehicle")
+        return
+    }
+
+    State.automationPhase := "verify_workpoint"
+    State.statusLabel.Text := "作業ボタンを再確認しています"
+    workRecovered := RecoverLocalWorkTarget(expectedGeneration)
+    if !IsCurrentRun(expectedGeneration)
+        return
+    if !workRecovered {
+        StopAutomationWithFault("作業位置を再検出できないため再開しません", "vehicle")
+        return
+    }
+    if !depositOk {
+        StopAutomationWithFault(failureMessage ? failureMessage
+            : "収納できなかったため停止しました", "vehicle")
+        return
+    }
+
+    State.storageTrips += 1
+    State.vehicleTripLabel.Text := "自動収納`n" State.storageTrips
+    State.waitingForStone := false
+    State.stoneGoneObserved := false
+    State.stoneAbsentVotes := 0
+    State.stoneReadyVotes := 0
+    State.lastMineAt := 0
+    ResetGoldRecoveryState()
+    State.nextCapacityCheckAt := MonotonicMs() + Config.capacityCheckIntervalMs
+    State.workpointProbeFailures := 0
+    State.storagePending := false
+    State.storageRecoveryAttempted := false
+    State.automationPhase := "working"
+    State.statusLabel.Text := "収納完了。作業を再開します"
+    WriteDiagnostic("LOCAL_STORAGE_TRIP_COMPLETE trip=" State.storageTrips)
+    ScheduleNext(expectedGeneration, 900)
+}
+
+FindRegisteredStorageNearby(expectedGeneration, &movementHistory,
+    &matchedViewRoute, &failureMessage) {
+    global State, Config
+    movementHistory := []
+    matchedViewRoute := ""
+    failureMessage := ""
+
+    primaryViews := ["", "520:16", "420:80", "420:144",
+        "700:64", "700:128", "1000:64", "1000:128"]
+    if TryRegisteredStorageViews(expectedGeneration, primaryViews,
+        &matchedViewRoute, &viewFailure, &fatalFailure)
+        return true
+    if fatalFailure {
+        ; 解放・close・bridgeの結果が不確定なときは、追加の視点/移動入力を
+        ; 一切送らず停止します。復元を試す方がNUIへ入力される危険があります。
+        failureMessage := viewFailure
+            ? viewFailure : "探索画面を安全に閉じられないため停止しました"
+        return false
+    }
+
+    pulse := Config.vehicleSearchPulseMs
+    movementSteps := [(pulse * 2) ":2", (pulse * 2) ":4",
+        (pulse * 4) ":1", (pulse * 4) ":8", (pulse * 4) ":2"]
+    nearbyViews := ["", "520:16", "440:80", "440:144", "820:16"]
+    for movementRoute in movementSteps {
+        State.statusLabel.Text := "登録車両を近距離で再探索しています ("
+            . A_Index "/" movementSteps.Length ")"
+        if !PlayLocalRoute(expectedGeneration, movementRoute) {
+            failureMessage := "車両探索の移動を確認できないため安全停止しました"
+            return false
+        }
+        movementHistory.Push(movementRoute)
+        if TryRegisteredStorageViews(expectedGeneration, nearbyViews,
+            &matchedViewRoute, &viewFailure, &fatalFailure)
+            return true
+        if fatalFailure {
+            failureMessage := viewFailure
+                ? viewFailure : "探索画面を安全に閉じられないため停止しました"
+            return false
+        }
+    }
+
+    restored := RestoreLocalSearchPose(expectedGeneration, movementHistory, "")
+    movementHistory := []
+    if !restored {
+        failureMessage := "登録車両を見つけられず、元の位置も確認できないため停止しました"
+        return false
+    }
+    failureMessage := "近くに登録した車両のストレージを確認できませんでした"
+    return false
+}
+
+TryRegisteredStorageViews(expectedGeneration, viewCandidates,
+    &matchedViewRoute, &failureMessage, &fatalFailure) {
+    global State, Config
+    matchedViewRoute := ""
+    failureMessage := ""
+    fatalFailure := false
+    sawDifferentStorage := false
+
+    for candidateRoute in viewCandidates {
+        if candidateRoute && !PlayLocalRoute(expectedGeneration, candidateRoute) {
+            fatalFailure := true
+            failureMessage := "車両を探す視点操作を確認できないため安全停止しました"
+            return false
+        }
+
+        opened := OpenStorageAndCapture(&storageId, &storageType,
+            expectedGeneration, &probeFatal)
+        if opened && storageId = Config.vehicleStorageId
+            && storageType = Config.vehicleStorageType {
+            matchedViewRoute := candidateRoute
+            WriteDiagnostic("LOCAL_REGISTERED_STORAGE_FOUND positionView=" A_Index)
+            return true
+        }
+        if opened {
+            sawDifferentStorage := true
+            WriteDiagnostic("LOCAL_STORAGE_MISMATCH ignored=1")
+            if !CloseLocalStorageUi() {
+                matchedViewRoute := candidateRoute
+                fatalFailure := true
+                failureMessage := "別の車両を閉じられないため安全停止しました"
+                return false
+            }
+        }
+        if probeFatal {
+            fatalFailure := true
+            failureMessage := "荷台を安全に確認できないため停止しました"
+            WriteDiagnostic("LOCAL_STORAGE_PROBE_FATAL result="
+                State.lastStorageProbeResult)
+            return false
+        }
+
+        if candidateRoute && !PlayLocalRoute(expectedGeneration,
+            ReverseLocalRoute(candidateRoute)) {
+            fatalFailure := true
+            failureMessage := "探索した視点を元に戻せないため安全停止しました"
+        }
+        if fatalFailure
+            return false
+    }
+
+    failureMessage := sawDifferentStorage
+        ? "登録車両とは異なるストレージだけを検出しました"
+        : "登録車両のストレージが見つかりません"
+    return false
+}
+
+CloseLocalStorageUi() {
+    released := ReleaseBackgroundTarget(true)
+    closeResult := RunBackgroundBridge("close-inventory")
+    if closeResult != "CLOSED" {
+        Sleep 100
+        closeResult := RunBackgroundBridge("close-inventory")
+    }
+    return released && closeResult = "CLOSED"
+}
+
+PlayLocalRoute(expectedGeneration, route) {
+    global State
+    if !IsCurrentRun(expectedGeneration) || !route || !State.serverEpoch
+        return false
+    if !EnsureDevConPort()
+        return false
+    port := State.lastDevConPort
+    result := RunBackgroundBridgeCancelable(expectedGeneration,
+        "play-route-health", port, route, State.serverEpoch)
+    routeOk := result = "ROUTE " port " " RouteTotalMs(route, false)
+    WriteDiagnostic("LOCAL_ROUTE route=" route " result=" result)
+    if !routeOk
+        State.lastDevConPort := 0
+    return routeOk
+}
+
+ReverseLocalRoute(route) {
+    segments := StrSplit(route, ",")
+    reversed := ""
+    Loop segments.Length {
+        segment := segments[segments.Length - A_Index + 1]
+        if !RegExMatch(segment, "^(\d+):(\d+)$", &parts)
+            return ""
+        oppositeMask := OppositeLocalInputMask(parts[2] + 0)
+        reversed .= (reversed ? "," : "") parts[1] ":" oppositeMask
+    }
+    return reversed
+}
+
+OppositeLocalInputMask(mask) {
+    opposite := 0
+    if mask & 1
+        opposite |= 2
+    if mask & 2
+        opposite |= 1
+    if mask & 4
+        opposite |= 8
+    if mask & 8
+        opposite |= 4
+    if mask & 16
+        opposite |= 32
+    if mask & 32
+        opposite |= 16
+    if mask & 64
+        opposite |= 128
+    if mask & 128
+        opposite |= 64
+    return opposite
+}
+
+JoinLocalRoutes(routes) {
+    result := ""
+    for route in routes {
+        if route
+            result .= (result ? "," : "") route
+    }
+    return result
+}
+
+RestoreLocalSearchPose(expectedGeneration, movementHistory, matchedViewRoute) {
+    if matchedViewRoute {
+        inverseView := ReverseLocalRoute(matchedViewRoute)
+        if !inverseView || !PlayLocalRoute(expectedGeneration, inverseView)
+            return false
+    }
+    movementRoute := JoinLocalRoutes(movementHistory)
+    if movementRoute {
+        inverseMovement := ReverseLocalRoute(movementRoute)
+        if !inverseMovement || !PlayLocalRoute(expectedGeneration, inverseMovement)
+            return false
+    }
+    ; 作業は真下向きで安定するため、相対復元後に下限へ寄せて誤差を消します。
+    if IsCurrentRun(expectedGeneration) {
+        if !PlayLocalRoute(expectedGeneration, "900:32")
+            return false
+    }
+    return true
+}
+
+RecoverLocalWorkTarget(expectedGeneration) {
+    global State, Config
+    workTargetPresent := ProbeWorkTarget(State.runMode, expectedGeneration)
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    if workTargetPresent
+        return true
+    if State.lastTargetProbeFatal {
+        WriteDiagnostic("LOCAL_WORK_PROBE_FATAL result=" State.lastTargetProbeResult)
+        return false
+    }
+
+    pulse := Max(120, Min(250, Config.vehicleSearchPulseMs))
+    correctionSteps := [pulse ":1", (pulse * 2) ":2", pulse ":1",
+        pulse ":4", (pulse * 2) ":8", pulse ":4"]
+    for route in correctionSteps {
+        movementOk := PlayLocalRoute(expectedGeneration, route)
+        if !IsCurrentRun(expectedGeneration)
+            return false
+        if !movementOk {
+            State.lastTargetProbeFatal := true
+            State.lastTargetProbeResult := "ERROR RECOVERY_ROUTE"
+            return false
+        }
+        viewOk := PlayLocalRoute(expectedGeneration, "650:32")
+        if !IsCurrentRun(expectedGeneration)
+            return false
+        if !viewOk {
+            State.lastTargetProbeFatal := true
+            State.lastTargetProbeResult := "ERROR RECOVERY_VIEW"
+            return false
+        }
+        workTargetPresent := ProbeWorkTarget(State.runMode, expectedGeneration)
+        if !IsCurrentRun(expectedGeneration)
+            return false
+        if workTargetPresent {
+            State.nudges += 1
+            State.mealLabel.Text := State.runMode = "washing"
+                ? "後退補正`n" State.nudges : "位置補正`n" State.nudges
+            WriteDiagnostic("LOCAL_WORK_RECOVERED step=" A_Index)
+            return true
+        }
+        if State.lastTargetProbeFatal {
+            WriteDiagnostic("LOCAL_WORK_RECOVERY_PROBE_FATAL result="
+                State.lastTargetProbeResult)
+            return false
+        }
+    }
+    return false
+}
+
 RunVehicleStorageCycle(expectedGeneration) {
     global State, Config
+    RunLocalVehicleStorageCycle(expectedGeneration)
+    return
+
+    ; v7 companion implementation retained below only for migration compatibility.
     State.automationPhase := "navigate_vehicle"
     State.statusLabel.Text := "登録車両の現在位置へ移動しています"
     WriteDiagnostic("VEHICLE_TRIP_START trip=" (State.storageTrips + 1))
@@ -3650,7 +4790,10 @@ RunVehicleStorageCycle(expectedGeneration) {
 
     State.automationPhase := "verify_workpoint"
     State.statusLabel.Text := "作業位置を確認しています"
-    if !ProbeWorkTarget(State.runMode, expectedGeneration) {
+    workTargetPresent := ProbeWorkTarget(State.runMode, expectedGeneration)
+    if !IsCurrentRun(expectedGeneration)
+        return
+    if !workTargetPresent {
         StopAutomationWithFault("復帰位置で作業ボタンを確認できないため再開しません", "vehicle")
         return
     }
@@ -3670,6 +4813,8 @@ RunVehicleStorageCycle(expectedGeneration) {
     ResetGoldRecoveryState()
     State.nextCapacityCheckAt := MonotonicMs() + Config.capacityCheckIntervalMs
     State.workpointProbeFailures := 0
+    State.storagePending := false
+    State.storageRecoveryAttempted := false
     State.automationPhase := "working"
     State.statusLabel.Text := "収納完了。作業を再開します"
     WriteDiagnostic("VEHICLE_TRIP_COMPLETE trip=" State.storageTrips)
@@ -3718,7 +4863,7 @@ DepositFailureMessage(result) {
     if InStr(result, "STORAGE_FULL")
         return "車両ストレージの容量が足りません"
     if InStr(result, "NO_DELTA")
-        return "今回増えた採集品を確認できませんでした"
+        return "開始後に増えた持ち物を確認できませんでした"
     if InStr(result, "NO_PROGRESS")
         return "収納結果を確認できなかったため停止しました"
     return "車両ストレージへ収納できませんでした"
@@ -3733,6 +4878,86 @@ StopAutomationWithFault(message, pageName := "overview") {
     ShowMainWindow()
 }
 
+EnsureBackgroundInventoryReady(expectedGeneration, &inventoryInfo) {
+    global State
+    inventoryInfo := 0
+    snapshotResult := RunBackgroundBridgeCancelable(expectedGeneration,
+        "inventory-snapshot")
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    snapshotReady := ParseInventorySnapshot(snapshotResult, &inventoryInfo)
+
+    ; 開いたままのinventoryを持ち越さず、初期化済みの場合も閉状態を保証します。
+    closeResult := RunBackgroundBridgeCancelable(expectedGeneration, "close-inventory")
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    if closeResult != "CLOSED" {
+        WriteDiagnostic("INVENTORY_PRIME_CLOSE_ERROR=" closeResult)
+        return false
+    }
+    if !snapshotReady {
+        ; 未初期化だけを開き直します。通信・解析エラーを「未初期化」と
+        ; 誤認してキーを送ると、開いていたinventoryを反転させるため危険です。
+        if snapshotResult != "ERROR INVENTORY_UNAVAILABLE" {
+            WriteDiagnostic("INVENTORY_PRIME_SNAPSHOT_ERROR=" snapshotResult)
+            return false
+        }
+        portReady := EnsureDevConPort()
+        if !IsCurrentRun(expectedGeneration)
+            return false
+        if !portReady {
+            WriteDiagnostic("INVENTORY_PRIME_PORT_ERROR")
+            return false
+        }
+        port := State.lastDevConPort
+        pressResult := RunBackgroundBridgeCancelable(expectedGeneration,
+            "press-inventory", port, 80)
+        if !IsCurrentRun(expectedGeneration)
+            return false
+        if pressResult != "INVENTORY " port {
+            WriteDiagnostic("INVENTORY_PRIME_KEY_ERROR=" pressResult)
+            State.lastDevConPort := 0
+            if IsCurrentRun(expectedGeneration)
+                RunBackgroundBridgeCancelable(expectedGeneration, "close-inventory")
+            return false
+        }
+        if !WaitWhileBackgroundReady(900, expectedGeneration) {
+            if IsCurrentRun(expectedGeneration)
+                RunBackgroundBridgeCancelable(expectedGeneration, "close-inventory")
+            return false
+        }
+
+        deadline := MonotonicMs() + 4000
+        snapshotReady := false
+        while MonotonicMs() < deadline {
+            snapshotResult := RunBackgroundBridgeCancelable(expectedGeneration,
+                "inventory-snapshot")
+            if !IsCurrentRun(expectedGeneration)
+                return false
+            if ParseInventorySnapshot(snapshotResult, &inventoryInfo) {
+                snapshotReady := true
+                break
+            }
+            Sleep 160
+        }
+        closeResult := RunBackgroundBridgeCancelable(expectedGeneration,
+            "close-inventory")
+        if !IsCurrentRun(expectedGeneration)
+            return false
+        if closeResult != "CLOSED" {
+            WriteDiagnostic("INVENTORY_PRIME_FINAL_CLOSE_ERROR=" closeResult)
+            return false
+        }
+    }
+    epochValid := ValidateServerEpochCheckpoint(expectedGeneration,
+        "inventory_prime")
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    WriteDiagnostic("INVENTORY_PRIME ready=" snapshotReady
+        " epoch=" epochValid " snapshot=" snapshotResult)
+    return snapshotReady && epochValid
+}
+
 AutomationCycle(expectedGeneration) {
     global State
     if !IsCurrentRun(expectedGeneration)
@@ -3741,12 +4966,234 @@ AutomationCycle(expectedGeneration) {
         return
     if MaybeHandleVehicleCapacity(expectedGeneration)
         return
+    if !MaintainBackgroundWorkView(expectedGeneration)
+        return
+    if MaybeHandleBackgroundEating(expectedGeneration)
+        return
     if State.runMode = "washing"
         WashAttemptBackground(expectedGeneration)
     else if State.runMode = "gold"
         GoldAttemptBackground(expectedGeneration)
     else
         MineAttempt(expectedGeneration)
+}
+
+WorkViewDownRoute(pulseMs) {
+    pulse := Round(pulseMs)
+    return pulse >= 100 && pulse <= 1500 ? pulse ":32" : ""
+}
+
+MaintainBackgroundWorkView(expectedGeneration, force := false) {
+    global State, Config
+    if !Config.backgroundMode || !Config.workViewLock
+        return true
+    now := MonotonicMs()
+    if !force && State.lastWorkViewAt
+        && now - State.lastWorkViewAt < Config.workViewIntervalMs
+        return true
+    route := WorkViewDownRoute(Config.workViewDownPulseMs)
+    portReady := route ? EnsureDevConPort() : false
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    if !route || !portReady {
+        State.workViewFailures += 1
+        WriteDiagnostic("WORK_VIEW_PORT_ERROR failures=" State.workViewFailures)
+        if State.workViewFailures >= 3 {
+            StopAutomationWithFault(
+                "作業視点を確認できないため3回失敗後に安全停止しました")
+            return false
+        }
+        State.statusLabel.Text := "●  作業視点を再接続中"
+        ScheduleNext(expectedGeneration, Config.notFoundRetryMs)
+        return false
+    }
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    port := State.lastDevConPort
+    viewResult := RunBackgroundBridgeCancelable(expectedGeneration,
+        "play-route-health", port, route, State.serverEpoch)
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    if viewResult != "ROUTE " port " " Config.workViewDownPulseMs {
+        State.workViewFailures += 1
+        State.lastDevConPort := 0
+        WriteDiagnostic("WORK_VIEW_ERROR result=" viewResult
+            " failures=" State.workViewFailures)
+        if State.workViewFailures >= 3 {
+            StopAutomationWithFault(
+                "作業視点を固定できないため3回失敗後に安全停止しました")
+            return false
+        }
+        State.statusLabel.Text := "●  作業視点を再調整中"
+        ScheduleNext(expectedGeneration, Config.notFoundRetryMs)
+        return false
+    }
+    State.lastWorkViewAt := MonotonicMs()
+    State.workViewFailures := 0
+    WriteDiagnostic("WORK_VIEW_DOWN pulse=" Config.workViewDownPulseMs
+        " mode=" State.runMode)
+    return true
+}
+
+MaybeHandleBackgroundEating(expectedGeneration) {
+    global State, Config
+    if !Config.backgroundMode || !Config.autoEat || !IsCurrentRun(expectedGeneration)
+        return false
+
+    now := MonotonicMs()
+    hungerKnown := false
+    hungerLow := false
+    if (!State.nextHungerCheckAt || now >= State.nextHungerCheckAt)
+        && WinActive("ahk_id " State.targetHwnd) {
+        State.nextHungerCheckAt := now + Config.hungerCheckIntervalMs
+        hungerKnown := ReadForegroundHungerConfirmed(expectedGeneration, &hungerLow)
+        if hungerKnown {
+            State.backgroundHungerUnknownLogged := false
+            if !hungerLow {
+                ; A visible full gauge is stronger evidence than the time fallback.
+                State.backgroundEatFailures := 0
+                State.nextBackgroundEatAt := now + Config.backgroundEatIntervalMs
+                return false
+            }
+        }
+    }
+
+    fallbackDue := Config.backgroundEatFallback
+        && State.nextBackgroundEatAt && now >= State.nextBackgroundEatAt
+    if !hungerLow && !fallbackDue {
+        if !hungerKnown && !State.backgroundHungerUnknownLogged {
+            State.backgroundHungerUnknownLogged := true
+            WriteDiagnostic("HUNGER_BACKGROUND_UNKNOWN fallbackAt="
+                State.nextBackgroundEatAt)
+        }
+        return false
+    }
+    if State.nextEatAllowedAt && now < State.nextEatAllowedAt
+        return false
+
+    cooldownRemaining := WorkTargetCooldownRemainingMs()
+    if cooldownRemaining > 0 {
+        State.statusLabel.Text := "●  作業完了後に食事します"
+        ScheduleNext(expectedGeneration, Min(750, cooldownRemaining))
+        return true
+    }
+    workTargetPresent := ProbeWorkTarget(State.runMode, expectedGeneration)
+    if !IsCurrentRun(expectedGeneration)
+        return true
+    if !workTargetPresent {
+        if State.lastTargetProbeFatal {
+            StopAutomationWithFault("食事前の作業位置を安全に確認できないため停止しました")
+            return true
+        }
+        State.statusLabel.Text := "●  作業ボタンの再表示後に食事します"
+        ScheduleNext(expectedGeneration, Config.notFoundRetryMs)
+        return true
+    }
+
+    reason := hungerLow ? "gauge" : "periodic"
+    State.automationPhase := "eating"
+    eatResult := PerformBackgroundEating(expectedGeneration, reason)
+    if !IsCurrentRun(expectedGeneration)
+        return true
+    State.automationPhase := "working"
+    if eatResult {
+        State.backgroundEatFailures := 0
+        State.nextBackgroundEatAt := MonotonicMs() + Config.backgroundEatIntervalMs
+        State.nextEatAllowedAt := MonotonicMs() + Config.eatCooldownMs
+        State.nextHungerCheckAt := MonotonicMs() + Config.hungerCheckIntervalMs
+        State.statusLabel.Text := "●  食事完了。作業を再開します"
+        ScheduleNext(expectedGeneration, Config.postEatResumeMs)
+        return true
+    }
+
+    ; 食料切れ・使用拒否のまま採集だけを無期限継続しないよう、
+    ; 連続3回確認できなければ安全停止します。
+    State.backgroundEatFailures += 1
+    if State.backgroundEatFailures >= 3 {
+        StopAutomationWithFault("スロット " Config.foodKey
+            . " の食事を3回確認できないため安全停止しました", "settings")
+        return true
+    }
+    ; コマンドが受理されたか不明な場合も短時間の連打はしません。
+    State.nextBackgroundEatAt := MonotonicMs() + Config.failedEatRetryMs
+    State.nextEatAllowedAt := MonotonicMs() + Config.failedEatRetryMs
+    State.statusLabel.Text := "●  スロット " Config.foodKey
+        . " の食事を確認できません。後で再試行します"
+    ScheduleNext(expectedGeneration, Config.postEatResumeMs)
+    return true
+}
+
+ReadForegroundHungerConfirmed(expectedGeneration, &isLow) {
+    global State, Config
+    isLow := false
+    validVotes := 0
+    lowVotes := 0
+    loop Config.hungerConfirmFrames {
+        if !IsCurrentRun(expectedGeneration)
+            || !WinActive("ahk_id " State.targetHwnd)
+            return false
+        if ReadHungerLow(&frameLow) {
+            validVotes += 1
+            if frameLow
+                lowVotes += 1
+        }
+        if A_Index < Config.hungerConfirmFrames
+            Sleep Config.hungerConfirmGapMs
+    }
+    requiredVotes := Floor(Config.hungerConfirmFrames / 2) + 1
+    if validVotes < requiredVotes
+        return false
+    isLow := lowVotes >= requiredVotes
+    WriteDiagnostic("HUNGER_FOREGROUND low=" isLow
+        " votes=" lowVotes "/" validVotes)
+    return true
+}
+
+PerformBackgroundEating(expectedGeneration, reason) {
+    global State, Config
+    ; StartMiningで一度だけinventory storeを初期化します。食事のたびに
+    ; +invを送り直すと、通信失敗時に画面を開閉反転させる恐れがあります。
+    beforeResult := RunBackgroundBridgeCancelable(expectedGeneration,
+        "inventory-snapshot")
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    if !ParseInventorySnapshot(beforeResult, &beforeInfo)
+        || !InventorySpecSlotState(beforeInfo.items, Config.foodKey,
+            &beforeKey, &beforeCount) {
+        WriteDiagnostic("EAT_BG_NO_CONFIGURED_ITEM slot=" Config.foodKey
+            " snapshot=" beforeResult)
+        return false
+    }
+    if !EnsureDevConPort() || !IsCurrentRun(expectedGeneration) {
+        WriteDiagnostic("EAT_BG_PORT_ERROR slot=" Config.foodKey)
+        return false
+    }
+    port := State.lastDevConPort
+    State.statusLabel.Text := "●  食事中（スロット " Config.foodKey "）"
+    pressResult := RunBackgroundBridgeCancelable(expectedGeneration,
+        "press-hotbar", port, Config.foodKey, Config.foodKeyHoldMs)
+    WriteDiagnostic("EAT_BG_PRESS reason=" reason " result=" pressResult
+        " before=" beforeKey "=" beforeCount)
+    if pressResult != "HOTBAR " port " " Config.foodKey
+        return false
+    if !WaitWhileBackgroundReady(Config.eatAnimationMs + Config.gaugeSettleMs,
+        expectedGeneration)
+        return false
+
+    afterResult := RunBackgroundBridgeCancelable(expectedGeneration,
+        "inventory-snapshot")
+    if !ParseInventorySnapshot(afterResult, &afterInfo)
+        || !InventorySlotWasConsumed(beforeInfo.items, afterInfo.items,
+            Config.foodKey) {
+        WriteDiagnostic("EAT_BG_NOT_CONSUMED slot=" Config.foodKey
+            " after=" afterResult)
+        return false
+    }
+    State.meals += 1
+    State.mealLabel.Text := "食事回数`n" State.meals
+    WriteDiagnostic("EAT_BG_CONFIRMED slot=" Config.foodKey
+        " meals=" State.meals)
+    return true
 }
 
 WashAttemptBackground(expectedGeneration) {
@@ -3769,27 +5216,40 @@ WashAttemptBackground(expectedGeneration) {
     try {
         ; 成功した洗浄1回につき1度だけ、次のtarget表示前に短く前進します。
         if State.washNudgePending {
-            State.washNudgePending := false
             if Config.washForwardCorrection {
-                if !EnsureDevConPort() {
+                portReady := EnsureDevConPort()
+                if !IsCurrentRun(expectedGeneration)
+                    return
+                if !portReady {
                     State.statusLabel.Text := "●  FiveM内部UIへ再接続中"
                     WriteDiagnostic("attempt=" State.attempts " WASH_NUDGE_PORT_MISSING")
                     return
                 }
+                port := State.lastDevConPort
                 State.statusLabel.Text := "●  洗浄位置を少し前へ補正中"
-                nudgeResult := RunBackgroundBridge("nudge-forward",
-                    State.lastDevConPort, Config.washForwardPulseMs)
+                nudgeResult := RunBackgroundBridgeCancelable(expectedGeneration,
+                    "play-route-health", port, Config.washForwardPulseMs ":1",
+                    State.serverEpoch)
                 if !IsCurrentRun(expectedGeneration)
                     return
                 WriteDiagnostic("attempt=" State.attempts " WASH_NUDGE=" nudgeResult)
-                if nudgeResult = "NUDGED " State.lastDevConPort {
+                if nudgeResult = "ROUTE " port " " Config.washForwardPulseMs {
+                    State.washNudgePending := false
                     State.nudges += 1
                     State.mealLabel.Text := "後退補正`n" State.nudges
+                } else {
+                    ; 入力が一部届いた可能性を否定できないため、重ねて前進も
+                    ; 洗浄続行もせず停止します。
+                    StopAutomationWithFault(
+                        "洗浄位置の補正結果を確認できないため安全停止しました")
+                    return
                 }
                 ; packetだけ届いてhelper応答が失われた場合も、前進中にtargetを開きません。
-                if !WaitWhileBackgroundReady(Config.washForwardPulseMs
-                    + Config.washForwardSettleMs + 50, expectedGeneration)
+                if !WaitWhileBackgroundReady(Config.washForwardSettleMs + 50,
+                    expectedGeneration)
                     return
+            } else {
+                State.washNudgePending := false
             }
         }
 
@@ -3896,16 +5356,16 @@ PerformGoldRecoveryStep(expectedGeneration) {
     route := GoldRecoveryRoute(nextStep)
     if !route
         return false
-    if !EnsureDevConPort() {
+    portReady := EnsureDevConPort()
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    if !portReady {
         ; 移動は始まっていないので、改めて12秒の連続未検出を確認します。
         State.goldMissingSince := 0
         State.statusLabel.Text := "●  位置補正の接続を再確認しています"
         WriteDiagnostic("attempt=" State.attempts " GOLD_RECOVERY_PORT_MISSING")
         return false
     }
-    if !IsCurrentRun(expectedGeneration)
-        return false
-
     ; bridgeの応答が失われても同じ方向へ無制限に進まないよう、実行前に
     ; 段階を消費します。6段階全体では前後・左右の入力時間が釣り合います。
     State.goldRecoveryStep := nextStep
@@ -3915,7 +5375,7 @@ PerformGoldRecoveryStep(expectedGeneration) {
         "play-route-health", port, route, State.serverEpoch)
     if !IsCurrentRun(expectedGeneration)
         return false
-    routeOk := recoveryResult = "ROUTE " port " " RouteTotalMs(route)
+    routeOk := recoveryResult = "ROUTE " port " " RouteTotalMs(route, false)
     WriteDiagnostic("attempt=" State.attempts " GOLD_RECOVERY_STEP=" nextStep
         " route=" route " result=" recoveryResult)
     if routeOk {
@@ -3927,7 +5387,8 @@ PerformGoldRecoveryStep(expectedGeneration) {
         State.lastDevConPort := 0
         State.goldRecoveryFault := true
         State.goldRecoveryExhausted := true
-        State.statusLabel.Text := "●  位置補正を完了できません。停止して位置を確認してください"
+        StopAutomationWithFault(
+            "位置補正を完了できないため安全停止しました。位置を確認してください")
         return false
     }
     return WaitWhileBackgroundReady(Config.goldRecoverySettleMs, expectedGeneration)
@@ -4476,7 +5937,7 @@ RunBackgroundBridgeCancelable(expectedGeneration, mode, bridgeArgs*) {
 
         longCompanionCommand := false
         if InStr(mode, "play-route") && bridgeArgs.Length >= 2 {
-            routeDurationMs := RouteTotalMs(bridgeArgs[2])
+            routeDurationMs := RouteTotalMs(bridgeArgs[2], false)
             if mode = "play-route-health" {
                 ; 各2.5秒区切りのCDP healthはroot取得3秒＋socket処理4秒まで
                 ; 待つため、長い登録経路では全チェック回数分を予算化します。
@@ -5400,9 +6861,10 @@ IsFiveMWindow(hwnd) {
 }
 
 Cleanup(*) {
-    global State
+    global State, Config
 
     previousPhase := State.automationPhase
+    wasRegistering := State.registrationActive
     State.running := false
     State.generation += 1
     if IsObject(State.timerFn) {
@@ -5412,21 +6874,31 @@ Cleanup(*) {
     StopUpdatePollTimer()
     if !State.updateApplying
         CleanupUpdateStage()
-    cancelCompanion := State.companionReady || State.companionEpoch
-        || State.registrationActive
+    cancelCompanion := Config.vehicleCompanionProtocol = 1
+        && (State.companionReady || State.companionEpoch)
+    State.registrationCancelled := true
+    CloseLocalRegistrationOverlay()
     CancelActiveBridgeProcess()
     if cancelCompanion
         RunCompanionCommand("cancel")
     ReleaseAllInputs()
     ReleaseBackgroundTarget(true)
-    if previousPhase = "depositing"
+    if wasRegistering || previousPhase = "find_registered_vehicle" || previousPhase = "depositing"
+        || previousPhase = "return_to_work" || previousPhase = "verify_workpoint"
         RunBackgroundBridge("close-inventory")
     UnregisterConfiguredHotkeys()
+    SetTimer UpdateConnectionStatus, 0
+    SetTimer MonitorWebUiHost, 0
+    State.uiWindowVisible := false
+    SendWebUiCommand("EXIT")
+    if State.uiHostPid {
+        try ProcessWaitClose State.uiHostPid, 2
+    }
     DeleteExtractedTemplates()
 }
 
 DeleteExtractedTemplates() {
-    global State
+    global State, settingsPath
 
     for buttonTemplate in State.buttonTemplates {
         try FileDelete buttonTemplate.path
@@ -5439,6 +6911,31 @@ DeleteExtractedTemplates() {
     ; apply中はWindowsが実行ファイルを保護するため、更新helper自身が後で削除します。
     try FileDelete State.updaterPath
     try FileDelete State.updateResultPath
+    if A_IsCompiled && State.uiRuntimeRoot {
+        knownUiFiles := [
+            State.uiHostPath,
+            State.uiHostPath ".config",
+            State.uiRuntimeRoot "\Microsoft.Web.WebView2.Core.dll",
+            State.uiRuntimeRoot "\Microsoft.Web.WebView2.WinForms.dll",
+            State.uiRuntimeRoot "\WebView2Loader.dll",
+            State.uiAssetsPath "\index.html",
+            State.uiAssetsPath "\app.css",
+            State.uiAssetsPath "\app.js",
+            State.uiAssetsPath "\build-info.json",
+            State.uiAssetsPath "\vendor\framework7-bundle.min.css",
+            State.uiAssetsPath "\vendor\framework7-bundle.min.js"
+        ]
+        for filePath in knownUiFiles
+            try FileDelete filePath
+        try DirDelete State.uiAssetsPath "\vendor"
+        try DirDelete State.uiAssetsPath
+        try DirDelete State.uiRuntimeRoot
+    }
+    if State.uiSmokeTest || State.visualTest {
+        try FileDelete settingsPath
+        ; 配布EXE自身のテストで、配布フォルダーへ診断ログを残しません。
+        try FileDelete State.diagnosticPath
+    }
 }
 
 ResetDiagnosticLog() {
@@ -5518,13 +7015,13 @@ ReadVehicleWorkMode(settingsFile) {
 
 IsValidVehicleProfile(config) {
     return config.vehicleRegistered = 1
-        && config.vehicleCompanionProtocol = 1
-        && IsValidCompanionRegistrationId(config.vehicleRegistrationId)
+        && config.vehicleCompanionProtocol = 0
+        && config.vehicleRegistrationId = ""
         && IsValidBase64Token(config.vehicleStorageId)
         && config.vehicleStorageType = "dHJ1bms="
         && (config.vehicleWorkMode = "mining" || config.vehicleWorkMode = "washing"
             || config.vehicleWorkMode = "gold")
-        && config.vehicleRouteFormat = 4
+        && config.vehicleRouteFormat = 5
         && config.vehicleOutboundRoute = ""
         && config.vehicleReturnRoute = ""
 }
@@ -5566,8 +7063,8 @@ IsValidRoute(route, requireMovement := true, minimumTotalMs := 150) {
         && total >= minimumTotalMs && total <= 90000
 }
 
-RouteTotalMs(route) {
-    if !IsValidRoute(route)
+RouteTotalMs(route, requireMovement := true) {
+    if !IsValidRoute(route, requireMovement)
         return 0
     total := 0
     for step in StrSplit(route, ",") {
@@ -5595,6 +7092,7 @@ ReadFoodKey(settingsFile) {
     catch
         return "1"
 
-    ; FiveMのホットバースロットだけを許可し、壊れた設定で別キーを押さないようにします。
-    return RegExMatch(value, "^[1-9]$") ? value : "1"
+    ; ox_inventoryが標準登録するホットバー1～5だけを許可します。
+    ; 6～9を許すとキー自体は送れてもuseSlotへ結び付かないため安全側で1へ戻します。
+    return RegExMatch(value, "^[1-5]$") ? value : "1"
 }
