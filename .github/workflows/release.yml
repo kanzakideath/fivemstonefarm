@@ -44,6 +44,7 @@ jobs:
         run: .\scripts\Bootstrap-Tools.ps1
 
       - name: Build, smoke-test, sign, and verify assets
+        timeout-minutes: 15
         shell: pwsh
         env:
           UPDATE_SIGNING_KEY_PKCS8_B64: ${{ secrets.UPDATE_SIGNING_KEY_PKCS8_B64 }}

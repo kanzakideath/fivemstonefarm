@@ -1,4 +1,4 @@
-# AI採掘機 v8.0.1
+# AI採掘機 v8.0.2
 
 FiveMの対象UIを構造的に検出し、採掘・石洗い・砂金採りを繰り返すWindows向け補助ツールです。バックグラウンド操作では、物理マウスや別アプリのフォーカスを奪わず、画面座標やモニター解像度にも依存しません。
 
@@ -36,7 +36,7 @@ FiveMの対象UIを構造的に検出し、採掘・石洗い・砂金採りを�
 
 ## 導入
 
-1. [Releases](https://github.com/kanzakideath/fivemstonefarm/releases) から `AI-Miner-v8.0.1.zip` を取得します。
+1. [Releases](https://github.com/kanzakideath/fivemstonefarm/releases) から `AI-Miner-v8.0.2.zip` を取得します。
 2. 書き込み可能なフォルダーへ展開します。
 3. `AI採掘機.exe` を起動します。
 4. 「設定」でバックグラウンド操作、キー、視点補正、自動食事・食料スロット、収納開始重量を確認します。
@@ -64,7 +64,7 @@ FiveMのウィンドウ/PIDと対象・インベントリNUIのセッション�
 - Git
 
 ```powershell
-pwsh -File .\scripts\Build.ps1 -Version 8.0.1
+pwsh -File .\scripts\Build.ps1 -Version 8.0.2
 ```
 
 ビルドは依存ロック、Web UI、WebView2ホスト、FiveM bridge、更新helper、完成EXEの自己テストを実行します。

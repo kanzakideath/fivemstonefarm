@@ -357,23 +357,59 @@ Copy-Item -LiteralPath $uiLoader -Destination (Join-Path $uiRuntimeHost 'WebView
 Copy-Item -Path (Join-Path $uiWebOutput '*') -Destination $uiRuntimeWeb -Recurse -Force
 
 Push-Location $stageRoot
-$previousAhkCompileFlag = [Environment]::GetEnvironmentVariable('AI_MINER_AHK_COMPILE', 'Process')
+$compilerStdout = Join-Path $stageRoot 'ahk2exe.stdout.log'
+$compilerStderr = Join-Path $stageRoot 'ahk2exe.stderr.log'
 try {
-    [Environment]::SetEnvironmentVariable('AI_MINER_AHK_COMPILE', '1', 'Process')
     $quotedMain = '"' + $stagedMain + '"'
     $quotedOutput = '"' + $outputExe + '"'
     $quotedBase = '"' + $autoHotkey + '"'
     $quotedIcon = '"' + $appIcon + '"'
+    Write-Host 'Compiling the self-contained AutoHotkey application...'
     $compilerProcess = Start-Process -FilePath $ahk2Exe `
         -ArgumentList @('/in', $quotedMain, '/out', $quotedOutput, '/base', $quotedBase,
-            '/icon', $quotedIcon, '/compress', '0') `
-        -PassThru -Wait -WindowStyle Hidden
-    if ($compilerProcess.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $outputExe -PathType Leaf)) {
-        throw 'Ahk2Exe compilation failed.'
+            '/icon', $quotedIcon, '/compress', '0', '/silent', 'verbose') `
+        -PassThru -WindowStyle Hidden -RedirectStandardOutput $compilerStdout `
+        -RedirectStandardError $compilerStderr
+    if (-not $compilerProcess.WaitForExit(120000)) {
+        $compilerPid = $compilerProcess.Id
+        try { $compilerProcess.Kill($true) }
+        catch {
+            # Process.Kill(Boolean) is unavailable on Windows PowerShell 5.1.
+            # taskkill is scoped to the exact compiler PID and its child validator.
+            try {
+                $taskKill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
+                & $taskKill /PID $compilerPid /T /F | Out-Null
+            }
+            catch { try { $compilerProcess.Kill() } catch { } }
+        }
+        try { [void]$compilerProcess.WaitForExit(5000) } catch { }
+        foreach ($compilerLog in @($compilerStdout, $compilerStderr)) {
+            if (Test-Path -LiteralPath $compilerLog -PathType Leaf) {
+                $timeoutLogText = [string](Get-Content -LiteralPath $compilerLog -Raw)
+                if ($timeoutLogText.Trim()) {
+                    Write-Host $timeoutLogText.Trim()
+                }
+            }
+        }
+        throw 'Ahk2Exe compilation timed out after 120 seconds.'
     }
+    [string]$compilerStdoutText = if (Test-Path -LiteralPath $compilerStdout) {
+        Get-Content -LiteralPath $compilerStdout -Raw
+    } else { '' }
+    [string]$compilerStderrText = if (Test-Path -LiteralPath $compilerStderr) {
+        Get-Content -LiteralPath $compilerStderr -Raw
+    } else { '' }
+    $compilerOutput = @($compilerStdoutText.Trim(), $compilerStderrText.Trim()) |
+        Where-Object { $_ }
+    if ($compilerOutput) {
+        Write-Host ($compilerOutput -join [Environment]::NewLine)
+    }
+    if ($compilerProcess.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $outputExe -PathType Leaf)) {
+        throw "Ahk2Exe compilation failed with exit code $($compilerProcess.ExitCode)."
+    }
+    Write-Host 'AutoHotkey compilation completed.'
 }
 finally {
-    [Environment]::SetEnvironmentVariable('AI_MINER_AHK_COMPILE', $previousAhkCompileFlag, 'Process')
     Pop-Location
 }
 
