@@ -319,6 +319,9 @@ foreach ($scale in $WebViewScaleFactors) {
             if ($capture.processId -ne $launchedPid) {
                 throw "Capture PID $($capture.processId) does not match launched PID $launchedPid."
             }
+            if ($capture.className -eq '#32770') {
+                throw "Scenario '$name' opened a native error dialog instead of the application window. Check the visual-test arguments and asset path."
+            }
             $suite.captures.Add([ordered]@{
                 scenario = $name
                 webViewScaleFactor = $scale

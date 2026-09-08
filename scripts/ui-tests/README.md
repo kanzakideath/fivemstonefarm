@@ -8,10 +8,10 @@ to the DWM extended frame bounds.
 ## Expected visual-test host contract
 
 The default scenario manifest expects an explicitly supplied executable to stay
-open and accept:
+open and accept an explicit offline asset directory:
 
 ```text
---visual-test --fixture <overview|action-sheet|settings>
+--visual-test --assets <absolute-www-directory> --fixture <overview|action-sheet|settings>
 --window-width <pixels> --window-height <pixels>
 ```
 
@@ -30,7 +30,8 @@ Change `scenarios.json`, `-ManifestPath`, `-BaseArguments`, or
 ```powershell
 pwsh -NoProfile -File scripts/ui-tests/Invoke-UiVisualTests.ps1 `
   -ExecutablePath C:\absolute\path\AI採掘機.exe `
-  -OutputDirectory artifacts/ui-tests/current
+  -OutputDirectory artifacts/ui-tests/current `
+  -BaseArguments '--visual-test','--assets','C:\absolute\path\src\ui-web\www'
 ```
 
 The suite launches one process per scenario, finds a stable visible window only
@@ -53,6 +54,7 @@ Windows display settings:
 pwsh -NoProfile -File scripts/ui-tests/Invoke-UiVisualTests.ps1 `
   -ExecutablePath C:\absolute\path\AI採掘機.exe `
   -OutputDirectory artifacts/ui-tests/scales `
+  -BaseArguments '--visual-test','--assets','C:\absolute\path\src\ui-web\www' `
   -WebViewScaleFactors 1,1.5,2
 ```
 

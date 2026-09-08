@@ -14,7 +14,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "8.0.0"
+global AppVersion := "8.0.1"
 processId := DllCall("GetCurrentProcessId")
 isUiSmokeTest := HasCommandLineArgument("--smoke-test")
 isVisualTest := HasCommandLineArgument("--visual-test")

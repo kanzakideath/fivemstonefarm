@@ -132,14 +132,15 @@ $webViewReference = $uiHostProjectXml.Project.ItemGroup.PackageReference |
     Where-Object { $_.Include -eq 'Microsoft.Web.WebView2' } | Select-Object -First 1
 if ($uiHostProperties.TargetFramework -cne 'net48' -or
     $uiHostProperties.PlatformTarget -cne 'x64' -or
+    $uiHostProperties.RuntimeIdentifier -cne 'win-x64' -or
     $webViewReference.Version -cne '[1.0.4191.47]') {
-    throw 'The UI host must remain an x64 net48 application locked to WebView2 SDK 1.0.4191.47.'
+    throw 'The UI host must remain a win-x64 net48 application locked to WebView2 SDK 1.0.4191.47.'
 }
 
 $uiHostLockData = Get-Content -LiteralPath $uiHostLock -Raw | ConvertFrom-Json
 $uiHostNet48 = $uiHostLockData.dependencies.PSObject.Properties['.NETFramework,Version=v4.8'].Value
 $lockedWebView = $uiHostNet48.PSObject.Properties['Microsoft.Web.WebView2'].Value
-$uiHostX64 = $uiHostLockData.dependencies.PSObject.Properties['.NETFramework,Version=v4.8/win7-x64'].Value
+$uiHostX64 = $uiHostLockData.dependencies.PSObject.Properties['.NETFramework,Version=v4.8/win-x64'].Value
 $lockedWebViewX64 = $uiHostX64.PSObject.Properties['Microsoft.Web.WebView2'].Value
 if ($lockedWebView.requested -cne '[1.0.4191.47, 1.0.4191.47]' -or
     $lockedWebView.resolved -cne '1.0.4191.47' -or
