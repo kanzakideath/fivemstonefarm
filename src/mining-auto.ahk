@@ -10,7 +10,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "6.0.1"
+global AppVersion := "6.1.0"
 processId := DllCall("GetCurrentProcessId")
 buttonTemplatePath := A_Temp "\codex-mining-button-" processId ".png"
 windowedButtonTemplatePath := A_Temp "\codex-mining-button-windowed-" processId ".png"
@@ -87,6 +87,7 @@ global Config := {
     vehicleStorageId: ReadTextSetting(settingsPath, "VehicleStorage", "StorageId", ""),
     vehicleStorageType: ReadTextSetting(settingsPath, "VehicleStorage", "StorageType", ""),
     vehicleWorkMode: ReadVehicleWorkMode(settingsPath),
+    vehicleRouteFormat: ReadIntegerSetting(settingsPath, "VehicleStorage", "RouteFormat", 1, 0, 2),
     vehicleOutboundRoute: ReadTextSetting(settingsPath, "VehicleStorage", "OutboundRoute", ""),
     vehicleReturnRoute: ReadTextSetting(settingsPath, "VehicleStorage", "ReturnRoute", ""),
     capacityCheckIntervalMs: ReadIntegerSetting(settingsPath, "VehicleStorage", "CapacityCheckIntervalMs", 3000, 1500, 15000),
@@ -102,7 +103,7 @@ if !IsValidVehicleProfile(Config)
 
 ; v5.1以前の「未設定なので無効」という仮設定だけを、安全な署名付き更新へ移行します。
 needsUpdateSettingsMigration := Config.updateSettingsSchema < 1
-if needsUpdateSettingsMigration {
+if needsUpdateSettingsMigration && !(A_Args.Length && A_Args[1] = "--smoke-test") {
     Config.updateSettingsSchema := 1
     Config.autoCheckUpdates := 1
 }
@@ -186,7 +187,17 @@ global State := {
     registrationActive: false,
     registrationCancelled: false,
     registrationOverlay: 0,
-    registrationOverlayLabel: 0,
+    registrationOverlayTitle: 0,
+    registrationOverlayDetail: 0,
+    registrationOverlayFeedback: 0,
+    registrationOverlayTimer: 0,
+    registrationOverlayFooter: 0,
+    registrationOverlayWatchFn: 0,
+    registrationKeyControls: Map(),
+    registrationViewMask: 0,
+    registrationHotIf: 0,
+    registrationMovementHotIf: 0,
+    registrationMovementBlocked: false,
     page: "overview",
     pages: Map(),
     ui: {},
@@ -203,7 +214,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
         : !FileExist(State.backgroundBridgePath) ? 15
         : !FileExist(State.updaterPath) ? 16
         : MonotonicMs() <= 0 ? 17
-        : RunBackgroundBridge("capabilities") != "CAPS 4 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY" ? 18
+        : RunBackgroundBridge("capabilities") != "CAPS 5 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW" ? 18
         : updaterCapabilities != "UPDATE_CAPS 1 CHECK DOWNLOAD APPLY" ? 19
         : !IsSafeConfiguredHotkey("F8") ? 20
         : IsSafeConfiguredHotkey("A") ? 21
@@ -221,7 +232,18 @@ if A_Args.Length && A_Args[1] = "--validate" {
         : GoldRecoveryRoute(2, 150) != "300:2" ? 33
         : GoldRecoveryRoute(6, 150) != "150:4" ? 34
         : GoldRecoveryRoute(7, 150) != "" ? 35
-        : !GoldRecoveryPatternIsBalanced(150) ? 36 : 0
+        : !GoldRecoveryPatternIsBalanced(150) ? 36
+        : !IsValidRoute("150:65") ? 37
+        : !IsValidRoute("150:64", false) ? 38
+        : !IsValidRoute("25:64", false, 25) ? 39
+        : IsValidRoute("150:64") ? 40
+        : IsValidRoute("150:48") ? 41
+        : IsValidRoute("150:192") ? 42
+        : IsValidRoute("150:256") ? 43
+        : CombineRoutes("150:1", "150:64") != "150:1,150:64" ? 44
+        : RouteViewSegmentCount("150:1,150:64,150:128") != 2 ? 45
+        : AutomationStartAllowed(false, true) ? 46
+        : !AutomationStartAllowed(false, false) ? 47 : 0
     if exitCode = 19
         try FileAppend "UPDATER_CAPS=" updaterCapabilities "`r`n",
             State.diagnosticPath, "UTF-8"
@@ -410,7 +432,7 @@ BuildVehiclePage() {
     gui.SetFont("s9 w400 c636366", "Yu Gothic UI")
     State.ui.vehicleHelp := AddPageControl("vehicle", gui.AddText("x0 y0 w460 h72",
         "開始前から持っていた道具・食料・所持品は移動しません。`n"
-        "登録中だけFiveMを前面にし、カメラを動かさずW/A/S/Dで歩いてください。"))
+        "登録中は W/A/S/D で移動、矢印キーで視点を調整します。Enterで記録開始・到着確定します。"))
 }
 
 BuildSettingsPage() {
@@ -528,6 +550,24 @@ RunUiSmokeTest() {
         ShowPage(pageName)
         if State.page != pageName
             return 43
+    }
+    try {
+        CreateRegistrationOverlay(State.gui.Hwnd)
+        if State.registrationKeyControls.Count != 8
+            return 44
+        UpdateRegistrationOverlay("車両登録　2/4", "表示テスト", "● 記録中", "info")
+        UpdateRegistrationInputState(81, 1250)
+        if State.registrationKeyControls["w"].control.Text != "●W"
+            || State.registrationKeyControls["left"].control.Text != "●←"
+            || State.registrationKeyControls["s"].control.Text != "S"
+            return 45
+        ConfigureRegistrationControlKeys(true)
+        ConfigureRegistrationControlKeys(false)
+    } catch as err {
+        WriteDiagnostic("REGISTRATION_UI_SMOKE_ERROR=" err.Message)
+        return 46
+    } finally {
+        CloseRegistrationOverlay()
     }
     ShowPage("overview")
     return 0
@@ -685,8 +725,15 @@ ToggleMining(*) {
 }
 
 CanStartFromHotkey(*) {
+    global State
+    if !AutomationStartAllowed(State.running, State.registrationActive)
+        return false
     activeHwnd := WinExist("A")
     return activeHwnd && IsFiveMWindow(activeHwnd)
+}
+
+AutomationStartAllowed(running, registrationActive) {
+    return !running && !registrationActive
 }
 
 IsMiningActive(*) {
@@ -921,6 +968,7 @@ SaveAllSettingsAtomically() {
         IniWrite Config.vehicleStorageId, temporarySettingsPath, "VehicleStorage", "StorageId"
         IniWrite Config.vehicleStorageType, temporarySettingsPath, "VehicleStorage", "StorageType"
         IniWrite Config.vehicleWorkMode, temporarySettingsPath, "VehicleStorage", "WorkMode"
+        IniWrite Config.vehicleRouteFormat, temporarySettingsPath, "VehicleStorage", "RouteFormat"
         IniWrite Config.vehicleOutboundRoute, temporarySettingsPath, "VehicleStorage", "OutboundRoute"
         IniWrite Config.vehicleReturnRoute, temporarySettingsPath, "VehicleStorage", "ReturnRoute"
         IniWrite Config.capacityCheckIntervalMs, temporarySettingsPath, "VehicleStorage", "CapacityCheckIntervalMs"
@@ -974,8 +1022,16 @@ RefreshVehicleUi(*) {
         outSeconds := Round(RouteTotalMs(Config.vehicleOutboundRoute) / 1000, 1)
         backSeconds := Round(RouteTotalMs(Config.vehicleReturnRoute) / 1000, 1)
         State.routeStatusLabel.Text := "往路 " outSeconds "秒　復路 " backSeconds "秒"
-        State.routeDetailLabel.Text := "作業: " ActionModeLabel(Config.vehicleWorkMode)
-        State.vehicleRegisterButton.Text := "車両とルートを登録し直す"
+        if Config.vehicleRouteFormat >= 2 {
+            viewSegments := RouteViewSegmentCount(Config.vehicleOutboundRoute)
+                + RouteViewSegmentCount(Config.vehicleReturnRoute)
+            State.routeDetailLabel.Text := "作業: " ActionModeLabel(Config.vehicleWorkMode)
+                . "　視点操作 " viewSegments "区間"
+            State.vehicleRegisterButton.Text := "視点つきルートを登録し直す"
+        } else {
+            State.routeDetailLabel.Text := "旧ルートは視点なしです。安定動作には登録し直してください。"
+            State.vehicleRegisterButton.Text := "視点つきルートへ更新"
+        }
         State.vehicleDeleteButton.Enabled := !State.running && !State.registrationActive
     } else {
         State.vehicleStatusLabel.Text := "未登録"
@@ -1040,34 +1096,41 @@ BeginVehicleRegistration(*) {
 
     State.registrationActive := true
     State.registrationCancelled := false
+    State.registrationViewMask := 0
+    ; 実際のルート記録中以外は移動を通さず、未記録の位置ずれを防ぎます。
+    State.registrationMovementBlocked := true
     State.targetHwnd := targetHwnd
     RefreshVehicleUi()
-    try Hotkey "$Esc", CancelVehicleRegistration, "On"
     try {
-        CreateRegistrationOverlay(targetHwnd)
+        ConfigureRegistrationControlKeys(true)
         State.gui.Hide()
+        try WinRestore "ahk_id " targetHwnd
         try WinActivate "ahk_id " targetHwnd
-        UpdateRegistrationOverlay("1/4　作業場所を確認", "現在の作業ボタンを検出しています…")
+        if !WinWaitActive("ahk_id " targetHwnd,, 3)
+            throw Error("FiveMを前面にできませんでした。最小化を解除してやり直してください。")
+        CreateRegistrationOverlay(targetHwnd)
+        UpdateRegistrationOverlay("車両登録　1/4", "現在の作業ボタンを検出しています…",
+            "● 確認中", "info")
         if !WaitRegistration(450)
             throw Error("登録を中止しました")
-        if !ProbeWorkTarget(Config.actionMode)
+        if !ConfirmRegistrationStart(Config.actionMode)
             throw Error("ここでは「" ActionModeLabel(Config.actionMode) "」を確認できません。作業場所に立ってやり直してください。")
 
-        outboundRoute := RecordMovementRoute("2/4　車両まで歩く",
-            "カメラを動かさず、W/A/S/Dだけで車両後部へ歩き、止まってください")
+        outboundRoute := RecordMovementRoute("車両登録　2/4",
+            "W/A/S/Dで車両後部へ移動し、矢印キーでストレージが見える向きへ調整します")
 
-        UpdateRegistrationOverlay("3/4　車両を確認", "「ストレージを開く」を検出しています…")
-        if !OpenStorageAndCapture(&storageId, &storageType)
+        if !CaptureStorageWithGuidedAdjustment(&outboundRoute, &storageId, &storageType)
             throw Error("車両後部の「ストレージを開く」を確認できませんでした。")
         RunBackgroundBridge("close-inventory")
         if !WaitRegistration(500)
             throw Error("登録を中止しました")
 
-        returnRoute := RecordMovementRoute("4/4　作業場所へ戻る",
-            "同じくカメラを動かさず、元の作業位置へ戻って止まってください")
-        UpdateRegistrationOverlay("登録を確認中", "元の作業ボタンを検出しています…")
-        if !ProbeWorkTarget(Config.actionMode)
+        returnRoute := RecordMovementRoute("車両登録　4/4",
+            "W/A/S/Dで元の位置へ戻り、矢印キーで作業対象が見える向きへ調整します")
+        if !ConfirmWorkWithGuidedAdjustment(&returnRoute, Config.actionMode)
             throw Error("復路の終点で作業ボタンを確認できません。往復ルートを登録し直してください。")
+        VerifyVehicleRegistration(outboundRoute, returnRoute, storageId, storageType,
+            Config.actionMode)
 
         oldProfile := {
             enabled: Config.vehicleStorageEnabled,
@@ -1076,6 +1139,7 @@ BeginVehicleRegistration(*) {
             id: Config.vehicleStorageId,
             type: Config.vehicleStorageType,
             mode: Config.vehicleWorkMode,
+            routeFormat: Config.vehicleRouteFormat,
             outbound: Config.vehicleOutboundRoute,
             inbound: Config.vehicleReturnRoute
         }
@@ -1083,6 +1147,7 @@ BeginVehicleRegistration(*) {
         Config.vehicleStorageId := storageId
         Config.vehicleStorageType := storageType
         Config.vehicleWorkMode := Config.actionMode
+        Config.vehicleRouteFormat := 2
         Config.vehicleOutboundRoute := outboundRoute
         Config.vehicleReturnRoute := returnRoute
         Config.vehicleRegistered := 1
@@ -1097,6 +1162,7 @@ BeginVehicleRegistration(*) {
             Config.vehicleStorageId := oldProfile.id
             Config.vehicleStorageType := oldProfile.type
             Config.vehicleWorkMode := oldProfile.mode
+            Config.vehicleRouteFormat := oldProfile.routeFormat
             Config.vehicleOutboundRoute := oldProfile.outbound
             Config.vehicleReturnRoute := oldProfile.inbound
             throw err
@@ -1110,7 +1176,8 @@ BeginVehicleRegistration(*) {
             State.vehicleStatusLabel.Text := err.Message
         WriteDiagnostic("VEHICLE_REGISTER=" err.Message)
     } finally {
-        try Hotkey "$Esc", "Off"
+        try SetRegistrationViewMask(0)
+        ConfigureRegistrationControlKeys(false)
         RunBackgroundBridge("close-inventory")
         ReleaseBackgroundTarget(true)
         CloseRegistrationOverlay()
@@ -1131,38 +1198,211 @@ CancelVehicleRegistration(*) {
 CreateRegistrationOverlay(targetHwnd) {
     global State
     WinGetClientPos(&gameX, &gameY, &gameW, &gameH, "ahk_id " targetHwnd)
-    overlayW := Min(620, Max(420, gameW - 48))
+    overlayW := Min(760, Max(320, gameW - 16))
     overlayX := gameX + Floor((gameW - overlayW) / 2)
-    overlayY := gameY + 24
+    overlayY := gameY + 18
     overlay := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x20")
     overlay.BackColor := "1C1C1E"
-    overlay.MarginX := 20
-    overlay.MarginY := 12
-    overlay.SetFont("s12 w600 cFFFFFF", "Yu Gothic UI")
-    label := overlay.AddText("x20 y12 w" (overlayW - 40) " h68 Center 0x200", "準備中")
+    overlay.MarginX := 0
+    overlay.MarginY := 0
+    overlay.SetFont("s13 w700 cFFFFFF", "Yu Gothic UI")
+    titleLabel := overlay.AddText("x24 y14 w" (overlayW - 260) " h30 0x200", "車両登録")
+    overlay.SetFont("s10 w600 c64D2FF", "Yu Gothic UI")
+    feedbackLabel := overlay.AddText("x" (overlayW - 236) " y16 w212 h26 Right 0x200", "● 準備中")
     overlay.SetFont("s9 w400 cD1D1D6", "Yu Gothic UI")
-    overlay.AddText("x20 y82 w" (overlayW - 40) " h24 Center", "Esc　中止")
-    overlay.Show("NA x" overlayX " y" overlayY " w" overlayW " h116")
-    WinSetTransparent 238, "ahk_id " overlay.Hwnd
+    detailLabel := overlay.AddText("x24 y47 w" (overlayW - 48) " h42 Center 0x200", "準備しています…")
+
+    moveCenter := Floor(overlayW * 0.29)
+    viewCenter := Floor(overlayW * 0.71)
+    overlay.SetFont("s9 w600 c8E8E93", "Yu Gothic UI")
+    overlay.AddText("x" (moveCenter - 90) " y91 w180 h22 Center", "移動　W / A / S / D")
+    overlay.AddText("x" (viewCenter - 90) " y91 w180 h22 Center", "視点　矢印キー")
+    State.registrationKeyControls := Map()
+    AddRegistrationKeyControl(overlay, "w", "W", 1, moveCenter - 20, 115)
+    AddRegistrationKeyControl(overlay, "a", "A", 4, moveCenter - 66, 153)
+    AddRegistrationKeyControl(overlay, "s", "S", 2, moveCenter - 20, 153)
+    AddRegistrationKeyControl(overlay, "d", "D", 8, moveCenter + 26, 153)
+    AddRegistrationKeyControl(overlay, "up", "↑", 16, viewCenter - 20, 115)
+    AddRegistrationKeyControl(overlay, "left", "←", 64, viewCenter - 66, 153)
+    AddRegistrationKeyControl(overlay, "down", "↓", 32, viewCenter - 20, 153)
+    AddRegistrationKeyControl(overlay, "right", "→", 128, viewCenter + 26, 153)
+
+    overlay.SetFont("s9 w600 cFFFFFF", "Yu Gothic UI")
+    timerLabel := overlay.AddText("x24 y193 w" (overlayW - 48) " h24 Center 0x200",
+        "記録待ち　—　移動と視点を同時に保存します")
+    overlay.SetFont("s9 w400 cAEAEB2", "Yu Gothic UI")
+    footerLabel := overlay.AddText("x24 y222 w" (overlayW - 48) " h24 Center",
+        "Enter 記録開始 / 到着確定　　　Esc 中止")
+    overlay.Show("NA x" overlayX " y" overlayY " w" overlayW " h254")
+    WinSetTransparent 244, "ahk_id " overlay.Hwnd
     ApplyRoundedWindowCorners(overlay.Hwnd)
     ApplyRoundedControlCorners(overlay.Hwnd, 24)
     State.registrationOverlay := overlay
-    State.registrationOverlayLabel := label
+    State.registrationOverlayTitle := titleLabel
+    State.registrationOverlayDetail := detailLabel
+    State.registrationOverlayFeedback := feedbackLabel
+    State.registrationOverlayTimer := timerLabel
+    State.registrationOverlayFooter := footerLabel
+    State.registrationOverlayWatchFn := MaintainRegistrationOverlayVisibility
+    SetTimer State.registrationOverlayWatchFn, 100
+    UpdateRegistrationInputState(0, 0)
 }
 
-UpdateRegistrationOverlay(title, detail := "") {
+UpdateRegistrationFooter(text) {
     global State
-    if IsObject(State.registrationOverlayLabel)
-        State.registrationOverlayLabel.Text := title "`n" detail
+    if IsObject(State.registrationOverlayFooter)
+        State.registrationOverlayFooter.Text := text
+}
+
+AddRegistrationKeyControl(overlay, keyName, label, bit, x, y) {
+    global State
+    overlay.SetFont("s11 w700 cD1D1D6", "Yu Gothic UI")
+    control := overlay.AddText("x" x " y" y " w40 h34 Center Border 0x200", label)
+    State.registrationKeyControls[keyName] := {control: control, label: label, bit: bit}
+}
+
+UpdateRegistrationOverlay(title, detail := "", feedback := "", feedbackKind := "info") {
+    global State
+    if IsObject(State.registrationOverlayTitle)
+        State.registrationOverlayTitle.Text := title
+    if IsObject(State.registrationOverlayDetail)
+        State.registrationOverlayDetail.Text := detail
+    if IsObject(State.registrationOverlayFeedback) {
+        color := feedbackKind = "success" ? "30D158"
+            : feedbackKind = "error" ? "FF453A" : "64D2FF"
+        State.registrationOverlayFeedback.Opt("c" color)
+        State.registrationOverlayFeedback.Text := feedback
+    }
+}
+
+UpdateRegistrationInputState(mask, elapsedMs := 0) {
+    global State
+    if IsObject(State.registrationKeyControls) {
+        for _, info in State.registrationKeyControls {
+            active := (mask & info.bit) != 0
+            info.control.SetFont(active ? "s11 w700 c0A84FF" : "s11 w700 cD1D1D6",
+                "Yu Gothic UI")
+            info.control.Text := active ? "●" info.label : info.label
+        }
+    }
+    if IsObject(State.registrationOverlayTimer) {
+        moving := (mask & 15) ? "移動中" : "停止"
+        looking := (mask & 240) ? "視点調整中" : "視点停止"
+        State.registrationOverlayTimer.Text := "記録 " Round(elapsedMs / 1000, 1)
+            . "秒　　" moving "　/　" looking
+    }
 }
 
 CloseRegistrationOverlay() {
     global State
+    if IsObject(State.registrationOverlayWatchFn)
+        try SetTimer State.registrationOverlayWatchFn, 0
     if IsObject(State.registrationOverlay) {
         try State.registrationOverlay.Destroy()
     }
     State.registrationOverlay := 0
-    State.registrationOverlayLabel := 0
+    State.registrationOverlayTitle := 0
+    State.registrationOverlayDetail := 0
+    State.registrationOverlayFeedback := 0
+    State.registrationOverlayTimer := 0
+    State.registrationOverlayFooter := 0
+    State.registrationOverlayWatchFn := 0
+    State.registrationKeyControls := Map()
+}
+
+MaintainRegistrationOverlayVisibility(*) {
+    global State
+    if !State.registrationActive || !IsObject(State.registrationOverlay)
+        return
+    visible := DllCall("user32\IsWindowVisible", "Ptr", State.registrationOverlay.Hwnd, "Int") != 0
+    if WinActive("ahk_id " State.targetHwnd) {
+        if !visible
+            ShowRegistrationOverlayAtTarget()
+    } else if visible
+        try State.registrationOverlay.Hide()
+}
+
+ShowRegistrationOverlayAtTarget() {
+    global State
+    if !IsObject(State.registrationOverlay) || !State.targetHwnd
+        return false
+    try {
+        WinGetClientPos(&gameX, &gameY, &gameW, &gameH, "ahk_id " State.targetHwnd)
+        State.registrationOverlay.GetPos(,, &overlayW, &overlayH)
+        overlayX := gameX + Floor((gameW - overlayW) / 2)
+        overlayY := gameY + 18
+        State.registrationOverlay.Show("NA x" overlayX " y" overlayY)
+        return true
+    } catch
+        return false
+}
+
+ConfigureRegistrationControlKeys(enabled) {
+    global State
+    keyNames := ["Left", "Right", "Up", "Down", "Enter", "Esc",
+        "LShift", "RShift", "LControl", "RControl", "Space"]
+    movementKeys := ["w", "s", "a", "d"]
+    if enabled {
+        State.registrationHotIf := IsVehicleRegistrationInputActive
+        State.registrationMovementHotIf := IsVehicleRegistrationMovementBlocked
+        registeredKeys := []
+        registeredMovementKeys := []
+        try {
+            HotIf State.registrationHotIf
+            for keyName in keyNames {
+                callback := keyName = "Esc" ? CancelVehicleRegistration : BlockRegistrationControlKey
+                Hotkey "$*" keyName, callback, "On"
+                registeredKeys.Push(keyName)
+            }
+            HotIf State.registrationMovementHotIf
+            for keyName in movementKeys {
+                Hotkey "$*" keyName, BlockRegistrationControlKey, "On"
+                registeredMovementKeys.Push(keyName)
+            }
+        } catch as err {
+            HotIf State.registrationHotIf
+            for keyName in registeredKeys
+                try Hotkey "$*" keyName, "Off"
+            HotIf State.registrationMovementHotIf
+            for keyName in registeredMovementKeys
+                try Hotkey "$*" keyName, "Off"
+            throw Error("登録用キーを準備できませんでした: " err.Message)
+        } finally {
+            HotIf
+        }
+        return
+    }
+    try {
+        if IsObject(State.registrationHotIf)
+            HotIf State.registrationHotIf
+        for keyName in keyNames
+            try Hotkey "$*" keyName, "Off"
+        if IsObject(State.registrationMovementHotIf)
+            HotIf State.registrationMovementHotIf
+        for keyName in movementKeys
+            try Hotkey "$*" keyName, "Off"
+    } finally {
+        HotIf
+        State.registrationHotIf := 0
+        State.registrationMovementHotIf := 0
+        State.registrationMovementBlocked := false
+    }
+}
+
+IsVehicleRegistrationInputActive(*) {
+    global State
+    return State.registrationActive && State.targetHwnd
+        && WinActive("ahk_id " State.targetHwnd)
+}
+
+IsVehicleRegistrationMovementBlocked(*) {
+    global State
+    return IsVehicleRegistrationInputActive() && State.registrationMovementBlocked
+}
+
+BlockRegistrationControlKey(*) {
+    ; 矢印はDevCon経由で視点入力へ変換します。未記録区間の移動と、
+    ; 再生距離を変えるShift/Ctrl/Spaceも登録中だけゲームへ通しません。
 }
 
 WaitRegistration(delayMs) {
@@ -1177,52 +1417,322 @@ WaitRegistration(delayMs) {
     return !State.registrationCancelled
 }
 
-RecordMovementRoute(title, instruction) {
-    global State, Config
-    for countdown in [3, 2, 1] {
-        UpdateRegistrationOverlay(title, instruction "　開始まで " countdown)
-        if !WaitRegistration(1000)
-            throw Error("登録を中止しました")
+RecordMovementRoute(title, instruction, requireMovement := true, showCountdown := true) {
+    global State
+    State.registrationMovementBlocked := true
+    if showCountdown {
+        UpdateRegistrationFooter("Enter 記録開始 / 到着確定　　　Esc 中止")
+        while GetKeyState("Enter", "P") {
+            if !WaitRegistration(20)
+                throw Error("登録を中止しました")
+        }
+        UpdateRegistrationOverlay(title,
+            instruction "`nキーをすべて離し、Enterで記録を開始してください。",
+            "● 開始待ち", "info")
+        loop {
+            if !WaitRegistration(25)
+                throw Error("登録を中止しました")
+            if !WinActive("ahk_id " State.targetHwnd)
+                continue
+            preStartMask := CurrentPhysicalRouteMask()
+            unsupportedKey := CurrentUnsupportedRegistrationKey()
+            UpdateRegistrationInputState(preStartMask, 0)
+            if GetKeyState("Enter", "P") {
+                if preStartMask || unsupportedKey {
+                    UpdateRegistrationOverlay(title,
+                        "W/A/S/D・矢印・Shift/Ctrl/Spaceをすべて離してから、Enterで開始してください。",
+                        "● キーを離してください", "error")
+                } else {
+                    break
+                }
+            }
+        }
+        ; Enterを押したまま次の移動キーを押しても、そのdownはゲーム側へ
+        ; 届いていません。全キーのreleaseを確認してから新しい押下で始めます。
+        while GetKeyState("Enter", "P") || CurrentPhysicalRouteMask()
+            || CurrentUnsupportedRegistrationKey() {
+            if !WaitRegistration(20)
+                throw Error("登録を中止しました")
+        }
+    } else {
+        UpdateRegistrationFooter("W/A/S/D・矢印キーで調整　　　Enter 調整確定　　　Esc 中止")
+        UpdateRegistrationOverlay(title,
+            instruction "`nキーをすべて離すと調整記録を開始します。",
+            "● 入力待ち", "info")
+        while GetKeyState("Enter", "P") || CurrentPhysicalRouteMask()
+            || CurrentUnsupportedRegistrationKey() {
+            if !WaitRegistration(20)
+                throw Error("登録を中止しました")
+        }
     }
-    UpdateRegistrationOverlay(title, "記録中 — 到着したらキーを離して、その場で止まってください")
+    State.registrationMovementBlocked := false
+    UpdateRegistrationOverlay(title,
+        instruction "`n到着後にキーをすべて離し、Enterで確定してください。",
+        "● 記録中", "info")
     segments := []
     previousMask := 0
     segmentStartedAt := MonotonicMs()
     routeStartedAt := segmentStartedAt
-    lastMovementAt := 0
     movementObserved := false
-    loop {
-        if !WaitRegistration(25)
-            throw Error("登録を中止しました")
-        now := MonotonicMs()
-        mask := CurrentPhysicalMovementMask()
-        if (mask & 3) = 3 || (mask & 12) = 12
-            throw Error("反対方向のキーが同時に押されました。ルートを登録し直してください。")
-        if mask != previousMask {
-            duration := now - segmentStartedAt
-            if duration >= 25 && (previousMask || movementObserved)
-                AppendRouteSegments(segments, duration, previousMask)
-            previousMask := mask
-            segmentStartedAt := now
+    inputObserved := false
+    enterWasDown := false
+    lastUiAt := 0
+    pausedAt := 0
+    try {
+        loop {
+            if !WaitRegistration(25)
+                throw Error("登録を中止しました")
+            now := MonotonicMs()
+            if !WinActive("ahk_id " State.targetHwnd) {
+                ; 復帰キーや他アプリで押したWを未記録のままFiveMへ通さないよう、
+                ; フォーカスが戻る前から移動を遮断して全キーreleaseを待ちます。
+                State.registrationMovementBlocked := true
+                if previousMask {
+                    AppendRouteSegments(segments, now - segmentStartedAt, previousMask)
+                    previousMask := 0
+                }
+                SetRegistrationViewMask(0)
+                UpdateRegistrationInputState(0, now - routeStartedAt)
+                UpdateRegistrationOverlay(title,
+                    "記録を一時停止しました。キーを離してFiveMへ戻ると再開します。",
+                    "● 一時停止", "error")
+                try State.registrationOverlay.Hide()
+                pausedAt := now
+                while !WinActive("ahk_id " State.targetHwnd) {
+                    if !WaitRegistration(50)
+                        throw Error("登録を中止しました")
+                }
+                while CurrentPhysicalRouteMask() || GetKeyState("Enter", "P")
+                    || CurrentUnsupportedRegistrationKey() {
+                    UpdateRegistrationInputState(CurrentPhysicalRouteMask(), now - routeStartedAt)
+                    if !WaitRegistration(25)
+                        throw Error("登録を中止しました")
+                }
+                resumedAt := MonotonicMs()
+                ShowRegistrationOverlayAtTarget()
+                routeStartedAt += resumedAt - pausedAt
+                segmentStartedAt := resumedAt
+                enterWasDown := false
+                State.registrationMovementBlocked := false
+                UpdateRegistrationOverlay(title,
+                    instruction "`n到着後にキーをすべて離し、Enterで確定してください。",
+                    "● 記録中", "info")
+                continue
+            }
+            mask := CurrentPhysicalRouteMask()
+            if (mask & 3) = 3 || (mask & 12) = 12
+                || (mask & 48) = 48 || (mask & 192) = 192
+                throw Error("反対方向のキーが同時に押されました。キーを一方向ずつ使ってください。")
+            requestedViewMask := (mask >> 4) & 15
+            if requestedViewMask != State.registrationViewMask {
+                if !SetRegistrationViewMask(requestedViewMask)
+                    throw Error("FiveMの視点を動かせませんでした。バックグラウンド接続を確認してください。")
+                now := MonotonicMs()
+            }
+            maskChanged := mask != previousMask
+            if maskChanged {
+                duration := now - segmentStartedAt
+                if duration >= 25 && (previousMask || inputObserved) {
+                    ; 中間停止は慣性を止める分だけ残し、考えていた長い待ち時間は圧縮します。
+                    recordedDuration := previousMask ? duration : Min(duration, 300)
+                    AppendRouteSegments(segments, recordedDuration, previousMask)
+                }
+                previousMask := mask
+                segmentStartedAt := now
+                UpdateRegistrationOverlay(title,
+                    instruction "`n到着後にキーをすべて離し、Enterで確定してください。",
+                    "● 記録中", "info")
+            }
+            if mask {
+                inputObserved := true
+                if mask & 15
+                    movementObserved := true
+            }
+            if now - lastUiAt >= 100 || maskChanged {
+                UpdateRegistrationInputState(mask, now - routeStartedAt)
+                lastUiAt := now
+            }
+
+            enterDown := GetKeyState("Enter", "P")
+            if enterDown && !enterWasDown {
+                if mask {
+                    UpdateRegistrationOverlay(title,
+                        "先に移動キーと矢印キーをすべて離してから、Enterを押してください。",
+                        "● キーを離してください", "error")
+                } else if requireMovement && !movementObserved {
+                    UpdateRegistrationOverlay(title, instruction,
+                        "● W/A/S/Dの移動がまだありません", "error")
+                } else {
+                    break
+                }
+            }
+            enterWasDown := enterDown
+            if now - routeStartedAt >= 60000
+                throw Error("1区間の記録が60秒を超えたため中止しました。車両を近くへ停めてください。")
         }
-        if mask {
-            movementObserved := true
-            lastMovementAt := now
-        }
-        if movementObserved && !mask && now - lastMovementAt >= Config.routeIdleFinishMs
-            break
-        if now - routeStartedAt >= 45000
-            throw Error("ルート記録が45秒を超えたため中止しました。車両を近くへ停めてください。")
+    } finally {
+        ; 検出・確認・保存前テスト中に未記録の移動が入らないよう、
+        ; 記録ループを抜けた瞬間からW/A/S/Dを再び遮断します。
+        State.registrationMovementBlocked := true
+        SetRegistrationViewMask(0)
+        UpdateRegistrationInputState(0, MonotonicMs() - routeStartedAt)
     }
-    ; 到着後の無操作時間は再生しません。
+
+    ; Enter確定時の無操作時間は再生しません。
     if previousMask
         AppendRouteSegments(segments, MonotonicMs() - segmentStartedAt, previousMask)
     route := ""
     for index, step in segments
         route .= (index > 1 ? "," : "") step
-    if !IsValidRoute(route)
-        throw Error("移動が短すぎるか、ルートを正しく記録できませんでした。")
+    while GetKeyState("Enter", "P") || CurrentPhysicalRouteMask()
+        || CurrentUnsupportedRegistrationKey() {
+        if !WaitRegistration(20)
+            throw Error("登録を中止しました")
+    }
+    if !route && !requireMovement
+        return ""
+    if !IsValidRoute(route, requireMovement, requireMovement ? 150 : 25)
+        throw Error(requireMovement ? "移動が短すぎるか、ルートを正しく記録できませんでした。"
+            : "視点または立ち位置の調整を正しく記録できませんでした。")
     return route
+}
+
+ConfirmRegistrationStart(actionMode) {
+    loop 8 {
+        UpdateRegistrationOverlay("車両登録　1/4", "現在の作業ボタンを検出しています…",
+            "● 再検出中", "info")
+        if ProbeWorkTarget(actionMode) {
+            UpdateRegistrationOverlay("車両登録　1/4", "作業場所と開始視点を確認しました。",
+                "● 作業ボタンを検出", "success")
+            return WaitRegistration(650)
+        }
+        UpdateRegistrationOverlay("車両登録　1/4",
+            "まだ見つかりません。W/A/S/Dで立ち位置、矢印キーで開始視点を微調整してください。",
+            "● 作業ボタン未検出", "error")
+        ; ここでの調整後の位置・視点が往路の起点になるため、調整断片自体は保存しません。
+        RecordMovementRoute("車両登録　1/4",
+            "作業ボタンが画面内に入るよう開始位置を調整します", false, false)
+    }
+    return false
+}
+
+CaptureStorageWithGuidedAdjustment(&route, &storageId, &storageType) {
+    global State
+    loop 8 {
+        UpdateRegistrationOverlay("車両登録　3/4", "「ストレージを開く」を検出しています…",
+            "● 再検出中", "info")
+        if OpenStorageAndCapture(&storageId, &storageType) {
+            UpdateRegistrationOverlay("車両登録　3/4", "車両とストレージを確認しました。",
+                "● ストレージを検出", "success")
+            return WaitRegistration(650)
+        }
+        UpdateRegistrationOverlay("車両登録　3/4",
+            "まだ見つかりません。W/A/S/Dで立ち位置、矢印キーで視点を微調整してください。",
+            "● ストレージ未検出", "error")
+        adjustment := RecordMovementRoute("車両登録　3/4",
+            "ストレージが画面内に入るよう微調整します", false, false)
+        route := CombineRoutes(route, adjustment)
+        if !IsValidRoute(route)
+            throw Error("往路が長すぎるか、調整データを保存できませんでした。")
+    }
+    return false
+}
+
+ConfirmWorkWithGuidedAdjustment(&route, actionMode) {
+    global State
+    loop 8 {
+        UpdateRegistrationOverlay("車両登録　4/4", "元の作業ボタンを検出しています…",
+            "● 再検出中", "info")
+        if ProbeWorkTarget(actionMode) {
+            UpdateRegistrationOverlay("車両登録　4/4", "作業場所を確認しました。続いて往復テストを行います。",
+                "● 作業ボタンを検出", "success")
+            return WaitRegistration(650)
+        }
+        UpdateRegistrationOverlay("車両登録　4/4",
+            "まだ見つかりません。W/A/S/Dで立ち位置、矢印キーで視点を微調整してください。",
+            "● 作業ボタン未検出", "error")
+        adjustment := RecordMovementRoute("車両登録　4/4",
+            "作業ボタンが画面内に入るよう微調整します", false, false)
+        route := CombineRoutes(route, adjustment)
+        if !IsValidRoute(route)
+            throw Error("復路が長すぎるか、調整データを保存できませんでした。")
+    }
+    return false
+}
+
+VerifyVehicleRegistration(outboundRoute, returnRoute, storageId, storageType, actionMode) {
+    UpdateRegistrationFooter("往復テスト中は操作しないでください　　　Esc 中止")
+    UpdateRegistrationOverlay("保存前の往復テスト", "記録した移動と視点で車両へ向かいます。操作せずお待ちください。",
+        "● 往路を再生", "info")
+    if !PlayRegistrationRoute(outboundRoute)
+        throw Error("保存前テストで車両まで移動できませんでした。ルートを登録し直してください。")
+
+    UpdateRegistrationOverlay("保存前の往復テスト", "登録した車両ストレージを照合しています…",
+        "● 車両を確認", "info")
+    if !OpenStorageAndCapture(&testStorageId, &testStorageType) {
+        RunBackgroundBridge("close-inventory")
+        ReleaseBackgroundTarget(true)
+        throw Error("保存前テストで車両ストレージを検出できませんでした。安全のため自動復路は再生しません。手動で作業場所へ戻ってください。")
+    }
+    if testStorageId != storageId || testStorageType != storageType {
+        RunBackgroundBridge("close-inventory")
+        ReleaseBackgroundTarget(true)
+        throw Error("保存前テストで別のストレージを検出しました。安全のため自動復路は再生しません。手動で作業場所へ戻ってください。")
+    }
+    RunBackgroundBridge("close-inventory")
+
+    UpdateRegistrationOverlay("保存前の往復テスト", "記録した復路と視点で作業場所へ戻ります。",
+        "● 復路を再生", "info")
+    if !PlayRegistrationRoute(returnRoute)
+        throw Error("保存前テストで作業場所へ戻れませんでした。入力を解除しました。")
+
+    UpdateRegistrationOverlay("保存前の往復テスト", "復帰先の作業ボタンを照合しています…",
+        "● 作業場所を確認", "info")
+    if !ProbeWorkTarget(actionMode)
+        throw Error("保存前テストの復帰位置で作業ボタンを検出できませんでした。")
+    UpdateRegistrationOverlay("登録完了", "往路・車両・復路・作業場所の実動作を確認しました。",
+        "● 往復テスト成功", "success")
+    if !WaitRegistration(850)
+        throw Error("登録を中止しました")
+}
+
+PlayRegistrationRoute(route) {
+    global State, Config
+    if !IsValidRoute(route) || !State.registrationActive || State.registrationCancelled
+        return false
+    ReleaseBackgroundTarget(true)
+    if !EnsureDevConPort()
+        return false
+    port := State.lastDevConPort
+    routeStartedAt := MonotonicMs()
+    result := RunBackgroundBridgeCancelable(0, "play-route", port, route)
+    elapsedMs := MonotonicMs() - routeStartedAt
+    if !RegExMatch(result, "^ROUTE (29200|29300) (\d+)$", &parts)
+        return false
+    totalMs := parts[2] + 0
+    return totalMs = RouteTotalMs(route) && elapsedMs + 250 >= totalMs
+        && WaitRegistration(Config.routeSettleMs)
+}
+
+SetRegistrationViewMask(mask) {
+    global State
+    mask := Integer(mask)
+    if mask < 0 || mask > 15 || (mask & 3) = 3 || (mask & 12) = 12
+        return false
+    if mask = State.registrationViewMask
+        return true
+    if !EnsureDevConPort()
+        return false
+    port := State.lastDevConPort
+    result := RunBridgeForContext(0, "set-view", port, mask)
+    if result != "VIEW " port " " mask {
+        WriteDiagnostic("REGISTRATION_VIEW_ERROR=" result)
+        RunBackgroundBridge("deactivate-" port)
+        State.registrationViewMask := 0
+        return false
+    }
+    State.registrationViewMask := mask
+    return true
 }
 
 CurrentPhysicalMovementMask() {
@@ -1238,6 +1748,27 @@ CurrentPhysicalMovementMask() {
     return mask
 }
 
+CurrentPhysicalRouteMask() {
+    mask := CurrentPhysicalMovementMask()
+    if GetKeyState("Up", "P")
+        mask |= 16
+    if GetKeyState("Down", "P")
+        mask |= 32
+    if GetKeyState("Left", "P")
+        mask |= 64
+    if GetKeyState("Right", "P")
+        mask |= 128
+    return mask
+}
+
+CurrentUnsupportedRegistrationKey() {
+    for keyName in ["LShift", "RShift", "LControl", "RControl", "Space"] {
+        if GetKeyState(keyName, "P")
+            return keyName
+    }
+    return ""
+}
+
 AppendRouteSegments(segments, duration, mask) {
     duration := Round(duration)
     while duration > 3000 {
@@ -1246,6 +1777,12 @@ AppendRouteSegments(segments, duration, mask) {
     }
     if duration >= 25
         segments.Push(duration ":" mask)
+}
+
+CombineRoutes(firstRoute, secondRoute) {
+    firstRoute := Trim(String(firstRoute), " ,")
+    secondRoute := Trim(String(secondRoute), " ,")
+    return !firstRoute ? secondRoute : !secondRoute ? firstRoute : firstRoute "," secondRoute
 }
 
 ProbeWorkTarget(actionMode, expectedGeneration := 0) {
@@ -1320,7 +1857,8 @@ OpenStorageAndCapture(&storageId, &storageType, expectedGeneration := 0) {
 }
 
 RunBridgeForContext(expectedGeneration, mode, bridgeArgs*) {
-    return expectedGeneration
+    global State
+    return expectedGeneration || State.registrationActive
         ? RunBackgroundBridgeCancelable(expectedGeneration, mode, bridgeArgs*)
         : RunBackgroundBridgeArgs(mode, bridgeArgs*)
 }
@@ -1355,6 +1893,7 @@ DeleteVehicleRegistration(*) {
     Config.vehicleRegistered := 0
     Config.vehicleStorageId := ""
     Config.vehicleStorageType := ""
+    Config.vehicleRouteFormat := 0
     Config.vehicleOutboundRoute := ""
     Config.vehicleReturnRoute := ""
     try SaveAllSettingsAtomically()
@@ -1835,7 +2374,9 @@ RunUpdaterCapabilities() {
 StartMining(*) {
     global State, Config
 
-    if State.running
+    ; UI・トレイ・設定可能なショートカットのどこから呼ばれても、
+    ; 車両登録と通常自動操作を同じbridge/state上で同時実行しません。
+    if !AutomationStartAllowed(State.running, State.registrationActive)
         return
     if State.updateOperation {
         State.statusLabel.Text := "●  アップデート確認が終わるまでお待ちください"
@@ -3037,7 +3578,7 @@ RunBackgroundBridgeArgs(mode, bridgeArgs*) {
 RunBackgroundBridgeCancelable(expectedGeneration, mode, bridgeArgs*) {
     global State
 
-    if !IsCurrentRun(expectedGeneration)
+    if !IsBridgeOperationContextValid(expectedGeneration)
         return "ERROR CANCELLED"
     if !RegExMatch(mode, "^[a-z0-9-]+$")
         return "ERROR invalid bridge mode"
@@ -3063,7 +3604,7 @@ RunBackgroundBridgeCancelable(expectedGeneration, mode, bridgeArgs*) {
             commandLine .= " " QuoteCommandArg(value)
         }
         Critical "On"
-        if !IsCurrentRun(expectedGeneration) {
+        if !IsBridgeOperationContextValid(expectedGeneration) {
             Critical "Off"
             return "ERROR CANCELLED"
         }
@@ -3082,7 +3623,7 @@ RunBackgroundBridgeCancelable(expectedGeneration, mode, bridgeArgs*) {
             : mode = "deposit-delta" ? 50000 : 9000
         deadline := MonotonicMs() + timeoutMs
         while helperPid && ProcessExist(helperPid) {
-            if !IsCurrentRun(expectedGeneration) {
+            if !IsBridgeOperationContextValid(expectedGeneration) {
                 CancelBridgeProcess(helperPid, mode, operationToken)
                 RunBackgroundBridge("deactivate")
                 return "ERROR CANCELLED"
@@ -3093,11 +3634,11 @@ RunBackgroundBridgeCancelable(expectedGeneration, mode, bridgeArgs*) {
                 return "ERROR TARGET_CLOSED"
             }
             if mode = "play-route" && WinActive("ahk_id " State.targetHwnd)
-                && CurrentPhysicalMovementMask() {
+                && CurrentPhysicalRouteMask() {
                 CancelBridgeProcess(helperPid, mode, operationToken)
                 RunBackgroundBridge("deactivate")
-                State.lastStorageResult := "手動入力を検知して中止"
-                return "ERROR MANUAL_MOVEMENT"
+                State.lastStorageResult := "手動の移動・視点入力を検知して中止"
+                return "ERROR MANUAL_INPUT"
             }
             if MonotonicMs() >= deadline {
                 CancelBridgeProcess(helperPid, mode, operationToken)
@@ -3121,6 +3662,12 @@ RunBackgroundBridgeCancelable(expectedGeneration, mode, bridgeArgs*) {
         Critical "Off"
         try FileDelete resultPath
     }
+}
+
+IsBridgeOperationContextValid(expectedGeneration) {
+    global State
+    return expectedGeneration ? IsCurrentRun(expectedGeneration)
+        : State.registrationActive && !State.registrationCancelled
 }
 
 CancelActiveBridgeProcess() {
@@ -4028,6 +4575,7 @@ IsValidVehicleProfile(config) {
         && IsValidBase64Token(config.vehicleStorageType)
         && (config.vehicleWorkMode = "mining" || config.vehicleWorkMode = "washing"
             || config.vehicleWorkMode = "gold")
+        && (config.vehicleRouteFormat = 1 || config.vehicleRouteFormat = 2)
         && IsValidRoute(config.vehicleOutboundRoute)
         && IsValidRoute(config.vehicleReturnRoute)
 }
@@ -4039,29 +4587,34 @@ IsValidBase64Token(value) {
         && RegExMatch(value, "^[A-Za-z0-9+/]+={0,2}$")
 }
 
-IsValidRoute(route) {
+IsValidRoute(route, requireMovement := true, minimumTotalMs := 150) {
     route := String(route)
-    if StrLen(route) < 4 || StrLen(route) > 4096
+    if StrLen(route) < 4 || StrLen(route) > 8192
         return false
     steps := StrSplit(route, ",")
-    if steps.Length < 1 || steps.Length > 160
+    if steps.Length < 1 || steps.Length > 240
         return false
     total := 0
     hasMovement := false
+    hasInput := false
     for step in steps {
-        if !RegExMatch(step, "^(\d{2,4}):(\d{1,2})$", &parts)
+        if !RegExMatch(step, "^(\d{2,4}):(\d{1,3})$", &parts)
             return false
         duration := parts[1] + 0
         mask := parts[2] + 0
-        if duration < 25 || duration > 3000 || mask < 0 || mask > 15
+        if duration < 25 || duration > 3000 || mask < 0 || mask > 255
             return false
         if (mask & 3) = 3 || (mask & 12) = 12
+            || (mask & 48) = 48 || (mask & 192) = 192
             return false
         total += duration
-        if mask
+        if mask & 15
             hasMovement := true
+        if mask
+            hasInput := true
     }
-    return hasMovement && total >= 150 && total <= 45000
+    return hasInput && (!requireMovement || hasMovement)
+        && total >= minimumTotalMs && total <= 90000
 }
 
 RouteTotalMs(route) {
@@ -4073,6 +4626,19 @@ RouteTotalMs(route) {
         total += SubStr(step, 1, separator - 1) + 0
     }
     return total
+}
+
+RouteViewSegmentCount(route) {
+    if !IsValidRoute(route, false)
+        return 0
+    count := 0
+    for step in StrSplit(route, ",") {
+        separator := InStr(step, ":")
+        mask := SubStr(step, separator + 1) + 0
+        if mask & 240
+            count += 1
+    }
+    return count
 }
 
 ReadFoodKey(settingsFile) {

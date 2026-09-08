@@ -125,8 +125,9 @@ $bridgeOutput = Join-Path $stageRoot 'AI採掘機_Background.exe'
 $updaterOutput = Join-Path $stageRoot 'AI採掘機_Updater.exe'
 Invoke-CSharpBuild -Source $bridgeSource -Output $bridgeOutput
 Invoke-CSharpBuild -Source $updaterSource -Output $updaterOutput
-Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'CAPS 4 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY'
+Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'CAPS 5 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW'
 Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'SELFTEST OK' -Mode 'self-test'
+& (Join-Path $PSScriptRoot 'Test-BackgroundBridge.ps1') -Bridge $bridgeOutput
 Invoke-CapabilitySmokeTest -Executable $updaterOutput -Expected 'UPDATE_CAPS 1 CHECK DOWNLOAD APPLY'
 
 $stagedMain = Join-Path $stageRoot 'mining-auto.ahk'

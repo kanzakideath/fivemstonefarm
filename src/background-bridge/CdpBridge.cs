@@ -16,9 +16,9 @@ internal static class CdpBridge
     private const string TargetsUrl = "http://127.0.0.1:13172/json";
     private const string TargetFramePart = "cfx-nui-ox_target/web/index.html";
     private const string InventoryFramePart = "cfx-nui-ox_inventory/web/build/index.html";
-    private const string Capabilities = "CAPS 4 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY";
+    private const string Capabilities = "CAPS 5 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW";
     private const int MaximumRouteSteps = 240;
-    private const int MaximumRouteMilliseconds = 120000;
+    private const int MaximumRouteMilliseconds = 90000;
     private const int MaximumMetadataBytes = 8192;
     private const int MaximumMetadataTokenLength = 10923;
     private static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = 1024 * 1024 };
@@ -51,9 +51,11 @@ internal static class CdpBridge
             || mode == "deactivate-29200" || mode == "deactivate-29300");
         bool nudgeMode = args.Length == 4 && mode == "nudge-forward";
         bool routeMode = args.Length == 4 && mode == "play-route";
+        bool viewMode = args.Length == 4 && mode == "set-view";
         bool depositMode = args.Length == 6 && mode == "deposit-delta";
         bool cancelOperationMode = args.Length == 3 && mode == "cancel-operation";
-        if (!twoArgumentMode && !nudgeMode && !routeMode && !depositMode && !cancelOperationMode)
+        if (!twoArgumentMode && !nudgeMode && !routeMode && !viewMode
+            && !depositMode && !cancelOperationMode)
             return 64;
 
         string result;
@@ -86,6 +88,16 @@ internal static class CdpBridge
                 List<RouteStep> steps = ParseRoute(args[3]);
                 result = PlayRoute(port, steps);
             }
+            else if (viewMode)
+            {
+                int port;
+                int mask;
+                if (!TryParseDevConPort(args[2], out port)
+                    || !Int32.TryParse(args[3], NumberStyles.None, CultureInfo.InvariantCulture, out mask)
+                    || !IsValidViewMask(mask))
+                    return 64;
+                result = SetViewInput(port, mask);
+            }
             else if (depositMode)
             {
                 string storageId = DecodeIdentifier(args[2]);
@@ -112,7 +124,8 @@ internal static class CdpBridge
             {
                 int selectedPort = mode.EndsWith("29200", StringComparison.Ordinal) ? 29200
                     : mode.EndsWith("29300", StringComparison.Ordinal) ? 29300 : 0;
-                SendRelease(selectedPort);
+                if (!SendRelease(selectedPort))
+                    throw new InvalidOperationException("INPUT_RELEASE_UNAVAILABLE");
                 result = "RELEASED";
             }
             else if (mode.StartsWith("try-", StringComparison.Ordinal))
@@ -168,6 +181,7 @@ internal static class CdpBridge
             || result.StartsWith("ACTIVATED ", StringComparison.Ordinal)
             || result.StartsWith("NUDGED ", StringComparison.Ordinal)
             || result.StartsWith("ROUTE ", StringComparison.Ordinal)
+            || result.StartsWith("VIEW ", StringComparison.Ordinal)
             || result.StartsWith("SNAPSHOT ", StringComparison.Ordinal)
             || result.StartsWith("STORAGE ", StringComparison.Ordinal)
             || result.StartsWith("DEPOSITED ", StringComparison.Ordinal)
@@ -176,7 +190,7 @@ internal static class CdpBridge
 
     private static string RunSelfTest()
     {
-        List<RouteStep> route = ParseRoute("150:1,25:0,150:8");
+        List<RouteStep> route = ParseRoute("150:65,25:0,150:136");
         Dictionary<string, int> baseline = ParseBaseline("0001.ore.e30=10");
         const string canonicalMetadata = "{\"a\":1,\"nested\":{\"a\":true,\"b\":2},\"z\":[3,null,\"x\"]}";
         string canonicalToken = EncodeBase64Url(canonicalMetadata);
@@ -187,8 +201,18 @@ internal static class CdpBridge
         const string exponentMetadata = "{\"ratio\":1e-7}";
         Dictionary<string, int> exponentBaseline = ParseBaseline(
             "0004.ore." + EncodeBase64Url(exponentMetadata) + "=2");
+        var routeCommand = new StringBuilder(InputReleaseCommand());
+        AppendRoutePresses(routeCommand, 65);
+        var viewCommand = new StringBuilder(ViewReleaseCommand());
+        AppendViewPresses(viewCommand, 10);
         int count;
-        if (route.Count != 3 || route[0].Mask != 1 || route[2].Mask != 8
+        if (route.Count != 3 || route[0].Mask != 65 || route[2].Mask != 136
+            || !RouteIsRejected("150:48") || !RouteIsRejected("150:192")
+            || !RouteIsRejected("150:256")
+            || routeCommand.ToString().IndexOf(";+move_up_only", StringComparison.Ordinal) < 0
+            || routeCommand.ToString().IndexOf(";+look_left_only", StringComparison.Ordinal) < 0
+            || viewCommand.ToString().IndexOf(";+look_down_only", StringComparison.Ordinal) < 0
+            || viewCommand.ToString().IndexOf(";+look_right_only", StringComparison.Ordinal) < 0
             || !baseline.TryGetValue("1\nore\n{}", out count) || count != 10
             || !canonicalBaseline.TryGetValue("2\nore\n" + canonicalMetadata, out count) || count != 3
             || largeToken.Length <= 8192 || largeToken.Length > MaximumMetadataTokenLength
@@ -206,6 +230,19 @@ internal static class CdpBridge
         try
         {
             ParseBaseline("0001.ore." + EncodeBase64Url(metadata) + "=1");
+            return false;
+        }
+        catch (ArgumentException)
+        {
+            return true;
+        }
+    }
+
+    private static bool RouteIsRejected(string route)
+    {
+        try
+        {
+            ParseRoute(route);
             return false;
         }
         catch (ArgumentException)
@@ -509,26 +546,27 @@ internal static class CdpBridge
         throw new InvalidOperationException("ACTIVATION_UNAVAILABLE");
     }
 
-    private static void SendRelease(int selectedPort)
+    private static bool SendRelease(int selectedPort)
     {
         if (selectedPort == 29200 || selectedPort == 29300)
         {
-            TrySendDevCon(selectedPort, "-ox_target");
-            SendMovementRelease(selectedPort);
+            bool targetReleased = TrySendDevCon(selectedPort, "-ox_target");
+            bool inputReleased = SendInputRelease(selectedPort);
+            return targetReleased && inputReleased;
         }
-        else
+        bool anyReleased = false;
+        foreach (int port in new[] { 29200, 29300 })
         {
-            foreach (int port in new[] { 29200, 29300 })
-            {
-                TrySendDevCon(port, "-ox_target");
-                SendMovementRelease(port);
-            }
+            bool targetReleased = TrySendDevCon(port, "-ox_target");
+            bool inputReleased = SendInputRelease(port);
+            anyReleased = anyReleased || (targetReleased && inputReleased);
         }
+        return anyReleased;
     }
 
-    private static void SendMovementRelease(int port)
+    private static bool SendInputRelease(int port)
     {
-        TrySendDevCon(port, "-move_up_only;-move_left_only;-move_down_only;-move_right_only", 0);
+        return TrySendDevCon(port, InputReleaseCommand(), 0);
     }
 
     private static string NudgeForward(int port, int milliseconds)
@@ -545,7 +583,7 @@ internal static class CdpBridge
         int total = 0;
         try
         {
-            if (!TrySendDevCon(port, MovementReleaseCommand(), 0))
+            if (!TrySendDevCon(port, InputReleaseCommand(), 0))
                 throw new InvalidOperationException("MOVEMENT_UNAVAILABLE");
 
             // Keep timing in this owned helper instead of queuing a long `wait` command in
@@ -553,8 +591,8 @@ internal static class CdpBridge
             // no future movement remains buffered inside the game after cancellation.
             foreach (RouteStep step in steps)
             {
-                var command = new StringBuilder(MovementReleaseCommand());
-                AppendMovementPresses(command, step.Mask);
+                var command = new StringBuilder(InputReleaseCommand());
+                AppendRoutePresses(command, step.Mask);
                 if (!TrySendDevCon(port, command.ToString(), 0))
                     throw new InvalidOperationException("MOVEMENT_UNAVAILABLE");
                 total += step.Duration;
@@ -565,21 +603,53 @@ internal static class CdpBridge
         }
         finally
         {
-            SendMovementRelease(port);
+            if (!SendInputRelease(port))
+                throw new InvalidOperationException("INPUT_RELEASE_UNAVAILABLE");
         }
     }
 
-    private static string MovementReleaseCommand()
+    private static string SetViewInput(int port, int mask)
     {
-        return "-move_up_only;-move_left_only;-move_down_only;-move_right_only";
+        var command = new StringBuilder(ViewReleaseCommand());
+        AppendViewPresses(command, mask);
+        if (!TrySendDevCon(port, command.ToString(), 0))
+            throw new InvalidOperationException("VIEW_UNAVAILABLE");
+        return "VIEW " + port.ToString(CultureInfo.InvariantCulture) + " "
+            + mask.ToString(CultureInfo.InvariantCulture);
     }
 
-    private static void AppendMovementPresses(StringBuilder command, int mask)
+    private static string InputReleaseCommand()
+    {
+        return "-move_up_only;-move_left_only;-move_down_only;-move_right_only;"
+            + ViewReleaseCommand();
+    }
+
+    private static string ViewReleaseCommand()
+    {
+        return "-look_up_only;-look_down_only;-look_left_only;-look_right_only";
+    }
+
+    private static void AppendRoutePresses(StringBuilder command, int mask)
     {
         if ((mask & 1) != 0) command.Append(";+move_up_only");
         if ((mask & 2) != 0) command.Append(";+move_down_only");
         if ((mask & 4) != 0) command.Append(";+move_left_only");
         if ((mask & 8) != 0) command.Append(";+move_right_only");
+        AppendViewPresses(command, (mask >> 4) & 15);
+    }
+
+    private static void AppendViewPresses(StringBuilder command, int mask)
+    {
+        if ((mask & 1) != 0) command.Append(";+look_up_only");
+        if ((mask & 2) != 0) command.Append(";+look_down_only");
+        if ((mask & 4) != 0) command.Append(";+look_left_only");
+        if ((mask & 8) != 0) command.Append(";+look_right_only");
+    }
+
+    private static bool IsValidViewMask(int mask)
+    {
+        return mask >= 0 && mask <= 15
+            && (mask & 3) != 3 && (mask & 12) != 12;
     }
 
     private static List<RouteStep> ParseRoute(string input)
@@ -599,9 +669,11 @@ internal static class CdpBridge
             if (fields.Length != 2
                 || !Int32.TryParse(fields[0], NumberStyles.None, CultureInfo.InvariantCulture, out duration)
                 || !Int32.TryParse(fields[1], NumberStyles.None, CultureInfo.InvariantCulture, out mask)
-                || duration < 10 || duration > 5000 || mask < 0 || mask > 15
+                || duration < 25 || duration > 3000 || mask < 0 || mask > 255
                 || ((mask & 1) != 0 && (mask & 2) != 0)
-                || ((mask & 4) != 0 && (mask & 8) != 0))
+                || ((mask & 4) != 0 && (mask & 8) != 0)
+                || ((mask & 16) != 0 && (mask & 32) != 0)
+                || ((mask & 64) != 0 && (mask & 128) != 0))
                 throw new ArgumentException();
             total += duration;
             if (total > MaximumRouteMilliseconds)
