@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <meta name="ai-miner-ui-schema" content="1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>AI採掘機</title>
+  <link rel="stylesheet" href="vendor/framework7-bundle.min.css">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <svg class="icon-definitions" aria-hidden="true" focusable="false">
+    <symbol id="icon-overview" viewBox="0 0 24 24">
+      <path d="M4 13.2a8 8 0 1 1 16 0"></path>
+      <path d="M12 13.2l4-4"></path>
+      <path d="M5.6 18.2h12.8"></path>
+    </symbol>
+    <symbol id="icon-vehicle" viewBox="0 0 24 24">
+      <path d="M5 16.5h14l-1-6.2a2 2 0 0 0-2-1.7H8a2 2 0 0 0-2 1.7L5 16.5Z"></path>
+      <path d="M3.8 13.3v5.2h2.4M20.2 13.3v5.2h-2.4"></path>
+      <path d="M7.5 13h9"></path>
+      <circle cx="7.2" cy="16.5" r="1"></circle>
+      <circle cx="16.8" cy="16.5" r="1"></circle>
+    </symbol>
+    <symbol id="icon-settings" viewBox="0 0 24 24">
+      <path d="M4 7h9M17 7h3M4 17h3M11 17h9M4 12h3M11 12h9"></path>
+      <circle cx="15" cy="7" r="2"></circle>
+      <circle cx="9" cy="12" r="2"></circle>
+      <circle cx="9" cy="17" r="2"></circle>
+    </symbol>
+    <symbol id="icon-update" viewBox="0 0 24 24">
+      <path d="M19 8a8 8 0 1 0 1 6"></path>
+      <path d="M19 4v4h-4"></path>
+    </symbol>
+    <symbol id="icon-chevron" viewBox="0 0 24 24">
+      <path d="m9 5 7 7-7 7"></path>
+    </symbol>
+    <symbol id="icon-check" viewBox="0 0 24 24">
+      <path d="m5 12.5 4.2 4.2L19 7"></path>
+    </symbol>
+    <symbol id="icon-play" viewBox="0 0 24 24">
+      <path class="fill-path" d="M8 5.8v12.4c0 .9 1 1.4 1.7.9l8.5-6.2a1.1 1.1 0 0 0 0-1.8L9.7 4.9C9 4.4 8 4.9 8 5.8Z"></path>
+    </symbol>
+    <symbol id="icon-stop" viewBox="0 0 24 24">
+      <rect class="fill-path" x="6" y="6" width="12" height="12" rx="2.5"></rect>
+    </symbol>
+    <symbol id="icon-car-badge" viewBox="0 0 24 24">
+      <path d="M4.5 13.5h15l-1.2-5a2 2 0 0 0-2-1.5H7.7a2 2 0 0 0-2 1.5l-1.2 5Z"></path>
+      <path d="M3.5 12.5v5h3v-2h11v2h3v-5"></path>
+    </symbol>
+    <symbol id="icon-link" viewBox="0 0 24 24">
+      <path d="m9.5 14.5 5-5"></path>
+      <path d="M7 16.5 5.5 18A3.5 3.5 0 1 1 .5 13l3-3a3.5 3.5 0 0 1 5 0"></path>
+      <path d="m17 7.5 1.5-1.5a3.5 3.5 0 1 1 5 5l-3 3a3.5 3.5 0 0 1-5 0"></path>
+    </symbol>
+    <symbol id="icon-shield" viewBox="0 0 24 24">
+      <path d="M12 3 5.5 5.6v5.8c0 4.2 2.6 7.6 6.5 9.6 3.9-2 6.5-5.4 6.5-9.6V5.6L12 3Z"></path>
+      <path d="m8.7 12 2.1 2.1 4.6-4.6"></path>
+    </symbol>
+  </svg>
+
+  <div id="app">
+    <div class="view view-main">
+      <div class="page page-current" data-name="main">
+        <div class="app-shell">
+          <aside class="sidebar" aria-label="メインナビゲーション">
+            <div class="brand-block">
+              <div class="brand-mark" aria-hidden="true">
+                <svg><use href="#icon-overview"></use></svg>
+              </div>
+              <div class="brand-copy">
+                <strong>AI採掘機</strong>
+                <span id="app-version">接続待機中</span>
+              </div>
+            </div>
+
+            <nav class="sidebar-nav" role="tablist" aria-label="画面">
+              <span class="sidebar-selection" aria-hidden="true"></span>
+              <button id="tab-overview" class="sidebar-item is-selected" type="button" role="tab" aria-selected="true" aria-controls="screen-overview" data-page="overview">
+                <svg aria-hidden="true"><use href="#icon-overview"></use></svg><span>概要</span>
+              </button>
+              <button id="tab-vehicle" class="sidebar-item" type="button" role="tab" aria-selected="false" aria-controls="screen-vehicle" data-page="vehicle">
+                <svg aria-hidden="true"><use href="#icon-vehicle"></use></svg><span>車両</span>
+              </button>
+              <button id="tab-settings" class="sidebar-item" type="button" role="tab" aria-selected="false" aria-controls="screen-settings" data-page="settings">
+                <svg aria-hidden="true"><use href="#icon-settings"></use></svg><span>設定</span>
+              </button>
+              <button id="tab-update" class="sidebar-item" type="button" role="tab" aria-selected="false" aria-controls="screen-update" data-page="update">
+                <svg aria-hidden="true"><use href="#icon-update"></use></svg><span>アップデート</span><span id="update-badge" class="nav-badge" hidden></span>
+              </button>
+            </nav>
+
+            <div class="sidebar-footer" aria-live="polite">
+              <span id="sidebar-connection-dot" class="connection-dot tone-neutral" aria-hidden="true"></span>
+              <span id="sidebar-connection">FiveMを確認中</span>
+            </div>
+          </aside>
+
+          <main class="content-stage" id="content-stage">
+            <section id="screen-overview" class="screen is-active" data-page="overview" role="tabpanel" aria-labelledby="tab-overview">
+              <div class="content-column">
+                <header class="page-heading">
+                  <h1>自動操作</h1>
+                  <p id="overview-subtitle">FiveMの状態を確認しています</p>
+                </header>
+
+                <section class="section-block" aria-labelledby="overview-state-heading">
+                  <h2 id="overview-state-heading" class="section-label">状態</h2>
+                  <div class="grouped-list">
+                    <div class="setting-row">
+                      <span class="row-label">稼働状態</span>
+                      <span id="run-status" class="row-value status-value tone-neutral">停止中</span>
+                    </div>
+                    <div class="setting-row">
+                      <span class="row-label">FiveM</span>
+                      <span id="connection-status" class="row-value status-value tone-neutral">確認中</span>
+                    </div>
+                    <div class="setting-row">
+                      <span class="row-label">操作方式</span>
+                      <span id="operation-mode" class="row-value">確認中</span>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="section-block" aria-labelledby="overview-work-heading">
+                  <h2 id="overview-work-heading" class="section-label">作業</h2>
+                  <div class="grouped-list">
+                    <button id="action-picker-button" class="setting-row interactive-row" type="button" aria-haspopup="dialog" aria-expanded="false">
+                      <span class="row-label">作業の種類</span>
+                      <span class="row-trailing">
+                        <span id="action-value" class="row-value">鉱石を採掘する</span>
+                        <svg class="chevron" aria-hidden="true"><use href="#icon-chevron"></use></svg>
+                      </span>
+                    </button>
+                  </div>
+                </section>
+
+                <button id="run-button" class="primary-action pressable" type="button">
+                  <span class="press-surface" aria-hidden="true"></span>
+                  <svg class="action-icon" aria-hidden="true"><use id="run-icon-use" href="#icon-play"></use></svg>
+                  <span id="run-button-label">自動操作を開始</span>
+                  <span class="button-spinner preloader preloader-white" aria-hidden="true"></span>
+                </button>
+
+                <section class="section-block metrics-section" aria-labelledby="overview-metrics-heading">
+                  <h2 id="overview-metrics-heading" class="section-label">実績</h2>
+                  <div class="grouped-list">
+                    <div class="setting-row">
+                      <span id="metric-primary-label" class="row-label">採掘回数</span>
+                      <span id="metric-primary-value" class="row-value metric-value">0回</span>
+                    </div>
+                    <div class="setting-row">
+                      <span id="metric-correction-label" class="row-label">食事回数</span>
+                      <span id="metric-correction-value" class="row-value metric-value">0回</span>
+                    </div>
+                    <div class="setting-row">
+                      <span class="row-label">自動収納</span>
+                      <span id="metric-storage-value" class="row-value metric-value">0回</span>
+                    </div>
+                  </div>
+                </section>
+                <p id="shortcut-hint" class="shortcut-hint">開始 F8 · 停止 F9</p>
+              </div>
+            </section>
+
+            <section id="screen-vehicle" class="screen" data-page="vehicle" role="tabpanel" aria-labelledby="tab-vehicle" aria-hidden="true">
+              <div class="content-column">
+                <header class="page-heading">
+                  <h1>車両</h1>
+                  <p>登録済みの車両を近くから探索し、採集品を同じ荷台へ収納します</p>
+                </header>
+
+                <section class="section-block" aria-labelledby="vehicle-registration-heading">
+                  <h2 id="vehicle-registration-heading" class="section-label">登録車両</h2>
+                  <div class="grouped-list">
+                    <div class="setting-row">
+                      <span class="row-label">登録状態</span>
+                      <span id="vehicle-status" class="row-value status-value tone-neutral">未登録</span>
+                    </div>
+                    <label class="setting-row switch-row" for="vehicle-enabled">
+                      <span class="row-label">容量不足時に自動収納</span>
+                      <span class="toggle color-green">
+                        <input id="vehicle-enabled" type="checkbox">
+                        <span class="toggle-icon"></span>
+                      </span>
+                    </label>
+                  </div>
+                </section>
+
+                <section class="section-block" aria-labelledby="capacity-heading">
+                  <h2 id="capacity-heading" class="section-label">所持容量</h2>
+                  <div class="grouped-list capacity-group">
+                    <div class="setting-row capacity-row">
+                      <span class="row-label">所持重量</span>
+                      <span id="capacity-value" class="row-value">開始後に確認</span>
+                    </div>
+                    <div class="capacity-track" aria-hidden="true"><span id="capacity-fill"></span></div>
+                    <p id="capacity-detail" class="group-footnote inside-footnote">重量を優先して安全に確認します</p>
+                  </div>
+                </section>
+
+                <section class="section-block" aria-labelledby="companion-heading">
+                  <h2 id="companion-heading" class="section-label">登録方法</h2>
+                  <div class="grouped-list">
+                    <div class="setting-row">
+                      <span class="row-label">取り込み状態</span>
+                      <span id="companion-status" class="row-value status-value tone-neutral">待機中</span>
+                    </div>
+                    <div class="detail-row">
+                      <svg aria-hidden="true"><use href="#icon-link"></use></svg>
+                      <p id="companion-detail">登録を押したあと、FiveMで目的の車両ストレージを一度開いてください。</p>
+                    </div>
+                  </div>
+                </section>
+
+                <button id="vehicle-register" class="primary-action secondary-primary pressable" type="button">
+                  <span class="press-surface" aria-hidden="true"></span>
+                  <svg class="action-icon" aria-hidden="true"><use href="#icon-car-badge"></use></svg>
+                  <span id="vehicle-register-label">車両登録を開始</span>
+                </button>
+                <button id="vehicle-delete" class="text-action destructive" type="button">登録を削除</button>
+                <p class="group-footnote">登録情報はこのPCへ保存され、採掘・石洗い・砂金採りで共通して使われます。開始前から持っていた道具や食料は移動しません。</p>
+              </div>
+            </section>
+
+            <section id="screen-settings" class="screen" data-page="settings" role="tabpanel" aria-labelledby="tab-settings" aria-hidden="true">
+              <div class="content-column">
+                <header class="page-heading">
+                  <h1>設定</h1>
+                  <p>ショートカットとバックグラウンド動作</p>
+                </header>
+
+                <section class="section-block" aria-labelledby="shortcut-heading">
+                  <h2 id="shortcut-heading" class="section-label">ショートカット</h2>
+                  <div class="grouped-list">
+                    <label class="setting-row input-row" for="start-hotkey">
+                      <span class="row-label">開始キー</span>
+                      <input id="start-hotkey" class="inline-input key-input" type="text" maxlength="32" autocomplete="off" value="F8">
+                    </label>
+                    <label class="setting-row input-row" for="stop-hotkey">
+                      <span class="row-label">停止キー</span>
+                      <input id="stop-hotkey" class="inline-input key-input" type="text" maxlength="32" autocomplete="off" value="F9">
+                    </label>
+                  </div>
+                </section>
+
+                <section class="section-block" aria-labelledby="behavior-heading">
+                  <h2 id="behavior-heading" class="section-label">動作</h2>
+                  <div class="grouped-list">
+                    <label class="setting-row switch-row" for="setting-background">
+                      <span class="row-label">バックグラウンドで操作</span>
+                      <span class="toggle color-green"><input id="setting-background" type="checkbox"><span class="toggle-icon"></span></span>
+                    </label>
+                    <label class="setting-row switch-row" for="setting-hide">
+                      <span class="row-label">開始後に画面を隠す</span>
+                      <span class="toggle color-green"><input id="setting-hide" type="checkbox"><span class="toggle-icon"></span></span>
+                    </label>
+                    <label class="setting-row switch-row" for="setting-correction">
+                      <span class="row-label">洗浄・砂金採りの位置ずれを補正</span>
+                      <span class="toggle color-green"><input id="setting-correction" type="checkbox"><span class="toggle-icon"></span></span>
+                    </label>
+                    <label class="setting-row switch-row" for="setting-auto-update">
+                      <span class="row-label">起動時にアップデートを確認</span>
+                      <span class="toggle color-green"><input id="setting-auto-update" type="checkbox"><span class="toggle-icon"></span></span>
+                    </label>
+                    <label class="setting-row input-row" for="minimum-free-weight">
+                      <span class="row-label">収納を始める残り重量</span>
+                      <span class="unit-input"><input id="minimum-free-weight" class="inline-input" type="number" min="250" max="20000" step="250" inputmode="numeric" value="2000"><span>g</span></span>
+                    </label>
+                  </div>
+                </section>
+
+                <button id="settings-save" class="primary-action pressable" type="button">
+                  <span class="press-surface" aria-hidden="true"></span>
+                  <span id="settings-save-label">設定を保存</span>
+                  <span class="button-spinner preloader preloader-white" aria-hidden="true"></span>
+                </button>
+                <p id="settings-feedback" class="persistent-feedback" role="status" aria-live="polite"></p>
+              </div>
+            </section>
+
+            <section id="screen-update" class="screen" data-page="update" role="tabpanel" aria-labelledby="tab-update" aria-hidden="true">
+              <div class="content-column">
+                <header class="page-heading">
+                  <h1>アップデート</h1>
+                  <p>署名を検証して安全に更新します</p>
+                </header>
+
+                <section class="section-block" aria-labelledby="update-info-heading">
+                  <h2 id="update-info-heading" class="section-label">ソフトウェア</h2>
+                  <div class="grouped-list">
+                    <div class="setting-row">
+                      <span class="row-label">現在のバージョン</span>
+                      <span id="current-version" class="row-value">—</span>
+                    </div>
+                    <div class="setting-row">
+                      <span class="row-label">更新状態</span>
+                      <span id="update-status" class="row-value status-value tone-neutral">未確認</span>
+                    </div>
+                    <div class="detail-row">
+                      <svg aria-hidden="true"><use href="#icon-shield"></use></svg>
+                      <p id="update-integrity">ECDSA署名とSHA-256を確認してから適用します。</p>
+                    </div>
+                  </div>
+                </section>
+
+                <button id="update-check" class="primary-action pressable" type="button">
+                  <span class="press-surface" aria-hidden="true"></span>
+                  <svg class="action-icon" aria-hidden="true"><use href="#icon-update"></use></svg>
+                  <span id="update-check-label">アップデートを確認</span>
+                  <span class="button-spinner preloader preloader-white" aria-hidden="true"></span>
+                </button>
+                <p id="update-feedback" class="persistent-feedback" role="status" aria-live="polite"></p>
+              </div>
+            </section>
+          </main>
+        </div>
+      </div>
+    </div>
+
+    <div id="action-popover" class="popover action-popover" role="dialog" aria-modal="true" aria-labelledby="action-popover-title">
+      <div class="popover-inner">
+        <div id="action-popover-title" class="picker-title">作業の種類</div>
+        <div class="picker-list" data-picker-list="popover"></div>
+      </div>
+    </div>
+
+    <div id="action-sheet" class="sheet-modal sheet-modal-bottom action-sheet" role="dialog" aria-modal="true" aria-labelledby="action-sheet-title">
+      <div class="sheet-handle" aria-hidden="true"><span></span></div>
+      <div class="sheet-modal-inner">
+        <div class="picker-header">
+          <button class="picker-cancel" type="button" data-close-picker>キャンセル</button>
+          <strong id="action-sheet-title">作業の種類</strong>
+          <span aria-hidden="true"></span>
+        </div>
+        <div class="picker-list" data-picker-list="sheet"></div>
+      </div>
+    </div>
+
+    <div id="live-region" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
+  </div>
+
+  <template id="action-option-template">
+    <button class="picker-option" type="button" role="radio">
+      <span class="picker-option-label"></span>
+      <svg class="picker-check" aria-hidden="true"><use href="#icon-check"></use></svg>
+    </button>
+  </template>
+
+  <script src="vendor/framework7-bundle.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
