@@ -357,66 +357,80 @@ Copy-Item -LiteralPath $uiLoader -Destination (Join-Path $uiRuntimeHost 'WebView
 Copy-Item -Path (Join-Path $uiWebOutput '*') -Destination $uiRuntimeWeb -Recurse -Force
 
 Push-Location $stageRoot
-$compilerStdout = Join-Path $stageRoot 'ahk2exe.stdout.log'
-$compilerStderr = Join-Path $stageRoot 'ahk2exe.stderr.log'
 try {
     $quotedMain = '"' + $stagedMain + '"'
     $quotedOutput = '"' + $outputExe + '"'
     $quotedBase = '"' + $autoHotkey + '"'
     $quotedIcon = '"' + $appIcon + '"'
-    Write-Host 'Compiling the self-contained AutoHotkey application...'
-    $compilerProcess = Start-Process -FilePath $ahk2Exe `
-        -ArgumentList @('/in', $quotedMain, '/out', $quotedOutput, '/base', $quotedBase,
-            '/icon', $quotedIcon, '/compress', '0', '/silent', 'verbose') `
-        -PassThru -WindowStyle Hidden -RedirectStandardOutput $compilerStdout `
-        -RedirectStandardError $compilerStderr
-    if ($null -eq $compilerProcess) {
-        throw 'Ahk2Exe did not return a process handle.'
-    }
-    Write-Host "Ahk2Exe started (PID $($compilerProcess.Id))."
-    if (-not $compilerProcess.WaitForExit(120000)) {
-        $compilerPid = $compilerProcess.Id
-        try { $compilerProcess.Kill($true) }
-        catch {
-            # Process.Kill(Boolean) is unavailable on Windows PowerShell 5.1.
-            # taskkill is scoped to the exact compiler PID and its child validator.
-            try {
-                $taskKill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
-                & $taskKill /PID $compilerPid /T /F | Out-Null
-            }
-            catch { try { $compilerProcess.Kill() } catch { } }
+    $compilerSucceeded = $false
+    foreach ($compilerAttempt in 1..2) {
+        $compilerStdout = Join-Path $stageRoot "ahk2exe-attempt-$compilerAttempt.stdout.log"
+        $compilerStderr = Join-Path $stageRoot "ahk2exe-attempt-$compilerAttempt.stderr.log"
+        if (Test-Path -LiteralPath $outputExe -PathType Leaf) {
+            Remove-Item -LiteralPath $outputExe -Force
         }
-        try { [void]$compilerProcess.WaitForExit(5000) } catch { }
-        foreach ($compilerLog in @($compilerStdout, $compilerStderr)) {
-            if (Test-Path -LiteralPath $compilerLog -PathType Leaf) {
-                $timeoutLogText = [Convert]::ToString(
-                    (Get-Content -LiteralPath $compilerLog -Raw))
-                if (-not [string]::IsNullOrWhiteSpace($timeoutLogText)) {
-                    Write-Host $timeoutLogText.Trim()
+        Write-Host "Compiling the self-contained AutoHotkey application (attempt $compilerAttempt/2)..."
+        $compilerProcess = Start-Process -FilePath $ahk2Exe `
+            -ArgumentList @('/in', $quotedMain, '/out', $quotedOutput, '/base', $quotedBase,
+                '/icon', $quotedIcon, '/compress', '0', '/silent', 'verbose') `
+            -PassThru -WindowStyle Hidden -RedirectStandardOutput $compilerStdout `
+            -RedirectStandardError $compilerStderr
+        if ($null -eq $compilerProcess) {
+            throw 'Ahk2Exe did not return a process handle.'
+        }
+        Write-Host "Ahk2Exe started (PID $($compilerProcess.Id))."
+        $compilerTimedOut = -not $compilerProcess.WaitForExit(120000)
+        if ($compilerTimedOut) {
+            $compilerPid = $compilerProcess.Id
+            try { $compilerProcess.Kill($true) }
+            catch {
+                # Process.Kill(Boolean) is unavailable on Windows PowerShell 5.1.
+                # taskkill is scoped to the exact compiler PID and its child validator.
+                try {
+                    $taskKill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
+                    & $taskKill /PID $compilerPid /T /F | Out-Null
                 }
+                catch { try { $compilerProcess.Kill() } catch { } }
             }
+            try { [void]$compilerProcess.WaitForExit(5000) } catch { }
+        } else {
+            Write-Host "Ahk2Exe exited with code $($compilerProcess.ExitCode)."
         }
-        throw 'Ahk2Exe compilation timed out after 120 seconds.'
+
+        $compilerStdoutText = ''
+        $compilerStderrText = ''
+        if (Test-Path -LiteralPath $compilerStdout -PathType Leaf) {
+            $compilerStdoutText = [Convert]::ToString(
+                (Get-Content -LiteralPath $compilerStdout -Raw))
+        }
+        if (Test-Path -LiteralPath $compilerStderr -PathType Leaf) {
+            $compilerStderrText = [Convert]::ToString(
+                (Get-Content -LiteralPath $compilerStderr -Raw))
+        }
+        $compilerOutput = @($compilerStdoutText, $compilerStderrText) |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            ForEach-Object { $_.Trim() }
+        if ($compilerOutput) {
+            Write-Host ($compilerOutput -join [Environment]::NewLine)
+        }
+
+        if ($compilerTimedOut) {
+            if ($compilerAttempt -lt 2) {
+                Write-Warning 'Ahk2Exe timed out after 120 seconds; retrying once with a fresh process.'
+                Start-Sleep -Milliseconds 500
+                continue
+            }
+            throw 'Ahk2Exe compilation timed out twice after 120 seconds per attempt.'
+        }
+        if ($compilerProcess.ExitCode -ne 0 -or
+            -not (Test-Path -LiteralPath $outputExe -PathType Leaf)) {
+            throw "Ahk2Exe compilation failed with exit code $($compilerProcess.ExitCode)."
+        }
+        $compilerSucceeded = $true
+        break
     }
-    Write-Host "Ahk2Exe exited with code $($compilerProcess.ExitCode)."
-    $compilerStdoutText = ''
-    $compilerStderrText = ''
-    if (Test-Path -LiteralPath $compilerStdout -PathType Leaf) {
-        $compilerStdoutText = [Convert]::ToString(
-            (Get-Content -LiteralPath $compilerStdout -Raw))
-    }
-    if (Test-Path -LiteralPath $compilerStderr -PathType Leaf) {
-        $compilerStderrText = [Convert]::ToString(
-            (Get-Content -LiteralPath $compilerStderr -Raw))
-    }
-    $compilerOutput = @($compilerStdoutText, $compilerStderrText) |
-        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-        ForEach-Object { $_.Trim() }
-    if ($compilerOutput) {
-        Write-Host ($compilerOutput -join [Environment]::NewLine)
-    }
-    if ($compilerProcess.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $outputExe -PathType Leaf)) {
-        throw "Ahk2Exe compilation failed with exit code $($compilerProcess.ExitCode)."
+    if (-not $compilerSucceeded) {
+        throw 'Ahk2Exe compilation did not produce an executable.'
     }
     Write-Host 'AutoHotkey compilation completed.'
 }
