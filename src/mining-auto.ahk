@@ -9,7 +9,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "9.0.1"
+global AppVersion := "9.0.2"
 processId := DllCall("GetCurrentProcessId")
 isUiSmokeTest := HasCommandLineArgument("--smoke-test")
 isVisualTest := HasCommandLineArgument("--visual-test")
@@ -90,6 +90,7 @@ global Config := {
     washForwardCorrection: ReadIntegerSetting(settingsPath, "Washing", "ForwardCorrection", 1, 0, 1),
     washForwardPulseMs: ReadIntegerSetting(settingsPath, "Washing", "ForwardPulseMs", 100, 50, 250),
     washForwardSettleMs: ReadIntegerSetting(settingsPath, "Washing", "ForwardSettleMs", 250, 50, 3000),
+    washPostCompletionSettleMs: ReadIntegerSetting(settingsPath, "Washing", "PostCompletionSettleMs", 1200, 900, 4000),
     goldCycleMs: ReadIntegerSetting(settingsPath, "GoldPanning", "CycleMs", 6000, 4000, 15000),
     goldRecoveryEnabled: ReadIntegerSetting(settingsPath, "GoldPanning", "RecoveryEnabled", 1, 0, 1),
     goldRecoveryAfterMs: ReadIntegerSetting(settingsPath, "GoldPanning", "RecoveryAfterMs", 12000, 8000, 60000),
@@ -137,6 +138,9 @@ if needsUpdateSettingsMigration && !(A_Args.Length && A_Args[1] = "--smoke-test"
 
 global State := {
     running: false,
+    startInProgress: false,
+    startRequestSequence: 0,
+    startRequestToken: 0,
     stopInProgress: false,
     runMode: "mining",
     generation: 0,
@@ -203,7 +207,9 @@ global State := {
     workViewFailures: 0,
     workViewNoEffectCount: 0,
     workViewDirection: Config.workViewMouseDirection,
-    diagnosticPath: A_ScriptDir "\AI採掘機_診断.log",
+    diagnosticPath: isUiTestRun || HasCommandLineArgument("--validate")
+        ? A_Temp "\ai-miner-diagnostic-test-" processId ".log"
+        : A_ScriptDir "\AI採掘機_診断.log",
     diagnosticLines: 0,
     startHotIf: 0,
     stopHotIf: 0,
@@ -238,6 +244,13 @@ global State := {
     miningAttemptId: 0,
     resumeVerificationPending: false,
     rewardReconcileAttempts: 0,
+    washRecoveryGeneration: 0,
+    washRecoveryAttemptId: 0,
+    washSettleDeadline: 0,
+    washCorrectionInFlight: false,
+    washCorrectionSent: false,
+    washCameraRestoreSent: false,
+    washVerificationAttempts: 0,
     storagePreSnapshot: 0,
     storageRetryCount: 0,
     storageMovementHistory: [],
@@ -262,6 +275,18 @@ global State := {
     metagameOutboxPath: isUiTestRun || HasCommandLineArgument("--validate")
         ? A_Temp "\ai-miner-meta-outbox-test-" processId ".tsv"
         : EnvGet("LOCALAPPDATA") "\AI採掘機\metagame-outbox.tsv",
+    metagameBackfillMarkerPath: isUiTestRun || HasCommandLineArgument("--validate")
+        ? A_Temp "\ai-miner-meta-backfill-test-" processId ".done"
+        : A_ScriptDir "\AI採掘機_STONE履歴移行.v1.done",
+    metagameSupportBackfillReceiptPath: isUiTestRun || HasCommandLineArgument("--validate")
+        ? A_Temp "\ai-miner-meta-support-receipt-test-" processId ".done"
+        : A_ScriptDir "\AI採掘機_STONE履歴復元.v1.receipt",
+    verifiedRewardWalPath: isUiTestRun || HasCommandLineArgument("--validate")
+        ? A_Temp "\ai-miner-verified-reward-wal-test-" processId ".tsv"
+        : EnvGet("LOCALAPPDATA") "\AI採掘機\verified-reward-wal.tsv",
+    verifiedRewardWalPending: Map(),
+    verifiedRewardWalOps: 0,
+    verifiedRewardWalReady: false,
     inventoryBaseline: "",
     nextCapacityCheckAt: 0,
     nextActionAt: 0,
@@ -331,6 +356,23 @@ global State := {
 ; retain FIFO order.
 State.metagameOutbox := LoadMetagameOutbox(State.metagameOutboxPath)
 State.metagameReplayNormalized := NormalizeStoppedMetagameOutboxAtStartup()
+loadedRewardWalPending := Map()
+loadedRewardWalOps := 0
+State.verifiedRewardWalReady := LoadVerifiedRewardWal(
+    State.verifiedRewardWalPath, &loadedRewardWalPending, &loadedRewardWalOps)
+State.verifiedRewardWalPending := loadedRewardWalPending
+State.verifiedRewardWalOps := loadedRewardWalOps
+if State.verifiedRewardWalReady
+    State.verifiedRewardWalReady := RecoverVerifiedRewardWal()
+
+; Compiled integration test entry point. It exercises the same install-local log
+; and marker plus LocalAppData outbox paths, then exits before UI/FiveM interaction.
+if HasCommandLineArgument("--history-import-self-test") {
+    historyImportTestOk := State.verifiedRewardWalReady
+        && RunLegacyFarmHistoryBackfill()
+    DeleteExtractedTemplates()
+    ExitApp(historyImportTestOk ? 0 : 144)
+}
 
 ; コンパイル前後の構文・埋め込み画像チェック用です。
 if A_Args.Length && A_Args[1] = "--validate" {
@@ -447,7 +489,11 @@ if A_Args.Length && A_Args[1] = "--validate" {
     testFarmAttempt := {
         generation: 9, actionMode: "mining", attemptId: 4,
         before: {weight: 1000, items: "0001.ore.e30=1"},
-        beforeRevision: 8, clicked: true, completed: false
+        beforeRevision: 8, clicked: true, completed: false,
+        rewardSessionId: "run_9_9_1893456000000",
+        rewardEventId: "mine_run_9_9_1893456000000_mining_4_9",
+        rewardConfirmedAtUnixMs: 1893456000001,
+        rewardConfirmedInfo: {revision: 9}
     }
     testFarmAttemptWithoutBaseline := {
         generation: 9, actionMode: "mining", attemptId: 5,
@@ -593,6 +639,10 @@ if A_Args.Length && A_Args[1] = "--validate" {
     savedMetaDirty := State.metagameOutboxDirty
     savedJournalReady := State.metagameJournalReady
     savedJournalOps := State.metagameJournalOps
+    savedRewardWalPath := State.verifiedRewardWalPath
+    savedRewardWalPending := State.verifiedRewardWalPending
+    savedRewardWalOps := State.verifiedRewardWalOps
+    savedRewardWalReady := State.verifiedRewardWalReady
     savedReplayNormalized := State.metagameReplayNormalized
     savedFarmSessionId := State.farmSessionId
     savedFarmSessionStartedAt := State.farmSessionStartedAt
@@ -602,6 +652,10 @@ if A_Args.Length && A_Args[1] = "--validate" {
     savedFarmSessionEndQueued := State.farmSessionEndQueued
     savedFarmSessionEndSent := State.farmSessionEndSent
     savedRunning := State.running
+    savedStopInProgress := State.stopInProgress
+    savedGeneration := State.generation
+    savedRunMode := State.runMode
+    savedLastMiningEventId := State.lastMiningEventId
     State.metagameOutbox := []
     State.metagameOutboxPath := testJournalPath
     State.metagameOutboxDirty := false
@@ -861,13 +915,221 @@ if A_Args.Length && A_Args[1] = "--validate" {
         && testGracefulReplayReload.Length = 3
         && testGracefulReplayReload[1].id = "run_88_8_946684800000"
         && testGracefulReplayReload[3].at = 946684809000
+    ; A backwards Windows clock correction must preserve IDs/order while making
+    ; every replay timestamp acceptable to the Host's future-skew guard.
+    testFutureClampAt := 1893456000000
+    testFutureSession := "run_88_8_1893456010000"
+    testFutureReward := "mine_run_88_8_1893456010000_gold_2_3"
+    testFutureOutbox := []
+    testGracefulReplayOk := testGracefulReplayOk
+        && MetagameOutboxEnqueue(&testFutureOutbox, testFutureSession,
+            testFutureClampAt + 10000, "SESSION_BEGIN")
+        && MetagameOutboxEnqueue(&testFutureOutbox, testFutureReward,
+            testFutureClampAt + 11000)
+        && MetagameOutboxEnqueue(&testFutureOutbox, testFutureSession,
+            testFutureClampAt + 12000, "SESSION_END")
+    testRuntimeFutureClampOk := BuildClampedMetagameReplayOutbox(
+        testFutureOutbox, testFutureClampAt, &testFutureCandidate,
+        &testFutureChanged)
+        && testFutureChanged = 3
+        && testFutureOutbox[1].at = testFutureClampAt + 10000
+        && testFutureOutbox[2].at = testFutureClampAt + 11000
+        && testFutureCandidate[1].id = testFutureSession
+        && testFutureCandidate[2].id = testFutureReward
+        && testFutureCandidate[1].at = testFutureClampAt
+        && testFutureCandidate[2].at = testFutureClampAt
+        && testFutureCandidate[3].at = testFutureClampAt
+    State.metagameOutbox := testFutureOutbox
+    State.metagameJournalReady := false
+    testRuntimeFutureClampOk := testRuntimeFutureClampOk
+        && PersistMetagameOutboxWithRetry()
+        && PersistRuntimeMetagameFutureClamp(testFutureClampAt)
+    testFutureReload := testRuntimeFutureClampOk
+        ? LoadMetagameOutbox(testGracefulReplayPath) : []
+    testRuntimeFutureClampOk := testRuntimeFutureClampOk
+        && testFutureReload.Length = 3
+        && testFutureReload[1].id = testFutureSession
+        && testFutureReload[2].id = testFutureReward
+        && testFutureReload[1].at = testFutureClampAt
+        && testFutureReload[2].at = testFutureClampAt
+        && testFutureReload[3].at = testFutureClampAt
+    ; Startup uses the same candidate builder and must retain the same guarantees.
+    State.metagameOutbox := testFutureOutbox
+    State.metagameJournalReady := false
+    testGracefulReplayOk := testGracefulReplayOk
+        && PersistMetagameOutboxWithRetry()
+        && NormalizeStoppedMetagameOutboxAtStartup(testFutureClampAt)
+        && State.metagameOutbox[1].id = testFutureSession
+        && State.metagameOutbox[2].id = testFutureReward
+        && State.metagameOutbox[1].at = testFutureClampAt
+        && State.metagameOutbox[3].at = testFutureClampAt
     try FileDelete testGracefulReplayPath
+
+    ; A confirmed reward may not advance visible state before its event is durable.
+    ; Force SESSION_BEGIN persistence to fail, restore a writable journal, retry the
+    ; same stable mode-aware ID, and simulate a restart/retry without duplication.
+    testRewardBlockerPath := A_Temp
+        . "\ai-miner-reward-blocker-selftest-" processId
+    testRewardRetryPath := A_Temp
+        . "\ai-miner-reward-retry-selftest-" processId ".tsv"
+    testRewardWalPath := A_Temp
+        . "\ai-miner-reward-wal-selftest-" processId ".tsv"
+    try FileDelete testRewardRetryPath
+    try FileDelete testRewardWalPath
+    try FileDelete testRewardBlockerPath
+    blockerFile := FileOpen(testRewardBlockerPath, "w", "UTF-8-RAW")
+    blockerFile.Write("not-a-directory")
+    blockerFile.Close()
+    State.metagameOutbox := []
+    State.metagameOutboxPath := testRewardBlockerPath "\outbox.tsv"
+    State.metagameOutboxDirty := false
+    State.metagameJournalReady := false
+    State.metagameJournalOps := 0
+    State.verifiedRewardWalPath := testRewardWalPath
+    State.verifiedRewardWalPending := Map()
+    State.verifiedRewardWalOps := 0
+    State.verifiedRewardWalReady := true
+    State.metagameReplayNormalized := true
+    State.running := true
+    State.stopInProgress := false
+    State.generation := 191
+    State.runMode := "washing"
+    testRewardStartedAt := UnixTimeMilliseconds()
+    State.farmSessionId := BuildFarmSessionId(191, 191,
+        testRewardStartedAt)
+    State.farmSessionStartedAt := testRewardStartedAt
+    State.farmSessionEndedAt := 0
+    State.farmSessionBeginQueued := false
+    State.farmSessionBeginSent := false
+    State.farmSessionEndQueued := false
+    State.farmSessionEndSent := false
+    State.lastMiningEventId := ""
+    testRewardFrozenSessionId := State.farmSessionId
+    testRewardEventId := BuildFarmRewardEventId(testRewardFrozenSessionId,
+        "washing", 5, 17)
+    testRewardCompletedAt := testRewardStartedAt + 25
+    testRewardRetryOk := !EmitVerifiedFarmReward(191, "washing", 5, 17,
+        testRewardCompletedAt, testRewardEventId, testRewardFrozenSessionId)
+        && State.metagameOutbox.Length = 0
+        && State.verifiedRewardWalPending.Count = 1
+    ; Simulate termination at the exact WAL -> outbox failure boundary. A fresh
+    ; process must atomically restore BEGIN + reward + END and tombstone the intent.
+    State.metagameOutboxPath := testRewardRetryPath
+    State.metagameJournalReady := false
+    testRewardReloadedWalOk := LoadVerifiedRewardWal(testRewardWalPath,
+        &testRewardReloadedPending, &testRewardReloadedOps)
+    State.verifiedRewardWalPending := testRewardReloadedPending
+    State.verifiedRewardWalOps := testRewardReloadedOps
+    RewardWalRecoveryCriticalObserved := false
+    RewardWalRecoveryTimerRan := false
+    RewardWalRecoveryTimerRanInside := false
+    testRewardRetryOk := testRewardRetryOk && testRewardReloadedWalOk
+        && State.verifiedRewardWalPending.Count = 1
+        && RecoverVerifiedRewardWal(ProbeRewardWalRecoveryCriticalSelfTest)
+        && State.verifiedRewardWalPending.Count = 0
+    ; A meta.reset may install a new active envelope after the reward was frozen.
+    ; Stable-ID validation must use the attempt's immutable session, not this S2.
+    State.farmSessionId := BuildFarmSessionId(191, 191,
+        testRewardStartedAt + 10, 1)
+    State.farmSessionStartedAt := testRewardStartedAt + 10
+    State.farmSessionBeginQueued := false
+    State.farmSessionBeginSent := false
+    State.farmSessionEndQueued := false
+    State.farmSessionEndSent := false
+    testRewardRetryOk := testRewardRetryOk
+        && EmitVerifiedFarmReward(191, "washing", 5, 17,
+            testRewardCompletedAt + 86400000, testRewardEventId,
+            testRewardFrozenSessionId)
+    Sleep 80
+    SetTimer RunRewardWalRecoveryCriticalSelfTestTimer, 0
+    testRewardRetryOk := testRewardRetryOk
+        && RewardWalRecoveryCriticalObserved
+        && !RewardWalRecoveryTimerRanInside
+        && RewardWalRecoveryTimerRan
+    SetTimer FlushMetagameOutboxReplay, 0
+    testRewardReload := testRewardRetryOk
+        ? LoadMetagameOutbox(testRewardRetryPath) : []
+    testRewardSuccessCount := 0
+    for entry in testRewardReload {
+        if entry.command = "MINING_SUCCESS"
+            testRewardSuccessCount += 1
+    }
+    ; Reloaded FIFO is the restart boundary; retrying the same completed reward
+    ; sees its durable row and cannot append a second copy.
+    State.metagameOutbox := testRewardReload
+    State.metagameJournalReady := false
+    testRewardRetryOk := testRewardRetryOk
+        && testRewardReload.Length = 3
+        && testRewardReload[1].command = "SESSION_BEGIN"
+        && InStr(testRewardReload[1].id, "reward_wal_recovery_") = 1
+        && testRewardReload[2].command = "MINING_SUCCESS"
+        && testRewardReload[2].id = testRewardEventId
+        && testRewardReload[2].at = testRewardCompletedAt
+        && testRewardReload[3].command = "SESSION_END"
+        && testRewardReload[3].id = testRewardReload[1].id
+        && testRewardSuccessCount = 1
+        && EmitVerifiedFarmReward(191, "washing", 5, 17,
+            testRewardCompletedAt + 172800000, testRewardEventId,
+            testRewardFrozenSessionId)
+        && State.metagameOutbox.Length = 3
+    ; A torn append is isolated on its own row; the next valid E/A pair must load.
+    tornWalFile := FileOpen(testRewardWalPath, "a", "UTF-8-RAW")
+    if IsObject(tornWalFile) {
+        tornWalFile.Write("`nE`ttruncated_reward")
+        FlushMetagameFileHandle(tornWalFile.Handle)
+        tornWalFile.Close()
+    } else
+        testRewardRetryOk := false
+    testTornRewardId := "mine_run_191_191_" testRewardStartedAt
+        . "_gold_6_18"
+    testRewardRetryOk := testRewardRetryOk
+        && PersistVerifiedRewardIntent(testTornRewardId, "gold", 18,
+            testRewardCompletedAt + 1, &testTornPersistedAt)
+        && LoadVerifiedRewardWal(testRewardWalPath,
+            &testTornWalPending, &testTornWalOps)
+        && testTornWalPending.Has(testTornRewardId)
+        && CommitVerifiedRewardIntent(testTornRewardId)
+        && LoadVerifiedRewardWal(testRewardWalPath,
+            &testTornWalResolved, &testTornWalResolvedOps)
+        && !testTornWalResolved.Has(testTornRewardId)
+    ; Same-process F9 -> F8 preparation recovers unresolved WAL work before the
+    ; next run can reset diagnostics or issue another Farm action.
+    testRestartRewardId := "mine_run_191_191_" testRewardStartedAt
+        . "_mining_7_19"
+    testRestartFutureAt := testRewardCompletedAt + 86400000
+    testRewardRetryOk := testRewardRetryOk
+        && PersistVerifiedRewardIntent(testRestartRewardId, "mining", 19,
+            testRestartFutureAt, &testRestartPersistedAt)
+        && State.verifiedRewardWalPending.Count = 1
+        && PrepareMetagameForNewFarmStart()
+        && State.verifiedRewardWalPending.Count = 0
+        && MetagameOutboxContainsCommand(State.metagameOutbox,
+            "MINING_SUCCESS", testRestartRewardId)
+    testRestartReplayAt := 0
+    for queued in State.metagameOutbox {
+        if queued.command = "MINING_SUCCESS"
+            && queued.id = testRestartRewardId {
+            testRestartReplayAt := queued.at
+            break
+        }
+    }
+    testRewardRetryOk := testRewardRetryOk && testRestartReplayAt >= 1
+        && testRestartReplayAt < testRestartFutureAt
+        && testRestartReplayAt <= UnixTimeMilliseconds()
+    SetTimer FlushMetagameOutboxReplay, 0
+    try FileDelete testRewardRetryPath
+    try FileDelete testRewardWalPath
+    try FileDelete testRewardBlockerPath
 
     State.metagameOutbox := savedMetaOutbox
     State.metagameOutboxPath := savedMetaPath
     State.metagameOutboxDirty := savedMetaDirty
     State.metagameJournalReady := savedJournalReady
     State.metagameJournalOps := savedJournalOps
+    State.verifiedRewardWalPath := savedRewardWalPath
+    State.verifiedRewardWalPending := savedRewardWalPending
+    State.verifiedRewardWalOps := savedRewardWalOps
+    State.verifiedRewardWalReady := savedRewardWalReady
     State.metagameReplayNormalized := savedReplayNormalized
     State.farmSessionId := savedFarmSessionId
     State.farmSessionStartedAt := savedFarmSessionStartedAt
@@ -877,6 +1139,10 @@ if A_Args.Length && A_Args[1] = "--validate" {
     State.farmSessionEndQueued := savedFarmSessionEndQueued
     State.farmSessionEndSent := savedFarmSessionEndSent
     State.running := savedRunning
+    State.stopInProgress := savedStopInProgress
+    State.generation := savedGeneration
+    State.runMode := savedRunMode
+    State.lastMiningEventId := savedLastMiningEventId
     try FileDelete testJournalPath
     try FileDelete testTornPath
     testLegacyOutboxPath := A_Temp "\ai-miner-v2-outbox-selftest-"
@@ -899,6 +1165,124 @@ if A_Args.Length && A_Args[1] = "--validate" {
         && testMigratedOutbox[1].at = 946684801000
     try FileDelete testLegacyOutboxPath
     try FileDelete testOutboxPath
+    testModeSessionId := BuildFarmSessionId(71, 8, 1893456008000)
+    testMiningModeId := BuildFarmRewardEventId(testModeSessionId, "mining", 4, 9)
+    testWashingModeId := BuildFarmRewardEventId(testModeSessionId, "washing", 4, 9)
+    testGoldModeId := BuildFarmRewardEventId(testModeSessionId, "gold", 4, 9)
+    testFarmModeIdsOk := IsSupportedStoneActivityMode("mining")
+        && IsSupportedStoneActivityMode("washing")
+        && IsSupportedStoneActivityMode("gold")
+        && !IsSupportedStoneActivityMode("storage")
+        && testMiningModeId != testWashingModeId
+        && testWashingModeId != testGoldModeId
+        && testMiningModeId != testGoldModeId
+        && BuildFarmRewardEventId(testModeSessionId, "storage", 4, 9) = ""
+    testAckedMiningId := "mine_run_71_8_1893456008000_1_7"
+    testPendingMiningId := "mine_run_71_8_1893456008000_4_11"
+    testHistoryFixture := "2026-09-10 12:00:00.000 | AI採掘機 v9.0.1 診断開始`n"
+        . "2026-09-10 12:00:01.000 | FARM_REWARD_CONFIRMED id=1 mode=mining reason=weight_increase beforeWeight=1000 afterWeight=2000 revision=7`n"
+        . "2026-09-10 12:00:01.010 | METAGAME command=MINING_SUCCESS id="
+        . testAckedMiningId . " sent=1`n"
+        . "2026-09-10 12:00:01.020 | METAGAME_ACK command=MINING_SUCCESS id="
+        . testAckedMiningId . " remaining=0`n"
+        . "2026-09-10 12:00:02.000 | FARM_REWARD_CONFIRMED id=2 mode=washing reason=weight_increase beforeWeight=2000 afterWeight=3000 revision=8`n"
+        . "2026-09-10 12:00:02.010 | ACTION_PROGRESS_DONE mode=washing elapsed=9000`n"
+        . "2026-09-10 12:00:02.020 | BG_CLICKED mode=washing`n"
+        . "2026-09-10 12:00:03.000 | FARM_REWARD_CONFIRMED id=3 mode=gold reason=item_increase beforeWeight=3000 afterWeight=3000 revision=9`n"
+        . "2026-09-10 12:00:04.000 | FARM_REWARD_CONFIRMED id=4 mode=mining reason=weight_increase beforeWeight=3000 afterWeight=4000 revision=11`n"
+        . "2026-09-10 12:00:04.010 | METAGAME command=MINING_SUCCESS id="
+        . testPendingMiningId . " sent=0`n"
+    testHistoryParsed := ParseLegacyFarmHistoryContents([testHistoryFixture],
+        &testHistoryRecords)
+    testHistoryParserOk := testHistoryParsed && testHistoryRecords.Length = 4
+        && testHistoryRecords[1].acknowledged
+        && testHistoryRecords[1].exactEventId = testAckedMiningId
+        && testHistoryRecords[2].mode = "washing"
+        && testHistoryRecords[3].mode = "gold"
+        && !testHistoryRecords[4].acknowledged
+        && testHistoryRecords[4].exactEventId = testPendingMiningId
+    testHistoryStrictOk := !ParseVerifiedFarmRewardDiagnosticLine(
+        "2026-09-10 12:00:05.000 | ACTION_PROGRESS_DONE mode=gold elapsed=6000",
+        &testRejectedRecord)
+        && !ParseVerifiedFarmRewardDiagnosticLine(
+            "2026-09-10 12:00:05.000 | BG_CLICKED mode=gold", &testRejectedRecord)
+        && !ParseVerifiedFarmRewardDiagnosticLine(
+            "2026-09-10 12:00:05.000 | FARM_REWARD_CONFIRMED id=5 mode=storage reason=weight_increase beforeWeight=1 afterWeight=2 revision=12",
+            &testRejectedRecord)
+    testCurrentHistoryId := "mine_run_71_8_1893456008000_washing_5_12"
+    testCurrentHistoryFixture := "2026-09-10 12:30:00.000 | AI採掘機 v9.0.2 診断開始`n"
+        . "2026-09-10 12:30:01.000 | FARM_REWARD_CONFIRMED id=5 mode=washing reason=weight_increase beforeWeight=1 afterWeight=2 revision=12 eventId="
+        . testCurrentHistoryId . " eventAt=1893456008000`n"
+    testCurrentHistoryParsed := ParseLegacyFarmHistoryContents(
+        [testCurrentHistoryFixture], &testCurrentHistoryRecords)
+    testTornCurrentHistory := "2026-09-10 12:31:00.000 | AI採掘機 v9.0.2 診断開始`n"
+        . "2026-09-10 12:31:01.000 | FARM_REWARD_CONFIRMED id=5 mode=washing reason=weight_increase beforeWeight=1 afterWeight=2 revision=12`n"
+    testTornCurrentParsed := ParseLegacyFarmHistoryContents(
+        [testTornCurrentHistory], &testTornCurrentRecords)
+    testDuplicateReward := "2026-09-10 12:40:01.000 | FARM_REWARD_CONFIRMED id=1 mode=mining reason=weight_increase beforeWeight=1 afterWeight=2 revision=7`n"
+    testDuplicateSupport := "2026-09-10 12:40:00.000 | AI採掘機 v9.0.1 診断開始`n"
+        . testDuplicateReward
+    testDuplicateNormal := "2026-09-10 12:40:00.000 | AI採掘機 v9.0.1 診断開始`n"
+        . testDuplicateReward
+        . "2026-09-10 12:40:01.020 | METAGAME_ACK command=MINING_SUCCESS id="
+        . testAckedMiningId . " remaining=0`n"
+    testDuplicateParsed := ParseLegacyFarmHistoryContents(
+        [{content: testDuplicateSupport, support: true},
+            {content: testDuplicateNormal, support: false}],
+        &testDuplicateRecords)
+    testHistoryStrictOk := testHistoryStrictOk
+        && testCurrentHistoryParsed && testCurrentHistoryRecords.Length = 1
+        && testCurrentHistoryRecords[1].exactEventId = testCurrentHistoryId
+        && testCurrentHistoryRecords[1].mode = "washing"
+        && testTornCurrentParsed && testTornCurrentRecords.Length = 0
+        && testDuplicateParsed && testDuplicateRecords.Length = 1
+        && testDuplicateRecords[1].acknowledged
+        && testDuplicateRecords[1].exactEventId = testAckedMiningId
+        && testDuplicateRecords[1].supportSource
+        && testDuplicateRecords[1].normalSource
+    testSegmentFixture := "2026-09-10 13:00:00.000 | AI採掘機 v9.0.1 診断開始`n"
+        . "2026-09-10 13:00:01.000 | FARM_REWARD_CONFIRMED id=1 mode=mining reason=weight_increase beforeWeight=1 afterWeight=2 revision=7`n"
+        . "2026-09-10 13:00:01.010 | METAGAME_ACK command=MINING_SUCCESS id="
+        . testAckedMiningId . " remaining=0`n"
+        . "2026-09-10 14:00:00.000 | AI採掘機 v9.0.1 診断開始`n"
+        . "2026-09-10 14:00:01.000 | FARM_REWARD_CONFIRMED id=1 mode=mining reason=weight_increase beforeWeight=1 afterWeight=2 revision=7`n"
+    testSegmentParsed := ParseLegacyFarmHistoryContents([testSegmentFixture],
+        &testSegmentRecords)
+    testHistorySegmentOk := testSegmentParsed && testSegmentRecords.Length = 2
+        && testSegmentRecords[1].acknowledged
+        && !testSegmentRecords[2].acknowledged
+        && testSegmentRecords[2].exactEventId = ""
+    testHistoryBatchOk := testHistoryParsed
+        && BuildLegacyFarmHistoryBatch([], testHistoryRecords, 1893456009000,
+            &testHistoryBatch, &testHistoryAdded)
+        && testHistoryAdded = 3 && testHistoryBatch.Length = 5
+        && testHistoryBatch[1].command = "SESSION_BEGIN"
+        && testHistoryBatch[1].id = "legacy_farm_rewards_v1"
+        && testHistoryBatch[2].command = "MINING_SUCCESS"
+        && InStr(testHistoryBatch[2].id, "_washing_")
+        && testHistoryBatch[3].command = "MINING_SUCCESS"
+        && InStr(testHistoryBatch[3].id, "_gold_")
+        && testHistoryBatch[4].id = testPendingMiningId
+        && testHistoryBatch[5].command = "SESSION_END"
+    testHistoryReplayOk := testHistoryBatchOk
+        && BuildLegacyFarmHistoryBatch(testHistoryBatch, testHistoryRecords,
+            1893456010000, &testHistoryReplay, &testHistoryReplayAdded)
+        && testHistoryReplayAdded = 0
+        && testHistoryReplay.Length = testHistoryBatch.Length
+    testHistoryIntegrationOk := TestLegacyFarmHistoryBackfillIntegration(
+        testHistoryFixture, 5)
+    testDurabilityHoldAttempt := {
+        rewardSessionId: "run_1_1_1893456000000",
+        rewardEventId: "mine_run_1_1_1893456000000_gold_1_2",
+        rewardConfirmedAtUnixMs: 1893456000001,
+        rewardConfirmedInfo: {revision: 2}, completed: false,
+        rewardDurabilityPending: true
+    }
+    testDurabilityHoldOk := FarmAttemptRequiresDurabilityHold(
+        testDurabilityHoldAttempt)
+        && RewardReconcileDecision(false, true, 999, 100, true)
+            = "DURABILITY_HOLD"
+    testStartOperationOwnershipOk := TestStartOperationOwnership()
     exitCode := !FileExist(State.buttonTemplates[1].path) ? 11
         : !FileExist(State.buttonTemplates[2].path) ? 12
         : !FileExist(State.hungerTemplatePath) ? 13
@@ -1060,11 +1444,23 @@ if A_Args.Length && A_Args[1] = "--validate" {
         : !testGracefulReplayOk ? 133
         : !testInterleaveOk ? 134
         : !testResetInterleaveOk ? 135
-        : !testCameraOverlayStatesOk ? 136 : 0
+        : !testCameraOverlayStatesOk ? 136
+        : !testFarmModeIdsOk ? 137
+        : !testHistoryParserOk ? 138
+        : !testHistoryStrictOk ? 139
+        : !testHistorySegmentOk ? 140
+        : !testHistoryBatchOk ? 141
+        : !testHistoryReplayOk ? 142
+        : !testHistoryIntegrationOk ? 143
+        : !testRewardRetryOk ? 145
+        : !testRuntimeFutureClampOk ? 146
+        : !testDurabilityHoldOk ? 147
+        : !testStartOperationOwnershipOk ? 148 : 0
     if exitCode = 19
         try FileAppend "UPDATER_CAPS=" updaterCapabilities "`r`n",
             State.diagnosticPath, "UTF-8"
     DeleteExtractedTemplates()
+    try FileDelete State.diagnosticPath
     ExitApp exitCode
 }
 
@@ -1079,6 +1475,18 @@ if A_Args.Length && A_Args[1] = "--cursor-api-test" {
 if needsUpdateSettingsMigration {
     try IniWrite 1, settingsPath, "Updates", "Schema"
     try IniWrite 1, settingsPath, "Updates", "AutoCheck"
+}
+
+; Import only records that the previous executable wrote after a verified inventory
+; increase. Persist the complete closed session and its one-time marker before the
+; WebView Host can observe any event; a failed migration therefore cannot partially
+; update Stone progression or erase the source diagnostics.
+if !isUiTestRun && (!State.verifiedRewardWalReady
+    || !RunLegacyFarmHistoryBackfill()) {
+    MsgBox "以前の作業履歴をSTONEへ安全に保存できませんでした。`n"
+        . "履歴を失わないため、AI採掘機を開始せず終了します。"
+    DeleteExtractedTemplates()
+    ExitApp 2
 }
 
 BuildWebGui()
@@ -1786,17 +2194,8 @@ BeginFarmMetagameSession(expectedGeneration) {
             && !NormalizeStoppedMetagameOutboxAtStartup()
             return false
         State.metagameReplayNormalized := true
-        if !State.farmSessionId {
-            startedAt := UnixTimeMilliseconds()
-            State.farmSessionId := BuildFarmSessionId(
-                DllCall("GetCurrentProcessId"), expectedGeneration, startedAt)
-            State.farmSessionStartedAt := startedAt
-            State.farmSessionEndedAt := 0
-            State.farmSessionBeginQueued := false
-            State.farmSessionBeginSent := false
-            State.farmSessionEndQueued := false
-            State.farmSessionEndSent := false
-        }
+        if !EnsureFarmMetagameSessionIdentity(expectedGeneration)
+            return false
         if !EnsureFarmMetagameSessionBeginQueued()
             return false
     } finally LeaveMetagameOutboxCritical(criticalWasOn)
@@ -1804,6 +2203,27 @@ BeginFarmMetagameSession(expectedGeneration) {
     ; Durable FIFO membership, rather than WM_COPYDATA queue acceptance, is the
     ; condition required before a mining event may be appended behind SESSION_BEGIN.
     return State.farmSessionBeginQueued
+}
+
+EnsureFarmMetagameSessionIdentity(expectedGeneration) {
+    global State
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    if State.farmSessionId
+        return State.farmSessionStartedAt >= 1
+    startedAt := UnixTimeMilliseconds()
+    sessionId := BuildFarmSessionId(DllCall("GetCurrentProcessId"),
+        expectedGeneration, startedAt)
+    if !sessionId
+        return false
+    State.farmSessionId := sessionId
+    State.farmSessionStartedAt := startedAt
+    State.farmSessionEndedAt := 0
+    State.farmSessionBeginQueued := false
+    State.farmSessionBeginSent := false
+    State.farmSessionEndQueued := false
+    State.farmSessionEndSent := false
+    return true
 }
 
 EnsureFarmMetagameSessionBeginQueued() {
@@ -1832,7 +2252,948 @@ BuildFarmSessionId(processId, generation, startedAtUnixMs, resetOrdinal := 0) {
 }
 
 BuildMiningEventId(farmSessionId, attemptId, snapshotRevision) {
-    return "mine_" farmSessionId "_" attemptId "_" snapshotRevision
+    return BuildFarmRewardEventId(farmSessionId, "mining", attemptId,
+        snapshotRevision)
+}
+
+IsSupportedStoneActivityMode(actionMode) {
+    return actionMode = "mining" || actionMode = "washing"
+        || actionMode = "gold"
+}
+
+BuildFarmRewardEventId(farmSessionId, actionMode, attemptId,
+    snapshotRevision) {
+    if !IsSupportedStoneActivityMode(actionMode)
+        return ""
+    eventId := "mine_" farmSessionId "_" actionMode "_" attemptId "_"
+        . snapshotRevision
+    return RegExMatch(eventId, "^[A-Za-z0-9._:-]{8,128}$") ? eventId : ""
+}
+
+TryParseDiagnosticTimestamp(timestampText, &timestampToken, &eventAtUnixMs) {
+    timestampToken := ""
+    eventAtUnixMs := 0
+    if !RegExMatch(timestampText,
+        "^([0-9]{4})-([0-9]{2})-([0-9]{2}) ([0-9]{2}):([0-9]{2}):([0-9]{2})\.([0-9]{3})$",
+        &parts)
+        return false
+    try {
+        localTime := Buffer(16, 0)
+        NumPut("UShort", Integer(parts[1]), localTime, 0)
+        NumPut("UShort", Integer(parts[2]), localTime, 2)
+        NumPut("UShort", Integer(parts[3]), localTime, 6)
+        NumPut("UShort", Integer(parts[4]), localTime, 8)
+        NumPut("UShort", Integer(parts[5]), localTime, 10)
+        NumPut("UShort", Integer(parts[6]), localTime, 12)
+        NumPut("UShort", Integer(parts[7]), localTime, 14)
+        utcTime := Buffer(16, 0)
+        if !DllCall("kernel32\TzSpecificLocalTimeToSystemTime", "Ptr", 0,
+            "Ptr", localTime.Ptr, "Ptr", utcTime.Ptr, "Int")
+            return false
+        fileTime := Buffer(8, 0)
+        if !DllCall("kernel32\SystemTimeToFileTime", "Ptr", utcTime.Ptr,
+            "Ptr", fileTime.Ptr, "Int")
+            return false
+        windowsTicks := NumGet(fileTime, 0, "Int64")
+        eventAtUnixMs := Floor((windowsTicks - 116444736000000000) / 10000)
+    } catch
+        return false
+    timestampToken := RegExReplace(timestampText, "[^0-9]", "")
+    return StrLen(timestampToken) = 17 && eventAtUnixMs >= 1
+        && eventAtUnixMs <= 9999999999999
+}
+
+ParseVerifiedFarmRewardDiagnosticLine(line, &record,
+    allowLegacyWithoutEventSuffix := true) {
+    record := 0
+    currentFormat := RegExMatch(line,
+        "^([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}) \| FARM_REWARD_CONFIRMED id=([1-9][0-9]{0,17}) mode=(mining|washing|gold) reason=(weight_increase|item_increase) beforeWeight=([0-9]{1,18}) afterWeight=([0-9]{1,18}) revision=([1-9][0-9]{0,17}) eventId=([A-Za-z0-9._:-]{8,128}) eventAt=([1-9][0-9]{0,12})$",
+        &parts)
+    if !currentFormat {
+        if !allowLegacyWithoutEventSuffix
+            return false
+        if !RegExMatch(line,
+            "^([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}) \| FARM_REWARD_CONFIRMED id=([1-9][0-9]{0,17}) mode=(mining|washing|gold) reason=(weight_increase|item_increase) beforeWeight=([0-9]{1,18}) afterWeight=([0-9]{1,18}) revision=([1-9][0-9]{0,17})$",
+            &parts)
+            return false
+    }
+    if !TryParseDiagnosticTimestamp(parts[1], &timestampToken, &eventAt)
+        return false
+    try {
+        attemptId := Integer(parts[2])
+        beforeWeight := Integer(parts[5])
+        afterWeight := Integer(parts[6])
+        snapshotRevision := Integer(parts[7])
+    } catch
+        return false
+    if parts[4] = "weight_increase" && afterWeight <= beforeWeight
+        return false
+    exactEventId := ""
+    if currentFormat {
+        exactEventId := parts[8]
+        try eventAt := Integer(parts[9])
+        catch
+            return false
+        if !TryParseHistoricalFarmRewardEventId(exactEventId, &eventMode,
+            &eventAttemptId, &eventRevision)
+            || eventMode != parts[3] || eventAttemptId != attemptId
+            || eventRevision != snapshotRevision
+            return false
+    }
+    record := {at: eventAt, timestampToken: timestampToken, mode: parts[3],
+        attemptId: attemptId, revision: snapshotRevision,
+        exactEventId: exactEventId, acknowledged: false,
+        supportSource: false, normalSource: false}
+    return true
+}
+
+TryParseLegacyMiningEventId(eventId, &attemptId, &snapshotRevision) {
+    attemptId := 0
+    snapshotRevision := 0
+    if !RegExMatch(eventId,
+        "^mine_run_[0-9]+_[0-9]+_[0-9]+(?:_r[1-9][0-9]*)?_([1-9][0-9]{0,17})_([1-9][0-9]{0,17})$",
+        &parts)
+        return false
+    try {
+        attemptId := Integer(parts[1])
+        snapshotRevision := Integer(parts[2])
+    } catch
+        return false
+    return true
+}
+
+TryParseHistoricalFarmRewardEventId(eventId, &actionMode, &attemptId,
+    &snapshotRevision) {
+    actionMode := ""
+    attemptId := 0
+    snapshotRevision := 0
+    if RegExMatch(eventId,
+        "^mine_run_[0-9]+_[0-9]+_[0-9]+(?:_r[1-9][0-9]*)?_(mining|washing|gold)_([1-9][0-9]{0,17})_([1-9][0-9]{0,17})$",
+        &parts) {
+        actionMode := parts[1]
+        try {
+            attemptId := Integer(parts[2])
+            snapshotRevision := Integer(parts[3])
+        } catch
+            return false
+        return true
+    }
+    if !TryParseLegacyMiningEventId(eventId, &attemptId, &snapshotRevision)
+        return false
+    actionMode := "mining"
+    return true
+}
+
+ParseHistoricalMiningMetagameDiagnosticLine(line, &link) {
+    link := 0
+    acknowledged := false
+    if RegExMatch(line,
+        "^([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}) \| METAGAME command=MINING_SUCCESS id=([A-Za-z0-9._:-]{8,128}) sent=[01]$",
+        &parts) {
+        acknowledged := false
+    } else if RegExMatch(line,
+        "^([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}) \| METAGAME_ACK command=MINING_SUCCESS id=([A-Za-z0-9._:-]{8,128}) remaining=[0-9]+$",
+        &parts) {
+        acknowledged := true
+    } else
+        return false
+    if !TryParseDiagnosticTimestamp(parts[1], &timestampToken, &eventAt)
+        return false
+    eventId := parts[2]
+    if !TryParseHistoricalFarmRewardEventId(eventId, &actionMode, &attemptId,
+        &snapshotRevision)
+        return false
+    link := {at: eventAt, id: eventId, attemptId: attemptId,
+        revision: snapshotRevision, mode: actionMode,
+        acknowledged: acknowledged}
+    return true
+}
+
+ParseDiagnosticSessionStartLine(line, &versionCode) {
+    versionCode := 0
+    if !RegExMatch(line,
+        "^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3} \| AI採掘機 v([0-9]{1,4})\.([0-9]{1,4})\.([0-9]{1,4}) 診断開始$",
+        &parts)
+        return false
+    try versionCode := Integer(parts[1]) * 100000000
+        + Integer(parts[2]) * 10000 + Integer(parts[3])
+    catch
+        return false
+    return true
+}
+
+IsDiagnosticSessionStartLine(line) {
+    return ParseDiagnosticSessionStartLine(line, &versionCode)
+}
+
+AppendLegacyFarmHistorySegment(segmentLines, &records,
+    allowLegacyWithoutEventSuffix := true, supportSource := false) {
+    segmentRecords := []
+    linksById := Map()
+    for line in segmentLines {
+        if ParseVerifiedFarmRewardDiagnosticLine(line, &record,
+            allowLegacyWithoutEventSuffix) {
+            record.supportSource := supportSource
+            record.normalSource := !supportSource
+            segmentRecords.Push(record)
+            continue
+        }
+        if !ParseHistoricalMiningMetagameDiagnosticLine(line, &link)
+            continue
+        if !linksById.Has(link.id) {
+            linksById[link.id] := link
+            continue
+        }
+        existing := linksById[link.id]
+        if link.at < existing.at
+            existing.at := link.at
+        if link.acknowledged
+            existing.acknowledged := true
+    }
+
+    usedExactIds := Map()
+    for record in segmentRecords {
+        if record.mode != "mining"
+            continue
+        bestLink := 0
+        bestDelta := 0
+        for eventId, link in linksById {
+            if usedExactIds.Has(eventId)
+                || link.mode != record.mode
+                || link.attemptId != record.attemptId
+                || link.revision != record.revision
+                || (record.exactEventId && eventId != record.exactEventId)
+                continue
+            ; The attempt/revision pair is unique inside one diagnostic session.
+            ; Do not depend on wall-clock ordering because Windows time correction can
+            ; move the ACK timestamp slightly behind the reward timestamp.
+            delta := Abs(link.at - record.at)
+            if !IsObject(bestLink) || delta < bestDelta {
+                bestLink := link
+                bestDelta := delta
+            }
+        }
+        if IsObject(bestLink) {
+            usedExactIds[bestLink.id] := true
+            record.exactEventId := bestLink.id
+            record.acknowledged := bestLink.acknowledged
+        }
+    }
+    for record in segmentRecords
+        records.Push(record)
+    return true
+}
+
+FarmHistoryRecordFingerprint(record) {
+    if !IsObject(record) || !record.HasOwnProp("timestampToken")
+        || !record.HasOwnProp("mode") || !record.HasOwnProp("attemptId")
+        || !record.HasOwnProp("revision")
+        return ""
+    fingerprint := record.timestampToken "|" record.mode "|"
+        . record.attemptId "|" record.revision
+    return RegExMatch(fingerprint,
+        "^[0-9]{17}\|(mining|washing|gold)\|[1-9][0-9]{0,17}\|[1-9][0-9]{0,17}$")
+        ? fingerprint : ""
+}
+
+ConsolidateLegacyFarmHistoryRecords(inputRecords, &records) {
+    records := []
+    grouped := Map()
+    order := []
+    for record in inputRecords {
+        fingerprint := FarmHistoryRecordFingerprint(record)
+        if !fingerprint
+            return false
+        if !grouped.Has(fingerprint) {
+            grouped[fingerprint] := record
+            order.Push(fingerprint)
+            continue
+        }
+        existing := grouped[fingerprint]
+        if existing.exactEventId && record.exactEventId
+            && existing.exactEventId != record.exactEventId
+            return false
+        if !existing.exactEventId && record.exactEventId
+            existing.exactEventId := record.exactEventId
+        existing.acknowledged := existing.acknowledged || record.acknowledged
+        existing.supportSource := existing.supportSource || record.supportSource
+        existing.normalSource := existing.normalSource || record.normalSource
+    }
+    for fingerprint in order
+        records.Push(grouped[fingerprint])
+    return true
+}
+
+ParseLegacyFarmHistoryContents(contents, &records, maximumRecords := 16384) {
+    parsedRecords := []
+    segmentLines := []
+    segmentAllowsLegacy := true
+    segmentIsSupport := false
+    for contentItem in contents {
+        content := IsObject(contentItem) ? contentItem.content : contentItem
+        contentIsSupport := IsObject(contentItem)
+            && contentItem.HasOwnProp("support") && contentItem.support
+        normalized := StrReplace(content, "`r", "")
+        for rawLine in StrSplit(normalized, "`n") {
+            line := rawLine
+            if SubStr(line, 1, 1) = Chr(0xFEFF)
+                line := SubStr(line, 2)
+            if ParseDiagnosticSessionStartLine(line, &sessionVersionCode) {
+                if segmentLines.Length
+                    AppendLegacyFarmHistorySegment(segmentLines, &parsedRecords,
+                        segmentAllowsLegacy, segmentIsSupport)
+                if parsedRecords.Length > maximumRecords
+                    return false
+                segmentLines := []
+                segmentIsSupport := contentIsSupport
+                segmentAllowsLegacy := contentIsSupport
+                    || sessionVersionCode < 900000002
+            } else if !segmentLines.Length {
+                segmentIsSupport := contentIsSupport
+                segmentAllowsLegacy := contentIsSupport
+            }
+            if line
+                segmentLines.Push(line)
+        }
+    }
+    if segmentLines.Length
+        AppendLegacyFarmHistorySegment(segmentLines, &parsedRecords,
+            segmentAllowsLegacy, segmentIsSupport)
+    if parsedRecords.Length > maximumRecords
+        return false
+    return ConsolidateLegacyFarmHistoryRecords(parsedRecords, &records)
+}
+
+BuildLegacyFarmRewardEventId(record) {
+    if !IsObject(record) || !record.HasOwnProp("timestampToken")
+        || !record.HasOwnProp("mode") || !record.HasOwnProp("attemptId")
+        || !record.HasOwnProp("revision")
+        || !RegExMatch(record.timestampToken, "^[0-9]{17}$")
+        || !IsSupportedStoneActivityMode(record.mode)
+        return ""
+    eventId := "legacy_reward_" record.timestampToken "_" record.mode "_"
+        . record.attemptId "_" record.revision
+    return RegExMatch(eventId, "^[A-Za-z0-9._:-]{8,128}$") ? eventId : ""
+}
+
+BuildLegacyFarmHistoryBatch(baseOutbox, records, batchAtUnixMs, &candidate,
+    &addedCount, sessionId := "legacy_farm_rewards_v1") {
+    candidate := []
+    addedCount := 0
+    try batchAtUnixMs := Integer(batchAtUnixMs)
+    catch
+        return false
+    if batchAtUnixMs < 1 || batchAtUnixMs >= 9999999999999
+        return false
+    for entry in baseOutbox {
+        if !MetagameOutboxEntryValid(entry)
+            return false
+        candidate.Push(entry)
+    }
+
+    missingEvents := []
+    seen := Map()
+    for record in records {
+        if !IsObject(record) || !record.HasOwnProp("acknowledged")
+            || !record.HasOwnProp("at")
+            return false
+        if record.acknowledged
+            continue
+        eventId := record.HasOwnProp("exactEventId") && record.exactEventId
+            ? record.exactEventId : BuildLegacyFarmRewardEventId(record)
+        ; Host rejects timestamps more than two minutes in the future. Keep the
+        ; original diagnostic timestamp in the stable ID, but clamp only the
+        ; replay time to the migration transaction time so a corrected Windows
+        ; clock/timezone cannot block the durable FIFO head forever.
+        replayAt := Min(record.at, batchAtUnixMs)
+        if !eventId || !TryParseMetagameOutboxFields("MINING_SUCCESS", eventId,
+            replayAt, &entry)
+            return false
+        if seen.Has(eventId)
+            continue
+        seen[eventId] := true
+        if MetagameOutboxContainsCommand(candidate, "MINING_SUCCESS", eventId)
+            continue
+        missingEvents.Push(entry)
+    }
+    if !missingEvents.Length
+        return true
+
+    if !RegExMatch(sessionId, "^[A-Za-z0-9._:-]{8,128}$")
+        return false
+    if MetagameOutboxContainsCommand(candidate, "SESSION_BEGIN", sessionId)
+        || MetagameOutboxContainsCommand(candidate, "SESSION_END", sessionId)
+        return false
+    if !MetagameOutboxEnqueue(&candidate, sessionId, batchAtUnixMs,
+        "SESSION_BEGIN")
+        return false
+    for entry in missingEvents
+        candidate.Push(entry)
+    if !MetagameOutboxEnqueue(&candidate, sessionId, batchAtUnixMs + 1,
+        "SESSION_END")
+        return false
+    addedCount := missingEvents.Length
+    return true
+}
+
+ReadLegacyFarmHistoryFiles(paths, &records) {
+    contents := []
+    for path in paths {
+        if !FileExist(path)
+            continue
+        try {
+            if FileGetSize(path) > 16777216
+                return false
+            contents.Push({content: FileRead(path, "UTF-8"),
+                support: RegExMatch(path,
+                    "i)\\AI採掘機_STONE履歴復元\.log$") != 0})
+        } catch
+            return false
+    }
+    return ParseLegacyFarmHistoryContents(contents, &records)
+}
+
+LegacyFarmHistorySupportReceiptToken(contents) {
+    ; The receipt follows verified support-file content, not only its path or mtime.
+    ; A changed export is safely reprocessed while an identical launch is a no-op.
+    hash := 2166136261
+    Loop Parse String(contents) {
+        hash := ((hash ^ Ord(A_LoopField)) * 16777619) & 0xFFFFFFFF
+    }
+    return Format("{:08X}", hash) "_" StrLen(contents)
+}
+
+LegacyFarmHistorySupportReceipt(contents) {
+    return "AIMINER_METAGAME_SUPPORT_BACKFILL_V1 "
+        . LegacyFarmHistorySupportReceiptToken(contents) "`n"
+}
+
+LegacyFarmHistorySupportReceiptComplete(receiptPath, expectedReceipt) {
+    if !receiptPath || !expectedReceipt || !FileExist(receiptPath)
+        return false
+    try return FileRead(receiptPath, "UTF-8") = expectedReceipt
+    catch
+        return false
+}
+
+WriteLegacyFarmHistorySupportReceipt(receiptPath, receiptText) {
+    if !receiptPath || !receiptText
+        return false
+    SplitPath receiptPath, , &directory
+    try DirCreate directory
+    catch
+        return false
+    tempPath := receiptPath "." DllCall("GetCurrentProcessId") ".tmp"
+    try {
+        try FileDelete tempPath
+        receiptFile := FileOpen(tempPath, "w", "UTF-8-RAW")
+        if !IsObject(receiptFile)
+            return false
+        receiptFile.Write(receiptText)
+        flushed := FlushMetagameFileHandle(receiptFile.Handle)
+        receiptFile.Close()
+        if !flushed {
+            try FileDelete tempPath
+            return false
+        }
+        moved := DllCall("kernel32\MoveFileExW", "Str", tempPath, "Str",
+            receiptPath, "UInt", 0x00000009, "Int")
+        if !moved {
+            try FileDelete tempPath
+            return false
+        }
+        return true
+    } catch {
+        try receiptFile.Close()
+        try FileDelete tempPath
+        return false
+    }
+}
+
+LegacyFarmHistoryBackfillComplete(markerPath) {
+    if !markerPath || !FileExist(markerPath)
+        return false
+    try return FileRead(markerPath, "UTF-8")
+        = "AIMINER_METAGAME_FARM_REWARD_BACKFILL_V1`n"
+    catch
+        return false
+}
+
+WriteLegacyFarmHistoryBackfillMarker(markerPath) {
+    if !markerPath
+        return false
+    SplitPath markerPath, , &directory
+    try DirCreate directory
+    catch
+        return false
+    tempPath := markerPath "." DllCall("GetCurrentProcessId") ".tmp"
+    try {
+        try FileDelete tempPath
+        markerFile := FileOpen(tempPath, "w", "UTF-8-RAW")
+        if !IsObject(markerFile)
+            return false
+        markerFile.Write("AIMINER_METAGAME_FARM_REWARD_BACKFILL_V1`n")
+        flushed := FlushMetagameFileHandle(markerFile.Handle)
+        markerFile.Close()
+        if !flushed {
+            try FileDelete tempPath
+            return false
+        }
+        moved := DllCall("kernel32\MoveFileExW", "Str", tempPath, "Str",
+            markerPath, "UInt", 0x00000009, "Int")
+        if !moved {
+            try FileDelete tempPath
+            return false
+        }
+        return true
+    } catch {
+        try markerFile.Close()
+        try FileDelete tempPath
+        return false
+    }
+}
+
+RunLegacyFarmHistoryBackfill() {
+    global State
+    if !State.metagameReplayNormalized
+        return false
+    normalPending := !LegacyFarmHistoryBackfillComplete(
+        State.metagameBackfillMarkerPath)
+    supportPath := A_ScriptDir "\AI採掘機_STONE履歴復元.log"
+    supportExists := FileExist(supportPath)
+    supportReceipt := ""
+    supportPending := false
+    if supportExists {
+        try supportContents := FileRead(supportPath, "UTF-8")
+        catch
+            return false
+        supportReceipt := LegacyFarmHistorySupportReceipt(supportContents)
+        supportPending := !LegacyFarmHistorySupportReceiptComplete(
+            State.metagameSupportBackfillReceiptPath, supportReceipt)
+    }
+    if !normalPending && !supportPending
+        return true
+    ; A support-assisted recovery export is optional and never shipped in the
+    ; application bundle. Feed it through the same strict session-aware parser
+    ; before the normal rotations so copied, audited rewards can be recovered.
+    paths := [A_ScriptDir "\AI採掘機_STONE履歴復元.log",
+        State.diagnosticPath ".2", State.diagnosticPath ".1",
+        State.diagnosticPath]
+    if !ReadLegacyFarmHistoryFiles(paths, &records)
+        return false
+    selectedRecords := []
+    hasNormalRecords := false
+    hasSupportRecords := false
+    for record in records {
+        if record.normalSource
+            hasNormalRecords := true
+        if record.supportSource
+            hasSupportRecords := true
+        if (normalPending && record.normalSource)
+            || (supportPending && record.supportSource)
+            selectedRecords.Push(record)
+    }
+    ; An empty normal install remains eligible for a later rotated log. An existing
+    ; support export receives its independent content receipt even when it contains
+    ; no complete verified rows, so an unchanged torn export is not retried forever.
+    if !selectedRecords.Length && !supportPending
+        return true
+    batchSessionId := normalPending && hasNormalRecords
+        ? "legacy_farm_rewards_v1"
+        : "legacy_farm_support_v1_"
+            . LegacyFarmHistorySupportReceiptToken(supportContents)
+    if !BuildLegacyFarmHistoryBatch(State.metagameOutbox, selectedRecords,
+        UnixTimeMilliseconds(), &candidate, &addedCount, batchSessionId)
+        return false
+    batchPersisted := candidate.Length != State.metagameOutbox.Length
+    if batchPersisted {
+        persisted := false
+        Loop 3 {
+            if PersistMetagameOutbox(candidate, State.metagameOutboxPath) {
+                persisted := true
+                break
+            }
+            if A_Index < 3
+                Sleep 20
+        }
+        if !persisted
+            return false
+    }
+    if normalPending && hasNormalRecords {
+        markerWritten := false
+        Loop 3 {
+            if WriteLegacyFarmHistoryBackfillMarker(
+                State.metagameBackfillMarkerPath) {
+                markerWritten := true
+                break
+            }
+            if A_Index < 3
+                Sleep 20
+        }
+        if !markerWritten
+            return false
+    }
+    if supportPending {
+        receiptWritten := false
+        Loop 3 {
+            if WriteLegacyFarmHistorySupportReceipt(
+                State.metagameSupportBackfillReceiptPath, supportReceipt) {
+                receiptWritten := true
+                break
+            }
+            if A_Index < 3
+                Sleep 20
+        }
+        if !receiptWritten
+            return false
+    }
+    State.metagameOutbox := candidate
+    State.metagameOutboxDirty := false
+    if batchPersisted {
+        State.metagameJournalReady := true
+        State.metagameJournalOps := 0
+    }
+    State.metagameReplayNormalized := true
+    return true
+}
+
+TestLegacyFarmHistoryBackfillIntegration(fixture, expectedOutboxLength) {
+    global State
+    processId := DllCall("GetCurrentProcessId")
+    testRoot := A_Temp "\ai-miner-meta-history-integration-" processId
+    testLogPath := testRoot "\AI採掘機_診断.log"
+    testOutboxPath := testRoot "\outbox.tsv"
+    testMarkerPath := testRoot "\backfill.done"
+    saved := {
+        diagnosticPath: State.diagnosticPath,
+        outboxPath: State.metagameOutboxPath,
+        markerPath: State.metagameBackfillMarkerPath,
+        outbox: State.metagameOutbox,
+        outboxDirty: State.metagameOutboxDirty,
+        replayNormalized: State.metagameReplayNormalized,
+        journalReady: State.metagameJournalReady,
+        journalOps: State.metagameJournalOps
+    }
+    passed := false
+    try {
+        try DirCreate testRoot
+        try FileDelete testLogPath
+        try FileDelete testOutboxPath
+        try FileDelete testMarkerPath
+        fixtureFile := FileOpen(testLogPath, "w", "UTF-8-RAW")
+        if !IsObject(fixtureFile)
+            return false
+        fixtureFile.Write(fixture)
+        fixtureFile.Close()
+
+        State.diagnosticPath := testLogPath
+        State.metagameOutboxPath := testOutboxPath
+        State.metagameBackfillMarkerPath := testMarkerPath
+        State.metagameOutbox := []
+        State.metagameOutboxDirty := false
+        State.metagameReplayNormalized := true
+        State.metagameJournalReady := false
+        State.metagameJournalOps := 0
+
+        firstRun := RunLegacyFarmHistoryBackfill()
+        diskOutbox := firstRun ? LoadMetagameOutbox(testOutboxPath) : []
+        firstRunOk := firstRun
+            && LegacyFarmHistoryBackfillComplete(testMarkerPath)
+            && State.metagameOutbox.Length = expectedOutboxLength
+            && diskOutbox.Length = expectedOutboxLength
+            && diskOutbox[1].command = "SESSION_BEGIN"
+            && diskOutbox[diskOutbox.Length].command = "SESSION_END"
+
+        ; Simulate a complete application restart. The marker must prevent a second
+        ; synthetic session and the durable FIFO must remain byte-for-byte equivalent.
+        State.metagameOutbox := diskOutbox
+        State.metagameReplayNormalized := true
+        secondRun := RunLegacyFarmHistoryBackfill()
+        passed := firstRunOk && secondRun
+            && State.metagameOutbox.Length = expectedOutboxLength
+            && LoadMetagameOutbox(testOutboxPath).Length = expectedOutboxLength
+    } catch {
+        passed := false
+    } finally {
+        State.diagnosticPath := saved.diagnosticPath
+        State.metagameOutboxPath := saved.outboxPath
+        State.metagameBackfillMarkerPath := saved.markerPath
+        State.metagameOutbox := saved.outbox
+        State.metagameOutboxDirty := saved.outboxDirty
+        State.metagameReplayNormalized := saved.replayNormalized
+        State.metagameJournalReady := saved.journalReady
+        State.metagameJournalOps := saved.journalOps
+        try FileDelete testLogPath
+        try FileDelete testOutboxPath
+        try FileDelete testMarkerPath
+        try DirDelete testRoot
+    }
+    return passed
+}
+
+VerifiedRewardWalEntryValid(entry) {
+    if !IsObject(entry) || !entry.HasOwnProp("id")
+        || !entry.HasOwnProp("mode") || !entry.HasOwnProp("revision")
+        || !entry.HasOwnProp("at")
+        || !RegExMatch(entry.id, "^[A-Za-z0-9._:-]{8,128}$")
+        || !IsSupportedStoneActivityMode(entry.mode)
+        return false
+    try {
+        revision := Integer(entry.revision)
+        eventAt := Integer(entry.at)
+    } catch
+        return false
+    return revision >= 1 && revision <= 999999999999999999
+        && eventAt >= 1 && eventAt <= 9999999999999
+}
+
+LoadVerifiedRewardWal(path, &pending, &operationCount) {
+    pending := Map()
+    operationCount := 0
+    if !path || !FileExist(path)
+        return true
+    try content := FileRead(path, "UTF-8")
+    catch
+        return false
+    lines := StrSplit(StrReplace(content, "`r", ""), "`n")
+    if !lines.Length || lines[1] != "AIMINERREWARDWAL1"
+        return false
+    resolved := Map()
+    Loop lines.Length - 1 {
+        line := lines[A_Index + 1]
+        if !line
+            continue
+        fields := StrSplit(line, "`t")
+        if fields[1] = "E" && fields.Length = 5 {
+            entry := {id: fields[2], mode: fields[3], revision: fields[4],
+                at: fields[5]}
+            if !VerifiedRewardWalEntryValid(entry)
+                continue
+            entry.revision := Integer(entry.revision)
+            entry.at := Integer(entry.at)
+            if !resolved.Has(entry.id) && !pending.Has(entry.id)
+                pending[entry.id] := entry
+        } else if fields[1] = "A" && fields.Length = 2 {
+            if !RegExMatch(fields[2], "^[A-Za-z0-9._:-]{8,128}$")
+                continue
+            pending.Delete(fields[2])
+            resolved[fields[2]] := true
+        } else
+            ; A leading newline makes an interrupted append its own physical row.
+            ; Ignore that torn row: a torn E was never committed, while a torn A
+            ; safely leaves the E pending for same-ID replay.
+            continue
+        operationCount += 1
+        if operationCount > 262144
+            return false
+    }
+    return true
+}
+
+AppendVerifiedRewardWalRecord(recordLine) {
+    global State
+    path := State.verifiedRewardWalPath
+    if !path || InStr(recordLine, "`r") || InStr(recordLine, "`n")
+        return false
+    SplitPath path, , &directory
+    try DirCreate directory
+    catch
+        return false
+    try newFile := !FileExist(path) || FileGetSize(path) = 0
+    catch
+        return false
+    if newFile {
+        tempPath := path "." DllCall("GetCurrentProcessId") ".init.tmp"
+        try {
+            try FileDelete tempPath
+            walFile := FileOpen(tempPath, "w", "UTF-8-RAW")
+            if !IsObject(walFile)
+                return false
+            walFile.Write("AIMINERREWARDWAL1`n" recordLine "`n")
+            flushed := FlushMetagameFileHandle(walFile.Handle)
+            walFile.Close()
+            if !flushed {
+                try FileDelete tempPath
+                return false
+            }
+            moved := DllCall("kernel32\MoveFileExW", "Str", tempPath,
+                "Str", path, "UInt", 0x00000009, "Int")
+            if !moved {
+                try FileDelete tempPath
+                return false
+            }
+            return true
+        } catch {
+            try walFile.Close()
+            try FileDelete tempPath
+            return false
+        }
+    }
+    try {
+        walFile := FileOpen(path, "a", "UTF-8-RAW")
+        if !IsObject(walFile)
+            return false
+        ; Prefix every append. If Windows stops during this write, the next retry
+        ; starts on a fresh row instead of concatenating onto a torn record.
+        walFile.Write("`n" recordLine)
+        flushed := FlushMetagameFileHandle(walFile.Handle)
+        walFile.Close()
+        return flushed
+    } catch {
+        try walFile.Close()
+        return false
+    }
+}
+
+PersistVerifiedRewardIntent(eventId, actionMode, snapshotRevision,
+    eventAtUnixMs, &persistedAtUnixMs) {
+    global State
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        persistedAtUnixMs := 0
+        if State.verifiedRewardWalPending.Has(eventId) {
+            entry := State.verifiedRewardWalPending[eventId]
+            if entry.mode != actionMode || entry.revision != snapshotRevision
+                return false
+            persistedAtUnixMs := entry.at
+            return true
+        }
+        entry := {id: eventId, mode: actionMode, revision: snapshotRevision,
+            at: eventAtUnixMs}
+        if !VerifiedRewardWalEntryValid(entry)
+            return false
+        if !AppendVerifiedRewardWalRecord("E`t" entry.id "`t" entry.mode
+            "`t" entry.revision "`t" entry.at)
+            return false
+        ; The fsync and matching in-memory pending row are one non-interruptible
+        ; transaction, so F9/F8 cannot strand an E until a full process restart.
+        State.verifiedRewardWalPending[entry.id] := entry
+        State.verifiedRewardWalOps += 1
+        persistedAtUnixMs := entry.at
+        return true
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+}
+
+CommitVerifiedRewardIntent(eventId) {
+    global State
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        if !State.verifiedRewardWalPending.Has(eventId)
+            return true
+        if !AppendVerifiedRewardWalRecord("A`t" eventId)
+            return false
+        State.verifiedRewardWalPending.Delete(eventId)
+        State.verifiedRewardWalOps += 1
+        MaybeCompactVerifiedRewardWal()
+        return true
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+}
+
+MaybeCompactVerifiedRewardWal() {
+    global State
+    if State.verifiedRewardWalOps < 512
+        return true
+    path := State.verifiedRewardWalPath
+    tempPath := path "." DllCall("GetCurrentProcessId") ".tmp"
+    try {
+        try FileDelete tempPath
+        walFile := FileOpen(tempPath, "w", "UTF-8-RAW")
+        if !IsObject(walFile)
+            return false
+        walFile.Write("AIMINERREWARDWAL1`n")
+        for eventId, entry in State.verifiedRewardWalPending
+            walFile.Write("E`t" eventId "`t" entry.mode "`t"
+                entry.revision "`t" entry.at "`n")
+        flushed := FlushMetagameFileHandle(walFile.Handle)
+        walFile.Close()
+        if !flushed {
+            try FileDelete tempPath
+            return false
+        }
+        moved := DllCall("kernel32\MoveFileExW", "Str", tempPath, "Str",
+            path, "UInt", 0x00000009, "Int")
+        if !moved {
+            try FileDelete tempPath
+            return false
+        }
+        State.verifiedRewardWalOps := State.verifiedRewardWalPending.Count
+        return true
+    } catch {
+        try walFile.Close()
+        try FileDelete tempPath
+        return false
+    }
+}
+
+RecoverVerifiedRewardWal(beforeMemoryCommit := 0) {
+    global State
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        if !State.metagameReplayNormalized
+            return false
+        if !State.verifiedRewardWalPending.Count
+            return true
+        candidate := []
+        for queued in State.metagameOutbox {
+            if !MetagameOutboxEntryValid(queued)
+                return false
+            candidate.Push(queued)
+        }
+        missing := []
+        recoveredIds := []
+        for eventId, entry in State.verifiedRewardWalPending {
+            if !VerifiedRewardWalEntryValid(entry)
+                return false
+            if !MetagameOutboxContainsCommand(candidate, "MINING_SUCCESS",
+                eventId) {
+                missing.Push(entry)
+            }
+            recoveredIds.Push(eventId)
+        }
+        if missing.Length {
+            recoveredAt := UnixTimeMilliseconds()
+            recoverySessionId := "reward_wal_recovery_" recoveredAt "_"
+                . missing.Length
+            if !MetagameOutboxEnqueue(&candidate, recoverySessionId,
+                recoveredAt, "SESSION_BEGIN")
+                return false
+            for entry in missing {
+                replayAt := Min(entry.at, recoveredAt)
+                if !MetagameOutboxEnqueue(&candidate, entry.id, replayAt)
+                    return false
+            }
+            if !MetagameOutboxEnqueue(&candidate, recoverySessionId,
+                recoveredAt + 1, "SESSION_END")
+                return false
+            persisted := false
+            Loop 3 {
+                if PersistMetagameOutbox(candidate, State.metagameOutboxPath) {
+                    persisted := true
+                    break
+                }
+                if A_Index < 3
+                    Sleep 20
+            }
+            if !persisted
+                return false
+        }
+        if IsObject(beforeMemoryCommit)
+            beforeMemoryCommit.Call()
+        ; ACK/reset callbacks cannot interleave with this copy-on-write transaction.
+        ; Disk replacement precedes memory replacement, which precedes every WAL A.
+        State.metagameOutbox := candidate
+        State.metagameOutboxDirty := false
+        if missing.Length {
+            State.metagameJournalReady := true
+            State.metagameJournalOps := 0
+        }
+        for eventId in recoveredIds {
+            if !CommitVerifiedRewardIntent(eventId)
+                return false
+        }
+        WriteDiagnostic("STONE_REWARD_WAL_RECOVERED count=" recoveredIds.Length)
+        return true
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
 }
 
 MetagameRetryBackoffMs(retryWindow) {
@@ -1884,6 +3245,20 @@ RunMetagameInterleaveSelfTestAck(*) {
         MetagameInterleaveAckCommand, MetagameInterleaveAckId)
     MetagameInterleaveTimerRan := true
     SetTimer FlushMetagameOutboxReplay, 0
+}
+
+ProbeRewardWalRecoveryCriticalSelfTest(*) {
+    global RewardWalRecoveryCriticalObserved, RewardWalRecoveryTimerRan
+    global RewardWalRecoveryTimerRanInside
+    RewardWalRecoveryCriticalObserved := A_IsCritical != 0
+    SetTimer RunRewardWalRecoveryCriticalSelfTestTimer, -1
+    Sleep 35
+    RewardWalRecoveryTimerRanInside := RewardWalRecoveryTimerRan
+}
+
+RunRewardWalRecoveryCriticalSelfTestTimer(*) {
+    global RewardWalRecoveryTimerRan
+    RewardWalRecoveryTimerRan := true
 }
 
 ProbeMetagameResetCriticalSelfTest(*) {
@@ -2206,12 +3581,96 @@ MetagameResetRequiresEnd(running, stopInProgress, outbox, sessionId) {
         && MetagameOutboxContainsCommand(outbox, "SESSION_END", sessionId)
 }
 
-NormalizeStoppedMetagameOutboxAtStartup() {
+BuildClampedMetagameReplayOutbox(outbox, recoveryAtUnixMs, &candidate,
+    &changedCount) {
+    candidate := outbox
+    changedCount := 0
+    try recoveryAtUnixMs := Integer(recoveryAtUnixMs)
+    catch
+        return false
+    if recoveryAtUnixMs < 1 || recoveryAtUnixMs > 9999999999999
+        return false
+    for entry in outbox {
+        if !MetagameOutboxEntryValid(entry)
+            return false
+        if entry.at > recoveryAtUnixMs
+            changedCount += 1
+    }
+    if !changedCount
+        return true
+    ; Build a deep candidate so an fsync/replace failure cannot mutate the live
+    ; FIFO before the replacement is durable. Runtime retry metadata is preserved.
+    candidate := []
+    for entry in outbox
+        candidate.Push({command: entry.command, id: entry.id,
+            at: Min(Integer(entry.at), recoveryAtUnixMs),
+            retries: entry.HasOwnProp("retries") ? entry.retries : 0,
+            nextAt: entry.HasOwnProp("nextAt") ? entry.nextAt : 0,
+            windows: entry.HasOwnProp("windows") ? entry.windows : 0,
+            enqueued: entry.HasOwnProp("enqueued") ? entry.enqueued : false})
+    return true
+}
+
+ClampMetagameReplayFutureTimestamps(outbox, recoveryAtUnixMs, &changed) {
+    if !BuildClampedMetagameReplayOutbox(outbox, recoveryAtUnixMs,
+        &candidate, &changedCount)
+        return false
+    changed := changedCount > 0
+    if changed {
+        Loop outbox.Length
+            outbox[A_Index] := candidate[A_Index]
+    }
+    return true
+}
+
+PersistRuntimeMetagameFutureClamp(recoveryAtUnixMs) {
+    global State
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        if !BuildClampedMetagameReplayOutbox(State.metagameOutbox,
+            recoveryAtUnixMs, &candidate, &changedCount)
+            return false
+        if !changedCount
+            return true
+        ; Persist every future row at the same sampled wall-clock instant before
+        ; changing memory or sending the head. IDs and FIFO ordering stay intact.
+        if !PersistMetagameOutboxArrayWithRetry(candidate)
+            return false
+        State.metagameOutbox := candidate
+        State.metagameOutboxDirty := false
+        State.metagameJournalReady := true
+        State.metagameJournalOps := 0
+        WriteDiagnostic("METAGAME_RUNTIME_FUTURE_TIME_CLAMPED at="
+            recoveryAtUnixMs " count=" changedCount " persisted=1")
+        return true
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+}
+
+NormalizeStoppedMetagameOutboxAtStartup(recoveryAtUnixMs := 0) {
     global State
     criticalWasOn := EnterMetagameOutboxCritical()
     try {
         if !State.metagameOutbox.Length
             return true
+        try recoveryAt := recoveryAtUnixMs
+            ? Integer(recoveryAtUnixMs) : UnixTimeMilliseconds()
+        catch
+            return false
+        ; Stable IDs remain untouched, but a Windows clock correction must not
+        ; leave an otherwise durable FIFO permanently rejected as future data.
+        if !BuildClampedMetagameReplayOutbox(State.metagameOutbox,
+            recoveryAt, &startupCandidate, &changedCount)
+            return false
+        if changedCount {
+            if !PersistMetagameOutboxArrayWithRetry(startupCandidate)
+                return false
+            State.metagameOutbox := startupCandidate
+            State.metagameOutboxDirty := false
+            State.metagameJournalReady := true
+            State.metagameJournalOps := 0
+            WriteDiagnostic("METAGAME_FUTURE_TIME_CLAMPED at=" recoveryAt
+                " count=" changedCount " persisted=1")
+        }
         ; A graceful stop already has the authoritative END and its real duration.
         ; Preserve that FIFO byte-for-byte; only a hard-kill tail without END is folded
         ; into a fresh closed recovery session. A prefix may already have been ACKed,
@@ -2225,7 +3684,7 @@ NormalizeStoppedMetagameOutboxAtStartup() {
         ; that historical BEGIN after Host recovery would reopen the old session and
         ; count offline time. Fold every retained mining row into a fresh, immediately
         ; closed recovery session before the first idle replay. Commit disk first.
-        startedAt := UnixTimeMilliseconds()
+        startedAt := recoveryAt
         resetOrdinal := Max(1, State.metagameSessionResetCount + 1)
         sessionId := BuildFarmSessionId(DllCall("GetCurrentProcessId"), 1,
             startedAt, resetOrdinal)
@@ -2389,6 +3848,10 @@ PrepareMetagameForNewFarmStart() {
             return false
         State.metagameReplayNormalized := true
     }
+    ; F9 followed by F8 in the same process must recover a verified reward intent
+    ; just like a full restart. Never reset diagnostics/start a new run first.
+    if State.verifiedRewardWalPending.Count && !RecoverVerifiedRewardWal()
+        return false
     return true
 }
 
@@ -2536,10 +3999,11 @@ AcknowledgeMetagameEvent(command, eventId) {
             && acknowledgedId = State.farmSessionId
             State.farmSessionEndSent := true
         if State.metagameOutbox.Length {
-            ; Do not expose the next command to a duplicate ACK generated by a retried
-            ; predecessor until a later dispatcher pass has actually sent it.
+            ; ACK matching includes command + stable ID and the FIFO rejects duplicate
+            ; rows, so a predecessor ACK cannot remove the next head. Dispatch on the
+            ; next timer tick; the old 100 ms gap made restored history visibly lag.
             State.metagameOutbox[1].enqueued := false
-            State.metagameOutbox[1].nextAt := MonotonicMs() + 100
+            State.metagameOutbox[1].nextAt := MonotonicMs() + 1
         }
         WriteDiagnostic("METAGAME_ACK command=" acknowledgedCommand " id=" eventId
             " remaining=" State.metagameOutbox.Length)
@@ -2549,28 +4013,105 @@ AcknowledgeMetagameEvent(command, eventId) {
     } finally LeaveMetagameOutboxCritical(criticalWasOn)
 }
 
-EmitVerifiedMiningSuccess(expectedGeneration, attemptId, snapshotRevision) {
+EmitVerifiedFarmReward(expectedGeneration, actionMode, attemptId,
+    snapshotRevision, completedAtUnixMs := 0, stableEventId := "",
+    rewardSessionId := "") {
     global State
-    if !IsCurrentRun(expectedGeneration) || State.runMode != "mining"
+    if !IsCurrentRun(expectedGeneration)
+        || !IsSupportedStoneActivityMode(actionMode)
+        || State.runMode != actionMode
         return false
     ; farmSessionId carries PID + wall-clock start and prevents persistent dedupe
-    ; collisions after an app restart, while retries keep this exact ID stable.
-    BeginFarmMetagameSession(expectedGeneration)
-    if !State.farmSessionId
+    ; collisions after an app restart. Mode prevents attempt/revision collisions
+    ; between mining, washing, and gold-panning runs while retries retain the ID.
+    if !EnsureFarmMetagameSessionIdentity(expectedGeneration)
         return false
-    eventId := BuildMiningEventId(State.farmSessionId, attemptId,
-        snapshotRevision)
+    eventSessionId := rewardSessionId ? rewardSessionId : State.farmSessionId
+    expectedEventId := BuildFarmRewardEventId(eventSessionId, actionMode,
+        attemptId, snapshotRevision)
+    eventId := stableEventId ? stableEventId : expectedEventId
+    if !eventId || eventId != expectedEventId
+        return false
     if eventId = State.lastMiningEventId
-        || MetagameOutboxContainsCommand(State.metagameOutbox,
-            "MINING_SUCCESS", eventId)
+        return CommitVerifiedRewardIntent(eventId)
+    try eventAt := completedAtUnixMs
+        ? Integer(completedAtUnixMs) : UnixTimeMilliseconds()
+    catch
+        return false
+    if eventAt < 1 || eventAt > 9999999999999
+        return false
+    if MetagameOutboxContainsCommand(State.metagameOutbox,
+        "MINING_SUCCESS", eventId) {
+        ; The queue row is already durable. Resolve a surviving pre-queue intent
+        ; before allowing it to be sent or treating the retry as committed.
+        if !CommitVerifiedRewardIntent(eventId)
+            return false
+        for queued in State.metagameOutbox {
+            if queued.command = "MINING_SUCCESS" && queued.id = eventId {
+                queued.nextAt := 0
+                break
+            }
+        }
+        FlushPendingMetagameMiningEvent(expectedGeneration)
         return true
-    if !DurablyEnqueueMetagameEvent("MINING_SUCCESS", eventId,
-        UnixTimeMilliseconds()) {
+    }
+    ; A separate fsync'd intent precedes the normal outbox. It survives F9, a new
+    ; Farm start (which resets diagnostics), app termination, and an interrupted
+    ; outbox write. Recovery always reuses this exact ID and timestamp.
+    if !PersistVerifiedRewardIntent(eventId, actionMode, snapshotRevision,
+        eventAt, &eventAt)
+        return false
+    if !BeginFarmMetagameSession(expectedGeneration)
+        return false
+    if !DurablyEnqueueMetagameEvent("MINING_SUCCESS", eventId, eventAt) {
         WriteDiagnostic("METAGAME_OUTBOX_PERSIST_FAILED id=" eventId)
+        return false
+    }
+    if !CommitVerifiedRewardIntent(eventId) {
+        WriteDiagnostic("METAGAME_REWARD_WAL_COMMIT_FAILED id=" eventId)
         return false
     }
     FlushPendingMetagameMiningEvent(expectedGeneration)
     return true
+}
+
+WaitForVerifiedFarmRewardDurability(expectedGeneration, actionMode, attemptId,
+    snapshotRevision, completedAtUnixMs, stableEventId, rewardSessionId) {
+    global State
+    retryCount := 0
+    while IsCurrentRun(expectedGeneration) {
+        attempt := State.pendingFarmAttempt
+        if !IsObject(attempt) || attempt.generation != expectedGeneration
+            || attempt.actionMode != actionMode
+            || attempt.attemptId != attemptId || !attempt.completed
+            || attempt.rewardSessionId != rewardSessionId
+            || attempt.rewardEventId != stableEventId
+            return false
+        if EmitVerifiedFarmReward(expectedGeneration, actionMode, attemptId,
+            snapshotRevision, completedAtUnixMs, stableEventId,
+            rewardSessionId) {
+            if retryCount
+                WriteDiagnostic("STONE_DURABLE_RECOVERED id=" attemptId
+                    " mode=" actionMode " retries=" retryCount)
+            return true
+        }
+        ; A verified inventory gain is not committed to the visible counter until
+        ; its stable event is fsync'd into the outbox. Hold this Farm attempt and
+        ; retry the exact same ID; never click the work target again in this state.
+        retryCount += 1
+        State.farmWatchdogAt := MonotonicMs()
+        State.statusLabel.Text := "●  作業結果をSTONEへ安全に保存中（再試行 "
+            . retryCount "）"
+        if retryCount = 1 || Mod(retryCount, 8) = 0
+            WriteDiagnostic("STONE_DURABLE_RETRY id=" attemptId
+                " mode=" actionMode " retry=" retryCount)
+        retryDelay := Min(5000, 250 * (2 ** Min(retryCount - 1, 4)))
+        retryUntil := MonotonicMs() + retryDelay
+        while IsCurrentRun(expectedGeneration)
+            && MonotonicMs() < retryUntil
+            Sleep Min(30, Max(1, retryUntil - MonotonicMs()))
+    }
+    return false
 }
 
 FlushPendingMetagameMiningEvent(expectedGeneration) {
@@ -2601,8 +4142,21 @@ FlushMetagameOutboxHead(expectedGeneration) {
             return false
         if State.metagameOutboxDirty && !PersistMetagameOutboxWithRetry()
             return false
+        ; Windows wall time can move backwards while the app remains open. Clamp
+        ; the complete future tail transactionally before Host validation sees it.
+        wallClockNow := UnixTimeMilliseconds()
+        if !PersistRuntimeMetagameFutureClamp(wallClockNow)
+            return false
         entry := State.metagameOutbox[1]
         now := MonotonicMs()
+        ; A verified reward may enter the FIFO only after its independent intent
+        ; record, and may leave for the Host only after that intent's durable
+        ; commit tombstone. This closes the crash window between the two journals.
+        if entry.command = "MINING_SUCCESS"
+            && State.verifiedRewardWalPending.Has(entry.id) {
+            entry.nextAt := now + 250
+            return false
+        }
         if entry.nextAt && now < entry.nextAt
             return false
         if entry.retries >= 3 {
@@ -2619,8 +4173,8 @@ FlushMetagameOutboxHead(expectedGeneration) {
         EnsureWebUiHost()
         return false
     }
-    ; `at` is the immutable real event time. Host accepts authenticated replay
-    ; history; changing this value would corrupt daily statistics.
+    ; `at` remains the real event time unless Windows moved behind it. In that one
+    ; case the full future tail was durably clamped above so Host replay can resume.
     sent := SendMetagameCommand(entry.command, entry.id, entry.at)
     updated := false
     criticalWasOn := EnterMetagameOutboxCritical()
@@ -2674,6 +4228,7 @@ ShowPage(pageName, *) {
     if pageName = "vehicle" {
         RefreshVehicleUi()
         if !State.running && !State.registrationActive
+            && !State.startInProgress
             SetTimer CheckCompanionStatusForUi, -30
     } else if pageName = "update"
         RefreshUpdateUi()
@@ -2724,7 +4279,7 @@ HandleMainEscape(*) {
 
 ToggleMining(*) {
     global State
-    if State.running
+    if State.running || State.startInProgress || State.registrationActive
         StopMining()
     else
         StartMining()
@@ -2732,14 +4287,133 @@ ToggleMining(*) {
 
 CanStartFromHotkey(*) {
     global State
-    if !AutomationStartAllowed(State.running, State.registrationActive)
+    if !AutomationStartAllowed(State.running, State.registrationActive,
+        State.startInProgress)
         return false
     activeHwnd := WinExist("A")
     return activeHwnd && IsFiveMWindow(activeHwnd)
 }
 
-AutomationStartAllowed(running, registrationActive) {
-    return !running && !registrationActive
+AutomationStartAllowed(running, registrationActive, startInProgress := false) {
+    return !running && !registrationActive && !startInProgress
+}
+
+TryClaimStartOperation(&startToken) {
+    global State
+    startToken := 0
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        if !AutomationStartAllowed(State.running, State.registrationActive,
+            State.startInProgress)
+            return false
+        State.startRequestSequence += 1
+        if State.startRequestSequence < 1
+            State.startRequestSequence := 1
+        State.startRequestToken := State.startRequestSequence
+        State.startInProgress := true
+        startToken := State.startRequestToken
+        return true
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+}
+
+IsStartOperationCurrent(startToken) {
+    global State
+    return startToken > 0 && State.startInProgress
+        && State.startRequestToken = startToken
+        && !State.running && !State.registrationActive
+}
+
+ReleaseStartOperation(startToken) {
+    global State
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        if !IsStartOperationCurrent(startToken)
+            return false
+        State.startInProgress := false
+        State.startRequestToken := 0
+        return true
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+}
+
+CancelStartOperation() {
+    global State
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        if !State.startInProgress
+            return false
+        State.startInProgress := false
+        State.startRequestToken := 0
+        return true
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+}
+
+ShowStartPreparationState(startToken) {
+    global State
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        if !IsStartOperationCurrent(startToken)
+            return false
+        State.mainButton.Text := "開始準備を停止"
+        State.actionControl.Enabled := false
+        State.statusLabel.Text := "●  開始前の接続を確認中"
+        return true
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+}
+
+FinishStartPreparation(startToken) {
+    global State
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        if !IsStartOperationCurrent(startToken)
+            return false
+        ; Restore controls before releasing ownership. A queued UI click cannot
+        ; claim a new start and then be overwritten by this older finally block.
+        State.mainButton.Text := "自動操作を開始"
+        State.actionControl.Enabled := true
+        State.startInProgress := false
+        State.startRequestToken := 0
+        return true
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+}
+
+TestStartOperationOwnership() {
+    global State
+    savedRunning := State.running
+    savedRegistrationActive := State.registrationActive
+    savedStartInProgress := State.startInProgress
+    savedStartRequestSequence := State.startRequestSequence
+    savedStartRequestToken := State.startRequestToken
+    passed := false
+    try {
+        State.running := false
+        State.registrationActive := false
+        State.startInProgress := false
+        State.startRequestSequence := 40
+        State.startRequestToken := 0
+        firstToken := 0
+        duplicateToken := 0
+        nextToken := 0
+        firstClaimed := TryClaimStartOperation(&firstToken)
+        duplicateBlocked := !TryClaimStartOperation(&duplicateToken)
+        stopCancelled := CancelStartOperation()
+        oldOwnerInvalid := !IsStartOperationCurrent(firstToken)
+        nextClaimed := TryClaimStartOperation(&nextToken)
+        staleReleaseBlocked := !ReleaseStartOperation(firstToken)
+        nextOwnerReleased := ReleaseStartOperation(nextToken)
+        passed := firstClaimed && firstToken = 41
+            && duplicateBlocked && duplicateToken = 0
+            && stopCancelled && oldOwnerInvalid
+            && nextClaimed && nextToken = 42
+            && staleReleaseBlocked && nextOwnerReleased
+            && !State.startInProgress && State.startRequestToken = 0
+    } finally {
+        State.running := savedRunning
+        State.registrationActive := savedRegistrationActive
+        State.startInProgress := savedStartInProgress
+        State.startRequestSequence := savedStartRequestSequence
+        State.startRequestToken := savedStartRequestToken
+    }
+    return passed
 }
 
 FarmStateTransitionAllowed(fromState, toState) {
@@ -2747,7 +4421,10 @@ FarmStateTransitionAllowed(fromState, toState) {
         return true
     allowed := Map(
         "IDLE", "|FARMING|ERROR|",
-        "FARMING", "|INVENTORY_CHECK|RECOVERY|STOPPING_FARM|ERROR|",
+        "FARMING", "|WASH_SETTLING|INVENTORY_CHECK|RECOVERY|STOPPING_FARM|ERROR|",
+        "WASH_SETTLING", "|WASH_CORRECTING|WASH_VERIFYING|RECOVERY|STOPPING_FARM|ERROR|",
+        "WASH_CORRECTING", "|WASH_VERIFYING|RECOVERY|STOPPING_FARM|ERROR|",
+        "WASH_VERIFYING", "|FARMING|RECOVERY|STOPPING_FARM|ERROR|",
         "INVENTORY_CHECK", "|FARMING|INVENTORY_FULL|RECOVERY|STOPPING_FARM|ERROR|",
         "INVENTORY_FULL", "|STOPPING_FARM|RECOVERY|ERROR|",
         "STOPPING_FARM", "|OPENING_STORAGE|IDLE|RECOVERY|ERROR|",
@@ -2764,6 +4441,9 @@ FarmStateTransitionAllowed(fromState, toState) {
 FarmStateLegacyPhase(farmState) {
     return farmState = "IDLE" ? "stopped"
         : farmState = "FARMING" ? "working"
+        : farmState = "WASH_SETTLING" ? "wash_settle"
+        : farmState = "WASH_CORRECTING" ? "wash_correct"
+        : farmState = "WASH_VERIFYING" ? "wash_verify"
         : farmState = "INVENTORY_CHECK" ? "capacity_check"
         : farmState = "INVENTORY_FULL" ? "capacity_full"
         : farmState = "STOPPING_FARM" ? "stopping_work"
@@ -2779,38 +4459,44 @@ FarmStateLegacyPhase(farmState) {
 TransitionFarmState(nextState, reason, expectedGeneration := 0,
     expectedTaskId := 0, force := false) {
     global State
-    if expectedGeneration && !IsCurrentRun(expectedGeneration) {
-        WriteDiagnostic("FSM_STALE_GENERATION expected=" expectedGeneration
-            " actual=" State.generation " next=" nextState)
-        return false
+    criticalWasOn := A_IsCritical
+    if !criticalWasOn
+        Critical "On"
+    try {
+        if expectedGeneration && !IsCurrentRun(expectedGeneration) {
+            WriteDiagnostic("FSM_STALE_GENERATION expected=" expectedGeneration
+                " actual=" State.generation " next=" nextState)
+            return false
+        }
+        if expectedTaskId && expectedTaskId != State.farmStateTaskId {
+            WriteDiagnostic("FSM_STALE_TASK expected=" expectedTaskId
+                " actual=" State.farmStateTaskId " next=" nextState)
+            return false
+        }
+        previousState := State.farmState
+        if !force && !FarmStateTransitionAllowed(previousState, nextState) {
+            WriteDiagnostic("FSM_INVALID from=" previousState " to=" nextState
+                " reason=" DiagnosticToken(reason))
+            return false
+        }
+        State.farmState := nextState
+        State.farmStateReason := reason
+        State.farmStateEnteredAt := MonotonicMs()
+        State.farmStateTaskId += 1
+        taskId := State.farmStateTaskId
+        State.automationPhase := FarmStateLegacyPhase(nextState)
+        snapshotWeight := IsObject(State.confirmedInventory)
+            ? State.confirmedInventory.weight : -1
+        snapshotUsed := IsObject(State.confirmedInventory)
+            ? State.confirmedInventory.used : -1
+        targetLostAge := State.targetLostSince
+            ? Max(0, MonotonicMs() - State.targetLostSince) : 0
+        watchdogAge := State.farmWatchdogAt
+            ? Max(0, MonotonicMs() - State.farmWatchdogAt) : 0
+    } finally {
+        if !criticalWasOn
+            Critical "Off"
     }
-    if expectedTaskId && expectedTaskId != State.farmStateTaskId {
-        WriteDiagnostic("FSM_STALE_TASK expected=" expectedTaskId
-            " actual=" State.farmStateTaskId " next=" nextState)
-        return false
-    }
-    previousState := State.farmState
-    if !force && !FarmStateTransitionAllowed(previousState, nextState) {
-        WriteDiagnostic("FSM_INVALID from=" previousState " to=" nextState
-            " reason=" DiagnosticToken(reason))
-        return false
-    }
-    Critical "On"
-    State.farmState := nextState
-    State.farmStateReason := reason
-    State.farmStateEnteredAt := MonotonicMs()
-    State.farmStateTaskId += 1
-    taskId := State.farmStateTaskId
-    State.automationPhase := FarmStateLegacyPhase(nextState)
-    Critical "Off"
-    snapshotWeight := IsObject(State.confirmedInventory)
-        ? State.confirmedInventory.weight : -1
-    snapshotUsed := IsObject(State.confirmedInventory)
-        ? State.confirmedInventory.used : -1
-    targetLostAge := State.targetLostSince
-        ? Max(0, MonotonicMs() - State.targetLostSince) : 0
-    watchdogAge := State.farmWatchdogAt
-        ? Max(0, MonotonicMs() - State.farmWatchdogAt) : 0
     WriteDiagnostic("FSM gen=" State.generation " task=" taskId
         " from=" previousState " to=" nextState
         " reason=" DiagnosticToken(reason)
@@ -2837,6 +4523,9 @@ IsCurrentFarmTask(expectedGeneration, expectedTaskId := 0,
 FarmStateDisplayName(farmState) {
     return farmState = "IDLE" ? "停止中"
         : farmState = "FARMING" ? "作業中"
+        : farmState = "WASH_SETTLING" ? "洗浄後の静止待ち"
+        : farmState = "WASH_CORRECTING" ? "洗浄位置を補正"
+        : farmState = "WASH_VERIFYING" ? "洗浄位置を再確認"
         : farmState = "INVENTORY_CHECK" ? "所持品確認"
         : farmState = "INVENTORY_FULL" ? "容量不足"
         : farmState = "STOPPING_FARM" ? "作業停止"
@@ -3014,7 +4703,8 @@ RunFarmStateMachineMockTest(cycleCount := 100) {
 
 IsMiningActive(*) {
     global State
-    return State.running || State.registrationActive
+    ; The stop hotkey must remain live while a blocking start preflight is running.
+    return State.running || State.registrationActive || State.startInProgress
 }
 
 ConfigureTrayMenu() {
@@ -3039,7 +4729,7 @@ ShowMainWindow(*) {
 
 ChangeActionMode(control, *) {
     global State, Config, settingsPath
-    if State.running || State.registrationActive {
+    if State.running || State.registrationActive || State.startInProgress {
         activeMode := State.running ? State.runMode : Config.actionMode
         control.Choose(activeMode = "washing" ? 2 : activeMode = "gold" ? 3 : 1)
         return
@@ -3364,6 +5054,10 @@ ShowSettings(*) {
 SaveInlineSettings(*) {
     global State, Config, settingsPath
     State.settingsErrorLabel.Opt("cB42318")
+    if State.startInProgress {
+        State.settingsErrorLabel.Text := "開始準備を停止してから設定を変更してください。"
+        return
+    }
     if State.registrationActive {
         State.settingsErrorLabel.Text := "車両登録を中止してから設定を変更してください。"
         return
@@ -3533,6 +5227,7 @@ SaveAllSettingsAtomically() {
         IniWrite 1, temporarySettingsPath, "Updates", "Schema"
         IniWrite Config.autoCheckUpdates, temporarySettingsPath, "Updates", "AutoCheck"
         IniWrite Config.washForwardCorrection, temporarySettingsPath, "Washing", "ForwardCorrection"
+        IniWrite Config.washPostCompletionSettleMs, temporarySettingsPath, "Washing", "PostCompletionSettleMs"
         IniWrite Config.goldRecoveryEnabled, temporarySettingsPath, "GoldPanning", "RecoveryEnabled"
         IniWrite Config.goldRecoveryAfterMs, temporarySettingsPath, "GoldPanning", "RecoveryAfterMs"
         IniWrite Config.goldRecoveryPulseMs, temporarySettingsPath, "GoldPanning", "RecoveryPulseMs"
@@ -3591,7 +5286,7 @@ SaveAllSettingsAtomically() {
 
 ToggleLocalVehicleStorage(control) {
     global State, Config
-    if State.running || State.registrationActive {
+    if State.running || State.registrationActive || State.startInProgress {
         control.Value := Config.vehicleStorageEnabled
         return
     }
@@ -3633,12 +5328,16 @@ RefreshLocalVehicleUi(*) {
     valid := IsValidVehicleProfile(Config)
     Config.vehicleStorageEnabled := Config.vehicleStorageEnabled && valid ? 1 : 0
     State.vehicleEnabledControl.Value := Config.vehicleStorageEnabled
-    State.vehicleEnabledControl.Enabled := valid && !State.running && !State.registrationActive
+    State.vehicleEnabledControl.Enabled := valid && !State.running
+        && !State.registrationActive && !State.startInProgress
     State.vehicleNameEdit.Value := Config.vehicleName
     State.vehicleNameEdit.Enabled := !State.running && !State.registrationActive
-    State.vehicleRegisterButton.Enabled := !State.running && !State.registrationActive
+        && !State.startInProgress
+    State.vehicleRegisterButton.Enabled := !State.running
+        && !State.registrationActive && !State.startInProgress
     State.vehicleRegisterButton.Text := valid ? "別の車両を登録" : "車両を登録"
-    State.vehicleDeleteButton.Enabled := valid && !State.running && !State.registrationActive
+    State.vehicleDeleteButton.Enabled := valid && !State.running
+        && !State.registrationActive && !State.startInProgress
 
     if State.registrationActive {
         State.vehicleStatusLabel.Text := "登録する車両のストレージを開いてください"
@@ -3660,6 +5359,7 @@ RefreshLocalVehicleUi(*) {
 BeginLocalVehicleRegistration(*) {
     global State, Config
     if State.running || State.updateOperation || State.registrationActive
+        || State.startInProgress
         return
     if !Config.backgroundMode {
         State.vehicleStatusLabel.Text := "設定でバックグラウンド操作をオンにしてください"
@@ -3865,7 +5565,8 @@ CloseLocalRegistrationOverlay() {
 
 DeleteLocalVehicleRegistration(*) {
     global State, Config
-    if State.running || State.registrationActive || !IsValidVehicleProfile(Config)
+    if State.running || State.registrationActive || State.startInProgress
+        || !IsValidVehicleProfile(Config)
         return
     previousProfile := SnapshotVehicleProfile()
     Config.vehicleStorageEnabled := 0
@@ -4830,6 +6531,7 @@ SaveSettings(settingsGui, startControl, stopControl, backgroundControl,
         IniWrite 1, temporarySettingsPath, "Updates", "Schema"
         IniWrite Config.autoCheckUpdates, temporarySettingsPath, "Updates", "AutoCheck"
         IniWrite Config.washForwardCorrection, temporarySettingsPath, "Washing", "ForwardCorrection"
+        IniWrite Config.washPostCompletionSettleMs, temporarySettingsPath, "Washing", "PostCompletionSettleMs"
         IniWrite Config.goldRecoveryEnabled, temporarySettingsPath, "GoldPanning", "RecoveryEnabled"
         IniWrite Config.goldRecoveryAfterMs, temporarySettingsPath, "GoldPanning", "RecoveryAfterMs"
         IniWrite Config.goldRecoveryPulseMs, temporarySettingsPath, "GoldPanning", "RecoveryPulseMs"
@@ -4877,6 +6579,11 @@ IsSafeConfiguredHotkey(value) {
 CheckForUpdates(*) {
     global State
     ShowPage("update")
+    if State.startInProgress {
+        State.updatePageStatus.Text := "開始準備を停止してから更新してください。"
+        QueueWebUiFlush()
+        return
+    }
     if State.registrationActive {
         State.updatePageStatus.Text := "車両登録を中止してから更新してください。"
         QueueWebUiFlush()
@@ -4919,6 +6626,11 @@ BeginUpdateCheck(silent := false) {
     }
     if State.running {
         State.statusLabel.Text := "●  自動操作を停止してから更新してください"
+        return
+    }
+    if State.startInProgress {
+        if !silent
+            State.statusLabel.Text := "●  開始準備を停止してから更新してください"
         return
     }
     if State.updateOperation {
@@ -5092,7 +6804,7 @@ HandleUpdateCheckResult(result, silent) {
 BeginUpdateDownload() {
     global State
 
-    if State.running || State.updateOperation
+    if State.running || State.startInProgress || State.updateOperation
         return
     try {
         State.updateResultPath := State.updateStageDir "\download-result.txt"
@@ -5248,16 +6960,25 @@ StartMining(*) {
     global State, Config
 
     ; UI・トレイ・設定可能なショートカットのどこから呼ばれても、
-    ; 車両登録と通常自動操作を同じbridge/state上で同時実行しません。
-    if !AutomationStartAllowed(State.running, State.registrationActive)
+    ; 車両登録・通常run・別の開始preflightと同時実行しません。
+    ; Claim happens before every blocking check. F8連打/UI+F8の2本目は、
+    ; 最初の開始がまだrunning=falseの間も必ず拒否されます。
+    if !TryClaimStartOperation(&startToken)
+        return
+    try {
+    if !ShowStartPreparationState(startToken)
         return
     ; A previous graceful stop may have hit a transient disk error while appending
     ; SESSION_END. Never overwrite that session identity with a new run until its
     ; immutable stop record is durably queued.
-    if !PrepareMetagameForNewFarmStart() {
-        State.statusLabel.Text := "●  前回セッションの終了記録を保存中です。少し待って再試行してください"
+    startPrepared := PrepareMetagameForNewFarmStart()
+    if !IsStartOperationCurrent(startToken)
+        return
+    if !startPrepared {
+        State.statusLabel.Text := "●  前回のSTONE記録を安全に保存中です。少し待って再試行してください"
         WriteDiagnostic("METAGAME_START_BLOCKED pendingEnd="
-            (FarmMetagameClosurePending() ? 1 : 0))
+            (FarmMetagameClosurePending() ? 1 : 0) " rewardWal="
+            State.verifiedRewardWalPending.Count)
         return
     }
     if State.updateOperation {
@@ -5292,6 +7013,8 @@ StartMining(*) {
     }
 
     targetHwnd := FindFiveMWindow()
+    if !IsStartOperationCurrent(startToken)
+        return
     if !targetHwnd {
         State.statusLabel.Text := "●  FiveMが見つかりません"
         State.connectionLabel.Text := "FiveM: 未接続"
@@ -5300,11 +7023,15 @@ StartMining(*) {
     try targetPid := WinGetPID("ahk_id " targetHwnd)
     catch
         targetPid := 0
+    if !IsStartOperationCurrent(startToken)
+        return
     if !targetPid {
         State.statusLabel.Text := "●  FiveMのプロセスを確認できません"
         return
     }
     preflightHealth := RunBackgroundBridge("health")
+    if !IsStartOperationCurrent(startToken)
+        return
     if !ParseServerHealth(preflightHealth, &serverEpoch) {
         State.statusLabel.Text := "●  サーバー接続を確認できないため開始しません"
         State.connectionLabel.Text := "FiveM　サーバー未接続"
@@ -5313,7 +7040,10 @@ StartMining(*) {
     }
     companionEpoch := ""
     if Config.vehicleStorageEnabled && Config.vehicleCompanionProtocol = 1 {
-        if !QueryCompanionStatus(&preflightCompanion) {
+        companionReady := QueryCompanionStatus(&preflightCompanion)
+        if !IsStartOperationCurrent(startToken)
+            return
+        if !companionReady {
             State.statusLabel.Text := "●  登録車両のゲーム内連携を確認できないため開始しません"
             ShowPage("vehicle")
             return
@@ -5338,9 +7068,13 @@ StartMining(*) {
         companionEpoch := preflightCompanion.epoch
     }
 
-    Critical "On"
+    criticalWasOn := EnterMetagameOutboxCritical()
     try {
+    if !IsStartOperationCurrent(startToken)
+        return
     State.running := true
+    State.startInProgress := false
+    State.startRequestToken := 0
     State.stopInProgress := false
     State.runMode := Config.actionMode
     State.generation += 1
@@ -5353,6 +7087,7 @@ StartMining(*) {
     State.nudges := 0
     ResetActionCompletionState()
     ResetGoldRecoveryState()
+    ResetWashCompletionRecoveryState()
     State.nextHungerCheckAt := 0
     State.nextEatAllowedAt := 0
     State.nextBackgroundEatAt := MonotonicMs() + Config.backgroundFirstEatDelayMs
@@ -5437,9 +7172,7 @@ StartMining(*) {
         : "バックグラウンド操作: オフ（前面操作）"
     if Config.hideWhileRunning
         State.gui.Hide()
-    } finally {
-        Critical "Off"
-    }
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
     StartRuntimeStatusOverlay()
 
     ResetDiagnosticLog()
@@ -5542,6 +7275,13 @@ StartMining(*) {
     }
 
     if IsCurrentRun(runGeneration) {
+        if !BeginFarmMetagameSession(runGeneration) {
+            WriteDiagnostic("METAGAME_START_SESSION_PERSIST_FAILED gen="
+                runGeneration)
+            StopMining()
+            State.statusLabel.Text := "●  STONE記録の開始を保存できないため、自動操作を開始しませんでした"
+            return
+        }
         if State.storagePending {
             TransitionFarmState("INVENTORY_FULL",
                 "開始時容量不足を確認", runGeneration, 0, true)
@@ -5549,14 +7289,28 @@ StartMining(*) {
                 "開始時容量不足から自動収納", runGeneration)
         } else
             TransitionFarmState("FARMING", "開始準備完了", runGeneration, 0, true)
-        BeginFarmMetagameSession(runGeneration)
         ScheduleNext(runGeneration, State.storagePending ? 100 : 900)
     }
+    } finally FinishStartPreparation(startToken)
 }
 
 StopMining(*) {
     global State, Config
 
+    startCancelled := CancelStartOperation()
+    if startCancelled && !State.running {
+        ; Preflight owns no Farm session or scheduled work yet. Invalidating its
+        ; token is sufficient; when its current blocking bridge call returns, every
+        ; continuation check/finally observes cancellation and cannot commit a run.
+        ReleaseAllInputs()
+        State.automationPhase := "stopped"
+        State.mainButton.Text := "自動操作を開始"
+        State.actionControl.Enabled := true
+        SetConfigurationEnabled(true)
+        State.statusLabel.Text := "●  開始準備を中止しました"
+        UpdateActionUi()
+        return
+    }
     if State.registrationActive && !State.running {
         CancelVehicleRegistration()
         return
@@ -5581,6 +7335,7 @@ StopMining(*) {
     State.generation += 1
     State.automationPhase := "stopped"
     ResetActionCompletionState()
+    ResetWashCompletionRecoveryState()
     DiscardPendingFarmAttempt("run_stopped")
     State.rewardReconcileAttempts := 0
     State.inventoryBaseline := ""
@@ -6098,6 +7853,13 @@ CaptureFarmAttemptBaseline(expectedGeneration, actionMode) {
         beforeRevision: revision,
         clicked: false,
         completed: false,
+        rewardSessionId: "",
+        rewardDurabilityPending: false,
+        rewardConfirmedAtUnixMs: 0,
+        rewardEventId: "",
+        rewardConfirmedInfo: 0,
+        rewardConfirmationReason: "",
+        rewardDiagnosticWritten: false,
         progressCompleted: false,
         completionAt: 0,
         completionElapsedMs: 0,
@@ -6148,6 +7910,41 @@ FarmAttemptCanFinalize(attempt, expectedGeneration, actionMode,
     return FarmAttemptHasBaseline(attempt, expectedGeneration, actionMode)
         && attempt.clicked && attempt.completed
         && IsObject(confirmedInfo) && confirmedInfo.revision > attempt.beforeRevision
+        && attempt.HasOwnProp("rewardConfirmedInfo")
+        && IsObject(attempt.rewardConfirmedInfo)
+        && attempt.rewardConfirmedInfo.revision = confirmedInfo.revision
+        && attempt.HasOwnProp("rewardSessionId") && attempt.rewardSessionId
+        && attempt.HasOwnProp("rewardEventId") && attempt.rewardEventId
+        && attempt.HasOwnProp("rewardConfirmedAtUnixMs")
+        && attempt.rewardConfirmedAtUnixMs > 0
+        && BuildFarmRewardEventId(attempt.rewardSessionId, actionMode,
+            attempt.attemptId, confirmedInfo.revision) = attempt.rewardEventId
+}
+
+FarmAttemptHasFrozenReward(attempt) {
+    return IsObject(attempt)
+        && attempt.HasOwnProp("rewardSessionId") && attempt.rewardSessionId
+        && attempt.HasOwnProp("rewardEventId") && attempt.rewardEventId
+        && attempt.HasOwnProp("rewardConfirmedAtUnixMs")
+        && attempt.rewardConfirmedAtUnixMs > 0
+        && attempt.HasOwnProp("rewardConfirmedInfo")
+        && IsObject(attempt.rewardConfirmedInfo)
+}
+
+FarmAttemptRequiresDurabilityHold(attempt) {
+    ; Once an inventory delta is proven, a filesystem outage must never turn that
+    ; evidence into a normal reconciliation timeout/discard. It is retried until
+    ; the exact frozen ID is durable or the user explicitly stops the run.
+    return FarmAttemptHasFrozenReward(attempt)
+}
+
+VerifiedFarmRewardIsDurable(eventId) {
+    global State
+    return eventId
+        && !State.verifiedRewardWalPending.Has(eventId)
+        && (eventId = State.lastMiningEventId
+            || MetagameOutboxContainsCommand(State.metagameOutbox,
+                "MINING_SUCCESS", eventId))
 }
 
 ConfirmPendingFarmReward(expectedGeneration, actionMode, &confirmedInfo,
@@ -6189,28 +7986,118 @@ TryConfirmPendingFarmRewardSnapshot(expectedGeneration, actionMode,
     attempt := State.pendingFarmAttempt
     if attempt.generation != expectedGeneration || attempt.actionMode != actionMode
         return "STALE"
-    snapshotResult := RunBackgroundBridgeCancelable(expectedGeneration,
-        "inventory-snapshot")
-    if !IsCurrentRun(expectedGeneration)
-        return "STALE"
-    if !ParseInventorySnapshot(snapshotResult, &afterInfo)
-        return "UNAVAILABLE"
-    if !InventorySnapshotHasReward(afterInfo, attempt.before)
-        return "UNCHANGED"
-    RecordConfirmedInventory(afterInfo, "reward_" actionMode)
-    attempt.completed := true
-    confirmedInfo := afterInfo
-    confirmationReason := afterInfo.weight > attempt.before.weight
-        ? "weight_increase" : "item_increase"
-    WriteDiagnostic("FARM_REWARD_CONFIRMED id=" attempt.attemptId
-        " mode=" actionMode " reason=" confirmationReason
-        " beforeWeight=" attempt.before.weight
-        " afterWeight=" afterInfo.weight
-        " revision=" afterInfo.revision)
+    attemptId := attempt.attemptId
+    needsSnapshot := !FarmAttemptHasFrozenReward(attempt)
+    if needsSnapshot {
+        snapshotResult := RunBackgroundBridgeCancelable(expectedGeneration,
+            "inventory-snapshot")
+    }
+
+    ; The positive inventory proof, immutable identity freeze, and first fsync'd WAL
+    ; E are one non-interruptible transaction. F9 cannot discard the attempt after
+    ; proof but before its durable intent exists, and completed is never exposed
+    ; until that first WAL record is durable.
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        if !IsCurrentRun(expectedGeneration)
+            || !IsObject(State.pendingFarmAttempt)
+            return "STALE"
+        attempt := State.pendingFarmAttempt
+        if attempt.generation != expectedGeneration
+            || attempt.actionMode != actionMode
+            || attempt.attemptId != attemptId
+            return "STALE"
+        if !FarmAttemptHasFrozenReward(attempt) {
+            if !needsSnapshot || !ParseInventorySnapshot(snapshotResult, &afterInfo)
+                return "UNAVAILABLE"
+            if !InventorySnapshotHasReward(afterInfo, attempt.before)
+                return "UNCHANGED"
+            if !EnsureFarmMetagameSessionIdentity(expectedGeneration)
+                return "UNAVAILABLE"
+            RecordConfirmedInventory(afterInfo, "reward_" actionMode)
+            frozenAt := UnixTimeMilliseconds()
+            frozenSessionId := State.farmSessionId
+            frozenEventId := BuildFarmRewardEventId(frozenSessionId,
+                actionMode, attempt.attemptId, afterInfo.revision)
+            if !frozenEventId
+                return "UNAVAILABLE"
+            attempt.rewardSessionId := frozenSessionId
+            attempt.rewardConfirmedAtUnixMs := frozenAt
+            attempt.rewardEventId := frozenEventId
+            attempt.rewardConfirmedInfo := afterInfo
+            attempt.rewardConfirmationReason := afterInfo.weight
+                > attempt.before.weight ? "weight_increase" : "item_increase"
+            attempt.rewardDurabilityPending := true
+        }
+        if !FarmAttemptHasFrozenReward(attempt)
+            || BuildFarmRewardEventId(attempt.rewardSessionId, actionMode,
+                attempt.attemptId, attempt.rewardConfirmedInfo.revision)
+                    != attempt.rewardEventId
+            return "UNAVAILABLE"
+        if !attempt.completed {
+            attempt.rewardDurabilityPending := true
+            if !PersistVerifiedRewardIntent(attempt.rewardEventId, actionMode,
+                attempt.rewardConfirmedInfo.revision,
+                attempt.rewardConfirmedAtUnixMs, &persistedAtUnixMs) {
+                snapshotResult := "STONE_WAL_DURABILITY_PENDING"
+                return "PERSIST_PENDING"
+            }
+            attempt.rewardConfirmedAtUnixMs := persistedAtUnixMs
+            attempt.completed := true
+        }
+        frozenRevision := attempt.rewardConfirmedInfo.revision
+        frozenAt := attempt.rewardConfirmedAtUnixMs
+        frozenEventId := attempt.rewardEventId
+        frozenSessionId := attempt.rewardSessionId
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+
+    if !EmitVerifiedFarmReward(expectedGeneration, actionMode,
+        attemptId, frozenRevision, frozenAt, frozenEventId,
+        frozenSessionId) {
+        criticalWasOn := EnterMetagameOutboxCritical()
+        try {
+            if IsCurrentRun(expectedGeneration)
+                && IsObject(State.pendingFarmAttempt)
+                && State.pendingFarmAttempt.attemptId = attemptId
+                && State.pendingFarmAttempt.rewardEventId = frozenEventId
+                State.pendingFarmAttempt.rewardDurabilityPending := true
+        } finally LeaveMetagameOutboxCritical(criticalWasOn)
+        snapshotResult := "STONE_DURABILITY_PENDING"
+        return "PERSIST_PENDING"
+    }
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        if !IsCurrentRun(expectedGeneration)
+            || !IsObject(State.pendingFarmAttempt)
+            return "STALE"
+        attempt := State.pendingFarmAttempt
+        if attempt.generation != expectedGeneration
+            || attempt.actionMode != actionMode
+            || attempt.attemptId != attemptId
+            || attempt.rewardSessionId != frozenSessionId
+            || attempt.rewardEventId != frozenEventId
+            return "STALE"
+        attempt.rewardDurabilityPending := false
+        confirmedInfo := attempt.rewardConfirmedInfo
+        confirmationReason := attempt.rewardConfirmationReason
+        if !attempt.rewardDiagnosticWritten {
+            WriteDiagnostic("FARM_REWARD_CONFIRMED id=" attempt.attemptId
+                " mode=" actionMode " reason=" confirmationReason
+                " beforeWeight=" attempt.before.weight
+                " afterWeight=" confirmedInfo.weight
+                " revision=" confirmedInfo.revision
+                " eventId=" attempt.rewardEventId
+                " eventAt=" attempt.rewardConfirmedAtUnixMs)
+            attempt.rewardDiagnosticWritten := true
+        }
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
     return "CONFIRMED"
 }
 
-RewardReconcileDecision(hasReward, epochMatches, nowMs, deadlineMs) {
+RewardReconcileDecision(hasReward, epochMatches, nowMs, deadlineMs,
+    durabilityHold := false) {
+    if durabilityHold
+        return "DURABILITY_HOLD"
     if !epochMatches
         return "SESSION_CHANGED"
     if hasReward
@@ -6233,8 +8120,9 @@ BeginPendingFarmRewardReconciliation(expectedGeneration, actionMode,
     ; The fast confirmation window already elapsed. Keep the exact attempt and
     ; baseline for a second bounded window, with no new click, while late server
     ; inventory replication catches up.
-    attempt.reconcileDeadline := MonotonicMs()
-        + Max(5000, Min(30000, Config.rewardConfirmTimeoutMs * 3))
+    attempt.reconcileDeadline := FarmAttemptRequiresDurabilityHold(attempt)
+        ? 0 : MonotonicMs()
+            + Max(5000, Min(30000, Config.rewardConfirmTimeoutMs * 3))
     attempt.reconcileAttempts := 0
     State.rewardReconcileAttempts := 0
     ResetActionCompletionState()
@@ -6249,7 +8137,8 @@ HandlePendingFarmRewardReconciliation(expectedGeneration, expectedTaskId) {
         return false
     if !IsObject(State.pendingFarmAttempt)
         || !State.pendingFarmAttempt.progressCompleted
-        || !State.pendingFarmAttempt.reconcileDeadline
+        || (!State.pendingFarmAttempt.reconcileDeadline
+            && !FarmAttemptRequiresDurabilityHold(State.pendingFarmAttempt))
         return false
     attempt := State.pendingFarmAttempt
     actionMode := attempt.actionMode
@@ -6260,16 +8149,29 @@ HandlePendingFarmRewardReconciliation(expectedGeneration, expectedTaskId) {
     if snapshotState = "STALE"
         return true
     now := MonotonicMs()
+    durabilityHold := snapshotState != "CONFIRMED"
+        && (snapshotState = "PERSIST_PENDING"
+            || FarmAttemptRequiresDurabilityHold(attempt))
     decision := RewardReconcileDecision(snapshotState = "CONFIRMED", true,
-        now, attempt.reconcileDeadline)
+        now, attempt.reconcileDeadline, durabilityHold)
     WriteDiagnostic("FARM_REWARD_RECONCILE id=" attempt.attemptId
         " try=" attempt.reconcileAttempts " snapshot=" snapshotState
         " decision=" decision " remainingMs="
-        Max(0, attempt.reconcileDeadline - now))
-    if decision = "CONFIRMED" {
+        . (attempt.reconcileDeadline
+            ? Max(0, attempt.reconcileDeadline - now) : -1))
+    if snapshotState = "CONFIRMED" {
         CompleteVerifiedFarmReward(expectedGeneration, actionMode,
             attempt.completionAt, attempt.completionElapsedMs,
             attempt.completionWasBundled, confirmedInfo, rewardReason)
+        return true
+    }
+    if decision = "DURABILITY_HOLD" {
+        State.farmWatchdogAt := now
+        State.statusLabel.Text := "●  " BackgroundActionDisplayName(actionMode)
+            . "の結果をSTONEへ安全に保存中（" attempt.reconcileAttempts "回）"
+        retryDelay := Min(5000,
+            250 * (2 ** Min(attempt.reconcileAttempts - 1, 4)))
+        ScheduleNext(expectedGeneration, retryDelay)
         return true
     }
     if decision = "TIMEOUT" {
@@ -7008,7 +8910,7 @@ DepositFailureMessage(result) {
 }
 
 FarmStateNameKnown(farmState) {
-    return InStr("|IDLE|FARMING|INVENTORY_CHECK|INVENTORY_FULL|"
+    return InStr("|IDLE|FARMING|WASH_SETTLING|WASH_CORRECTING|WASH_VERIFYING|INVENTORY_CHECK|INVENTORY_FULL|"
         . "STOPPING_FARM|OPENING_STORAGE|STORING|VERIFY_STORAGE|"
         . "RETURNING_TO_FARM|RESUMING_FARM|RECOVERY|ERROR|",
         "|" farmState "|") != 0
@@ -7164,6 +9066,10 @@ AutomationCycle(expectedGeneration, expectedTaskId := 0) {
         RunFarmRecoveryCycle(expectedGeneration, expectedTaskId)
         return
     }
+    if IsWashCompletionRecoveryState(State.farmState) {
+        RunWashCompletionRecoveryCycle(expectedGeneration, expectedTaskId)
+        return
+    }
     if FarmStateRequiresCapacityDispatch(State.farmState,
         State.storagePending) {
         MaybeHandleVehicleCapacity(expectedGeneration)
@@ -7303,7 +9209,8 @@ RunFarmRecoveryCycle(expectedGeneration, expectedTaskId) {
         return
     rewardReconciliation := IsObject(State.pendingFarmAttempt)
         && State.pendingFarmAttempt.progressCompleted
-        && State.pendingFarmAttempt.reconcileDeadline
+        && (State.pendingFarmAttempt.reconcileDeadline
+            || FarmAttemptRequiresDurabilityHold(State.pendingFarmAttempt))
     if rewardReconciliation {
         State.statusLabel.Text := "●  遅延した実報酬を再照合中"
     } else {
@@ -7321,6 +9228,14 @@ RunFarmRecoveryCycle(expectedGeneration, expectedTaskId) {
     if closeResult != "CLOSED" {
         WriteDiagnostic("FSM_RECOVERY_CLOSE result=" closeResult)
         ScheduleNext(expectedGeneration, 500)
+        return
+    }
+    ; A reward whose inventory delta is already frozen must finish its local WAL /
+    ; outbox transaction even if the server epoch changes afterwards. It cannot be
+    ; discarded as an unconfirmed game observation at this point.
+    if rewardReconciliation
+        && FarmAttemptRequiresDurabilityHold(State.pendingFarmAttempt) {
+        HandlePendingFarmRewardReconciliation(expectedGeneration, expectedTaskId)
         return
     }
     if !ValidateServerEpochCheckpoint(expectedGeneration, "farm_recovery") {
@@ -7442,6 +9357,11 @@ MaintainBackgroundWorkView(expectedGeneration, force := false) {
     if !Config.workViewLock
         return true
     now := MonotonicMs()
+    ; TARGET_OK is a real NUI observation. Never apply periodic/forced relative
+    ; mouse input while that observation is still valid; correction is event-driven
+    ; only after an actual MISSING probe records targetLostSince.
+    if State.workViewStatus = "TARGET_OK" && !State.targetLostSince
+        return true
     if !force && State.workViewStatus != "WAIT_FG"
         && State.workViewStatus != "FAILED" && State.lastWorkViewAt
         && now - State.lastWorkViewAt < Config.workViewIntervalMs
@@ -7867,108 +9787,400 @@ IsActionCompletionBridgeResult(result, expectedMode) {
         || result = "ERROR " resultToken "_PROGRESS_UNAVAILABLE"
 }
 
-PerformWashCompletionCorrection(expectedGeneration) {
+IsWashCompletionRecoveryState(farmState) {
+    return farmState = "WASH_SETTLING"
+        || farmState = "WASH_CORRECTING"
+        || farmState = "WASH_VERIFYING"
+}
+
+ResetWashCompletionRecoveryState() {
+    global State
+    State.washRecoveryGeneration := 0
+    State.washRecoveryAttemptId := 0
+    State.washSettleDeadline := 0
+    State.washCorrectionInFlight := false
+    State.washCorrectionSent := false
+    State.washCameraRestoreSent := false
+    State.washVerificationAttempts := 0
+}
+
+BeginWashCompletionRecovery(expectedGeneration, attemptId) {
+    global State, Config
+    criticalWasOn := A_IsCritical
+    if !criticalWasOn
+        Critical "On"
+    transitionFailed := false
+    try {
+        if !IsCurrentRun(expectedGeneration) || State.runMode != "washing"
+            || attemptId < 1
+            return false
+        if !TransitionFarmState("WASH_SETTLING",
+            "洗浄報酬確認後の後退停止待ち", expectedGeneration) {
+            transitionFailed := true
+        } else {
+            taskId := State.farmStateTaskId
+            settleDeadline := MonotonicMs() + Config.washPostCompletionSettleMs
+            if !IsCurrentFarmTask(expectedGeneration, taskId, "WASH_SETTLING")
+                return false
+            State.washRecoveryGeneration := expectedGeneration
+            State.washRecoveryAttemptId := attemptId
+            State.washSettleDeadline := settleDeadline
+            State.washCorrectionInFlight := false
+            State.washCorrectionSent := false
+            State.washCameraRestoreSent := false
+            State.washVerificationAttempts := 0
+        }
+    } finally {
+        if !criticalWasOn
+            Critical "Off"
+    }
+    if transitionFailed {
+        StopAutomationWithFault(
+            "洗浄完了後の静止待ちへ移れないため安全停止しました")
+        return false
+    }
+    State.statusLabel.Text := "●  洗浄完了。後退が止まるまで待機中"
+    WriteDiagnostic("attempt=" attemptId " WASH_SETTLE_BEGIN delay="
+        Config.washPostCompletionSettleMs " deadline=" settleDeadline)
+    ScheduleNext(expectedGeneration, Config.washPostCompletionSettleMs)
+    return true
+}
+
+PerformWashCompletionCorrection(expectedGeneration, expectedTaskId,
+    expectedAttemptId) {
     global State, Config
     if !Config.washForwardCorrection
         return true
+
+    ; Set the in-flight latch before any helper work. A second timer may observe the
+    ; operation, but it can never dispatch another forward route for this reward.
+    Critical "On"
+    if !IsCurrentFarmTask(expectedGeneration, expectedTaskId,
+        "WASH_CORRECTING")
+        || State.washRecoveryGeneration != expectedGeneration
+        || State.washRecoveryAttemptId != expectedAttemptId {
+        Critical "Off"
+        return false
+    }
+    if State.washCorrectionSent {
+        Critical "Off"
+        return true
+    }
+    if State.washCorrectionInFlight {
+        Critical "Off"
+        return false
+    }
+    State.washCorrectionInFlight := true
+    Critical "Off"
+
     portReady := EnsureDevConPort(false)
-    if !IsCurrentRun(expectedGeneration)
+    if !IsCurrentFarmTask(expectedGeneration, expectedTaskId,
+        "WASH_CORRECTING")
         return false
     if !portReady {
-        WriteDiagnostic("attempt=" State.attempts " WASH_FORWARD_PORT_MISSING")
+        WriteDiagnostic("attempt=" expectedAttemptId
+            " WASH_FORWARD_PORT_MISSING")
         StopAutomationWithFault(
             "洗浄直後の位置補正を開始できないため安全停止しました")
         return false
     }
     port := State.lastDevConPort
-    State.statusLabel.Text := "●  洗浄完了。位置を少し前へ補正中"
-    nudgeResult := RunBackgroundBridgeCancelable(expectedGeneration,
-        "play-route-health", port, Config.washForwardPulseMs ":1",
-        State.serverEpoch)
-    if !IsCurrentRun(expectedGeneration)
-        return false
-    if nudgeResult != "ROUTE " port " " Config.washForwardPulseMs {
-        WriteDiagnostic("attempt=" State.attempts " WASH_FORWARD_ERROR=" nudgeResult)
-        ; 入力が一部届いた可能性を否定できないため、補正を再送しません。
-        StopAutomationWithFault(
-            "洗浄位置の補正結果を確認できないため安全停止しました")
+    forwardPulseMs := Config.washForwardPulseMs
+    Critical "On"
+    if !IsCurrentFarmTask(expectedGeneration, expectedTaskId,
+        "WASH_CORRECTING")
+        || State.washRecoveryAttemptId != expectedAttemptId {
+        Critical "Off"
         return false
     }
-    State.nudges += 1
-    State.mealLabel.Text := "後退補正`n" State.nudges
-    WriteDiagnostic("attempt=" State.attempts " WASH_FORWARD_SENT pulse="
-        Config.washForwardPulseMs)
+    ; Commit at-most-once before the external input. An uncertain helper result
+    ; therefore fails closed instead of replaying a possibly delivered movement.
+    State.washCorrectionSent := true
+    Critical "Off"
+
+    State.statusLabel.Text := "●  後退停止を確認。位置を少し前へ補正中"
+    WriteDiagnostic("attempt=" expectedAttemptId " WASH_FORWARD_BEGIN pulse="
+        forwardPulseMs)
+    nudgeResult := RunBackgroundBridgeCancelable(expectedGeneration,
+        "play-route-health", port, forwardPulseMs ":1",
+        State.serverEpoch)
+    routeOk := nudgeResult = "ROUTE " port " " forwardPulseMs
+    ; The route helper is interruptible. Its response belongs to this exact
+    ; generation/task/reward only: commit the latch, counter, label and diagnostic
+    ; together so an F9 -> F8 run cannot receive stale correction state.
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        if !IsCurrentFarmTask(expectedGeneration, expectedTaskId,
+            "WASH_CORRECTING")
+            || State.washRecoveryGeneration != expectedGeneration
+            || State.washRecoveryAttemptId != expectedAttemptId
+            || !State.washCorrectionSent
+            return false
+        State.washCorrectionInFlight := false
+        if routeOk {
+            State.nudges += 1
+            State.mealLabel.Text := "後退補正`n" State.nudges
+            WriteDiagnostic("attempt=" expectedAttemptId
+                " WASH_FORWARD_SENT pulse=" forwardPulseMs)
+        } else {
+            WriteDiagnostic("attempt=" expectedAttemptId
+                " WASH_FORWARD_ERROR=" nudgeResult)
+        }
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+    if !routeOk {
+        ; 入力が一部届いた可能性を否定できないため、補正を再送しません。
+        if IsCurrentFarmTask(expectedGeneration, expectedTaskId,
+            "WASH_CORRECTING")
+            StopAutomationWithFault(
+                "洗浄位置の補正結果を確認できないため安全停止しました")
+        return false
+    }
     return WaitWhileBackgroundReady(Config.washForwardSettleMs + 50,
         expectedGeneration)
+}
+
+RunWashCompletionRecoveryCycle(expectedGeneration, expectedTaskId) {
+    global State, Config
+    currentState := State.farmState
+    if !IsWashCompletionRecoveryState(currentState)
+        || !IsCurrentFarmTask(expectedGeneration, expectedTaskId, currentState)
+        return
+    if State.runMode != "washing"
+        || State.washRecoveryGeneration != expectedGeneration
+        || State.washRecoveryAttemptId < 1 {
+        StopAutomationWithFault(
+            "洗浄完了後の復旧状態が一致しないため安全停止しました")
+        return
+    }
+    attemptId := State.washRecoveryAttemptId
+
+    if currentState = "WASH_SETTLING" {
+        remaining := State.washSettleDeadline - MonotonicMs()
+        if remaining > 0 {
+            State.statusLabel.Text := "●  洗浄完了。後退が止まるまで待機中（"
+                Ceil(remaining / 100) / 10 "秒）"
+            ScheduleNext(expectedGeneration, remaining)
+            return
+        }
+        WriteDiagnostic("attempt=" attemptId " WASH_SETTLE_DONE")
+        nextState := Config.washForwardCorrection
+            ? "WASH_CORRECTING" : "WASH_VERIFYING"
+        nextReason := Config.washForwardCorrection
+            ? "洗浄後退停止後の前進補正" : "洗浄後退停止後の対象確認"
+        if !TransitionFarmState(nextState, nextReason,
+            expectedGeneration, expectedTaskId)
+            return
+        ScheduleNext(expectedGeneration, 1)
+        return
+    }
+
+    if currentState = "WASH_CORRECTING" {
+        if !PerformWashCompletionCorrection(expectedGeneration,
+            expectedTaskId, attemptId)
+            return
+        if !IsCurrentFarmTask(expectedGeneration, expectedTaskId,
+            "WASH_CORRECTING")
+            return
+        if !TransitionFarmState("WASH_VERIFYING",
+            "洗浄位置補正後の視点・対象確認", expectedGeneration,
+            expectedTaskId)
+            return
+        ScheduleNext(expectedGeneration, 1)
+        return
+    }
+
+    ; Probe before moving the camera. A visible target is already the strongest
+    ; possible view proof, so sending a relative pulse first only accumulates drift.
+    State.statusLabel.Text := "●  補正後の「石を洗う」を確認中"
+    targetReady := ProbeWorkTarget("washing", expectedGeneration)
+    if !IsCurrentFarmTask(expectedGeneration, expectedTaskId,
+        "WASH_VERIFYING")
+        return
+    if targetReady {
+        if !TransitionFarmState("FARMING",
+            "洗浄後の視点・対象再取得を確認", expectedGeneration,
+            expectedTaskId)
+            return
+        ResetWashCompletionRecoveryState()
+        State.targetLostSince := 0
+        State.targetRecoveryAttempts := 0
+        State.statusLabel.Text := "●  石洗い完了。次の洗浄を開始します"
+        WriteDiagnostic("attempt=" attemptId " WASH_RECOVERY_VERIFIED")
+        ScheduleNext(expectedGeneration, 1)
+        return
+    }
+
+    Critical "On"
+    if !IsCurrentFarmTask(expectedGeneration, expectedTaskId,
+        "WASH_VERIFYING") {
+        Critical "Off"
+        return
+    }
+    if !State.targetLostSince
+        State.targetLostSince := MonotonicMs()
+    Critical "Off"
+    MarkWorkViewNoEffect("washing", "wash_post_completion_probe",
+        expectedGeneration)
+    Critical "On"
+    if !IsCurrentFarmTask(expectedGeneration, expectedTaskId,
+        "WASH_VERIFYING") {
+        Critical "Off"
+        return
+    }
+    State.washVerificationAttempts += 1
+    verificationAttempt := State.washVerificationAttempts
+    probeFatal := State.lastTargetProbeFatal
+    probeResult := State.lastTargetProbeResult
+    Critical "Off"
+    WriteDiagnostic("attempt=" attemptId " WASH_VERIFY_MISSING retry="
+        verificationAttempt " fatal=" (probeFatal ? 1 : 0)
+        " result=" DiagnosticToken(probeResult))
+    if probeFatal {
+        ResetWashCompletionRecoveryState()
+        EnterFarmRecovery(expectedGeneration, "FARMING",
+            "wash_post_completion_probe_error")
+        return
+    }
+
+    ; The first observed MISSING may dispatch one camera correction. Commit the
+    ; latch before physical input, then re-probe on the next cycle. Never stack
+    ; additional camera pulses for the same completed washing reward.
+    if !State.washCameraRestoreSent {
+        if !IsTargetForeground(expectedGeneration) {
+            State.statusLabel.Text := "●  FiveMを前面にすると洗浄視点を復旧します"
+            MaintainBackgroundWorkView(expectedGeneration, true)
+            return
+        }
+        Critical "On"
+        if !IsCurrentFarmTask(expectedGeneration, expectedTaskId,
+            "WASH_VERIFYING") || State.washCameraRestoreSent {
+            Critical "Off"
+            return
+        }
+        State.washCameraRestoreSent := true
+        Critical "Off"
+        State.statusLabel.Text := "●  洗浄対象が見えないため視点を1回だけ補正中"
+        if !MaintainBackgroundWorkView(expectedGeneration, true)
+            return
+        WriteDiagnostic("attempt=" attemptId " WASH_CAMERA_RESTORE_SENT")
+        ScheduleNext(expectedGeneration, 100)
+        return
+    }
+    if verificationAttempt >= 3 {
+        ResetWashCompletionRecoveryState()
+        EnterFarmRecovery(expectedGeneration, "FARMING",
+            "wash_post_completion_target_missing")
+        return
+    }
+    State.statusLabel.Text := "●  洗浄対象の再表示を確認中（"
+        verificationAttempt "/3）"
+    ScheduleNext(expectedGeneration, 350)
 }
 
 CompleteVerifiedFarmReward(expectedGeneration, actionMode, completionAt,
     completionElapsedMs, completionWasBundled, confirmedInfo, rewardReason) {
     global State, Config
     if !IsCurrentRun(expectedGeneration)
+        || !IsSupportedStoneActivityMode(actionMode)
+        || State.runMode != actionMode
         return false
     attempt := State.pendingFarmAttempt
     if !FarmAttemptCanFinalize(attempt, expectedGeneration, actionMode,
         confirmedInfo)
         return false
     attemptId := attempt.attemptId
-    confirmedAt := MonotonicMs()
-    ResetActionCompletionState()
-    State.successes += 1
-    State.farmWatchdogAt := confirmedAt
-    State.lastVerifiedRewardAt := confirmedAt
-    State.watchdogRecoveryCount := 0
-    State.rewardReconcileAttempts := 0
-    if Config.vehicleStorageEnabled
-        State.nextCapacityCheckAt := 0
-    State.targetLostSince := 0
-    State.targetRecoveryAttempts := 0
-
-    metaQueued := true
-    if actionMode = "mining"
-        metaQueued := EmitVerifiedMiningSuccess(expectedGeneration, attemptId,
-            confirmedInfo.revision)
-    DiscardPendingFarmAttempt("reward_confirmed")
-    if !metaQueued {
-        StopAutomationWithFault(
-            "採掘成功通知を安全に保存できないため停止しました")
+    completedAtUnixMs := attempt.HasOwnProp("rewardConfirmedAtUnixMs")
+        ? attempt.rewardConfirmedAtUnixMs : 0
+    stableEventId := attempt.HasOwnProp("rewardEventId")
+        ? attempt.rewardEventId : ""
+    rewardSessionId := attempt.HasOwnProp("rewardSessionId")
+        ? attempt.rewardSessionId : ""
+    snapshotRevision := IsObject(attempt.rewardConfirmedInfo)
+        ? attempt.rewardConfirmedInfo.revision : 0
+    if completedAtUnixMs < 1 || !stableEventId || !rewardSessionId
+        || snapshotRevision != confirmedInfo.revision
         return false
-    }
-
-    wasResume := State.resumeVerificationPending
-    if wasResume
-        State.resumeVerificationPending := false
-    if State.farmState = "RECOVERY" || State.farmState = "RESUMING_FARM" {
-        transitionReason := wasResume
-            ? "収納後の実報酬を確認: " rewardReason
-            : "遅延した実報酬を確認: " rewardReason
-        if !TransitionFarmState("FARMING", transitionReason,
-            expectedGeneration)
+    ; Durable STONE membership is the commit point for a verified Farm reward.
+    ; Until it succeeds, keep the exact completed attempt and do not advance any
+    ; UI/stat counter or discard the evidence required for an identical retry.
+    if !WaitForVerifiedFarmRewardDurability(expectedGeneration, actionMode,
+        attemptId, snapshotRevision, completedAtUnixMs, stableEventId,
+        rewardSessionId)
+        return false
+    ; The durability wait is intentionally interruptible. Re-enter Critical and
+    ; validate the exact frozen attempt before one atomic visible-state commit, so
+    ; a late callback from F9 -> F8 cannot increment/discard the new run.
+    startWashRecovery := false
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        if !IsCurrentRun(expectedGeneration)
+            || !IsObject(State.pendingFarmAttempt)
             return false
-    }
-    ; bridgeが返却直前に同じCDP接続で3つのNUI frameを照合済みです。
-    ; 直後に別helperで同じhealthを重ねず、次の定期確認まで有効扱いにします。
-    State.serverHealthFailures := 0
-    State.nextServerHealthAt := confirmedAt + Config.serverHealthIntervalMs
-    State.countLabel.Text := actionMode = "washing"
-        ? "石洗い回数`n" State.successes
-        : actionMode = "gold" ? "砂金採り回数`n" State.successes
-        : "採掘回数`n" State.successes
-    if actionMode = "gold"
-        ResetGoldRecoveryState()
-    WriteDiagnostic("attempt=" State.attempts " ACTION_PROGRESS_DONE mode="
-        actionMode " elapsed=" completionElapsedMs
-        " bundled=" completionWasBundled
-        " reward=" rewardReason " revision=" confirmedInfo.revision
-        " reconcile=" (completionAt < confirmedAt - 1000 ? 1 : 0)
-        " clickAge=" (State.lastMineAt ? confirmedAt - State.lastMineAt : -1))
-    if actionMode = "washing"
-        && !PerformWashCompletionCorrection(expectedGeneration)
-        return false
+        attempt := State.pendingFarmAttempt
+        if attempt.generation != expectedGeneration
+            || attempt.actionMode != actionMode
+            || attempt.attemptId != attemptId
+            || attempt.rewardSessionId != rewardSessionId
+            || attempt.rewardEventId != stableEventId
+            || attempt.rewardConfirmedAtUnixMs != completedAtUnixMs
+            || !FarmAttemptCanFinalize(attempt, expectedGeneration, actionMode,
+                attempt.rewardConfirmedInfo)
+            || !VerifiedFarmRewardIsDurable(stableEventId)
+            return false
+        confirmedInfo := attempt.rewardConfirmedInfo
+        rewardReason := attempt.rewardConfirmationReason
+        confirmedAt := MonotonicMs()
+        ResetActionCompletionState()
+        State.successes += 1
+        State.farmWatchdogAt := confirmedAt
+        State.lastVerifiedRewardAt := confirmedAt
+        State.watchdogRecoveryCount := 0
+        State.rewardReconcileAttempts := 0
+        if Config.vehicleStorageEnabled
+            State.nextCapacityCheckAt := 0
+        State.targetLostSince := 0
+        State.targetRecoveryAttempts := 0
+
+        DiscardPendingFarmAttempt("reward_confirmed")
+
+        wasResume := State.resumeVerificationPending
+        if wasResume
+            State.resumeVerificationPending := false
+        if State.farmState = "RECOVERY" || State.farmState = "RESUMING_FARM" {
+            transitionReason := wasResume
+                ? "収納後の実報酬を確認: " rewardReason
+                : "遅延した実報酬を確認: " rewardReason
+            if !TransitionFarmState("FARMING", transitionReason,
+                expectedGeneration)
+                return false
+        }
+        ; bridgeが返却直前に同じCDP接続で3つのNUI frameを照合済みです。
+        ; 直後に別helperで同じhealthを重ねず、次の定期確認まで有効扱いにします。
+        State.serverHealthFailures := 0
+        State.nextServerHealthAt := confirmedAt + Config.serverHealthIntervalMs
+        State.countLabel.Text := actionMode = "washing"
+            ? "石洗い回数`n" State.successes
+            : actionMode = "gold" ? "砂金採り回数`n" State.successes
+            : "採掘回数`n" State.successes
+        if actionMode = "gold"
+            ResetGoldRecoveryState()
+        WriteDiagnostic("attempt=" State.attempts " ACTION_PROGRESS_DONE mode="
+            actionMode " elapsed=" completionElapsedMs
+            " bundled=" completionWasBundled
+            " reward=" rewardReason " revision=" confirmedInfo.revision
+            " reconcile=" (completionAt < confirmedAt - 1000 ? 1 : 0)
+            " clickAge=" (State.lastMineAt ? confirmedAt - State.lastMineAt : -1))
+        startWashRecovery := actionMode = "washing"
+        if !startWashRecovery
+            State.statusLabel.Text := "●  " BackgroundActionDisplayName(actionMode)
+                . "完了。次の作業を確認します"
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+    ; Timer/input side effects happen after the atomic visible commit. Both paths
+    ; revalidate generation ownership, so an intervening F9 cannot touch a new run.
+    if startWashRecovery
+        return BeginWashCompletionRecovery(expectedGeneration, attemptId)
     if !IsCurrentRun(expectedGeneration)
         return false
-    State.statusLabel.Text := "●  " BackgroundActionDisplayName(actionMode)
-        . "完了。次の作業を確認します"
     ScheduleNext(expectedGeneration, 1)
     return true
 }
@@ -9647,6 +11859,7 @@ Cleanup(*) {
 
     previousPhase := State.automationPhase
     wasRegistering := State.registrationActive
+    CancelStartOperation()
     CancelActiveBridgeProcess()
     ReleaseAllInputs()
     ReleaseBackgroundTarget(true)

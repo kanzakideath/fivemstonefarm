@@ -5,9 +5,9 @@ sidecar は既存コードを変更せずに実装・検証してあります。
 
 ## 統合時に守る境界
 
-1. 採掘回数の権威は AHK/Web UI ではなく、認証済みバックエンド通知を受けるホスト側に置く。
-2. `石掘り` の報酬またはインベントリ増加を確認できた時だけ `RecordVerifiedMiningSuccess` を1回呼ぶ。
-3. `石洗い`、`砂金採り`、ボタン押下、試行開始、画面上の演出だけでは採掘数を増やさない。
+1. STONE作業回数の権威は AHK/Web UI ではなく、認証済みバックエンド通知を受けるホスト側に置く。
+2. `石掘り`、`石洗い`、`砂金採り` のいずれも、完了後の報酬またはインベントリ増加を確認できた時だけ `RecordVerifiedMiningSuccess` を1回呼ぶ。
+3. ボタン押下、試行開始、画面上の演出、失敗、収納、Farm再開だけではSTONE作業数を増やさない。
 4. WebView から採掘数、ポイント、チケット、Pity、抽選結果を直接指定できる API を作らない。
 5. ガチャ抽選は C# で先に確定し、Web UI は受け取った結果に停止する演出だけを行う。
 6. `debug.*` は明示的な開発起動時だけ有効にし、配布版では無効かつ非表示にする。
@@ -74,19 +74,19 @@ SESSION_END <sessionId> <endedAtUnixMs>
 
 `StartMining` 成功後にセッション開始、`StopMining` の finally 相当でセッション終了を送ります。
 
-`MINING_SUCCESS` を送る場所は、現在の `State.successes += 1` というクリック数ベースの箇所ではありません。石掘り完了後のインベントリ snapshot で、対象鉱石の個数または使用重量が直前の確定 snapshot より増えたことを確認した分岐へ置いてください。差分確認が失敗・不明・タイムアウトなら加算せず、次の再確認へ回します。
+`MINING_SUCCESS` を送る場所はクリック数ベースの箇所ではありません。3種類の作業に共通する完了後のインベントリ snapshotで、個数または使用重量が直前の確定snapshotより増えたことを確認した分岐へ置いてください。差分確認が失敗・不明・タイムアウトなら加算せず、次の再確認へ回します。command/API名は互換性のため従来名を維持し、event IDへ作業モードを含めます。
 
 最低限の状態機械:
 
 ```text
-attempt started
+attempt started (mining / washing / gold)
   -> interaction accepted
-  -> mining cooldown completed
-  -> inventory snapshot changed by expected mining reward
+  -> work progress completed
+  -> inventory snapshot changed by the verified work reward
   -> emit one stable MINING_SUCCESS event
 ```
 
-収納で所持品が減った場合、石洗いでアイテムが変換された場合、砂金採りで別アイテムが増えた場合は除外します。サーバー再起・FiveM終了・run generation変更時は未確定 attempt を破棄します。
+収納で所持品が減っただけの場合は除外します。石洗い・砂金採りも、実報酬の増加を確認できた場合は含めます。サーバー再起・FiveM終了・run generation変更時は未確定attemptを破棄します。
 
 ## 5. WebView の UI を連結する
 
@@ -158,9 +158,9 @@ npm run preview
 本体統合後:
 
 1. 既存 AHK/UI Host/Web UI テストをすべて実行。
-2. 石掘り1回の確定報酬で累計が1だけ増える。
+2. 石掘り・石洗い・砂金採りを各1回成功させ、確定報酬3件で累計が3だけ増える。
 3. 同じ成功通知を再送しても増えない。
-4. ボタン押下失敗、洗い、砂金、収納で増えない。
+4. ボタン押下、進捗だけの完了、報酬差分なし、収納だけでは増えない。
 5. 1連/10連、チケット優先、ポイント不足、SSR/UR Pity、重複、履歴上限を確認。
 6. 状態ファイル破損時に `.bak` から復旧する。
 7. 通常版で debug UI と debug API が使えない。

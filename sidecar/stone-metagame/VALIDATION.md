@@ -1,6 +1,6 @@
 # 単独検証記録
 
-検証日: 2026-09-09
+検証日: 2026-09-10
 対象: `sidecar/stone-metagame` のみ
 
 ## 自動テスト
@@ -16,7 +16,7 @@ node --check .\scripts\serve.mjs
 最終結果:
 
 - Node: 7 tests passed
-- .NET Framework 4.8: 62 assertions passed
+- .NET Framework 4.8: 83 assertions passed
 - JavaScript syntax: passed
 
 Nodeで確認した内容:
@@ -34,6 +34,8 @@ Nodeで確認した内容:
 .NETで確認した内容:
 
 - 1件の採掘成功で累計、XP、Point、日別統計が一度だけ増える
+- 採掘・石洗い・砂金採りを表す3つの安定event IDが各1回だけ加算され、逆順再送でも合計3のまま
+- 5件の履歴移行を2件保存後に中断し、再起動後に全件再送しても合計、XP、Pointが5のまま
 - 同じ採掘イベントIDと抽選request IDの再送は二重計上・二重消費しない
 - 999回では未解除、1000回で実績と好感度を各1回解除、1001回で再解除しない
 - Mining Level 10の1 XP前／ちょうど／1 XP後

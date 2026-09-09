@@ -21,6 +21,11 @@ namespace AiMiner.UiHost
         private string _lastError;
         private long _recoveryGeneration;
         private long _reportedRecoveryGeneration;
+        private bool _recoverySignalCoversNextReload;
+        // Remains set after meta.reset is accepted until the controller's replacement
+        // SESSION_BEGIN commits. This prevents stale commands that were already queued across
+        // the reset handshake from scheduling an unbounded series of redundant rebases.
+        private bool _controllerRebaseOutstanding;
         private readonly string _recoveryEpoch = Guid.NewGuid().ToString("N");
 
         private static readonly HashSet<string> ExpectedActionFailures = new HashSet<string>(
@@ -110,17 +115,32 @@ namespace AiMiner.UiHost
                 StoneMetaGameHost host = RequireHostLocked();
                 try
                 {
+                    string result;
                     switch (command.Kind)
                     {
                         case TrustedMetaCommandKind.SessionBegin:
-                            return host.BeginMiningSessionJson(command.Id, command.TimestampUtc);
+                            result = host.BeginMiningSessionJson(command.Id, command.TimestampUtc);
+                            break;
                         case TrustedMetaCommandKind.MiningSuccess:
-                            return host.RecordVerifiedMiningSuccessJson(command.Id, command.TimestampUtc);
+                            result = host.RecordVerifiedMiningSuccessJson(command.Id,
+                                command.TimestampUtc);
+                            break;
                         case TrustedMetaCommandKind.SessionEnd:
-                            return host.EndMiningSessionJson(command.Id, command.TimestampUtc);
+                            result = host.EndMiningSessionJson(command.Id, command.TimestampUtc);
+                            break;
                         default:
                             throw new InvalidOperationException("INVALID_META_COMMAND");
                     }
+                    bool ok;
+                    string error;
+                    if (command.Kind == TrustedMetaCommandKind.SessionBegin
+                        && TryReadMutationOutcome(result, out ok, out error) && ok)
+                    {
+                        // The durable replacement envelope has reached the sidecar. Any stale
+                        // pre-reset commands that were already queued are now behind this barrier.
+                        _controllerRebaseOutstanding = false;
+                    }
+                    return result;
                 }
                 catch
                 {
@@ -128,6 +148,15 @@ namespace AiMiner.UiHost
                     throw;
                 }
             }
+        }
+
+        // A strict SESSION_NOT_ACTIVE response for SESSION_END means the controller's durable
+        // FIFO and the sidecar disagree about their session boundary. Never ACK that END. Ask
+        // the existing authenticated reset handshake to atomically replace the controller FIFO
+        // with a fresh BEGIN/(retained rewards)/END envelope instead.
+        internal void RequestControllerRebaseForRejectedSessionEnd()
+        {
+            lock (_gate) ScheduleControllerRebaseLocked();
         }
 
         // MainForm consumes this once per poisoned runtime generation and sends an authenticated
@@ -153,6 +182,20 @@ namespace AiMiner.UiHost
             }
         }
 
+        // Trusted controller commands are stamped when WM_COPYDATA accepts them. If a reset is
+        // completed before that queued item reaches the worker, the stamp no longer matches and
+        // the item belongs to the discarded pre-reset FIFO. Dropping it without ACK lets the
+        // controller's durable replacement envelope remain the sole source of retries.
+        internal long CaptureControllerQueueEpoch()
+        {
+            lock (_gate) return _reportedRecoveryGeneration;
+        }
+
+        internal bool IsControllerQueueEpochCurrent(long acceptedEpoch)
+        {
+            lock (_gate) return acceptedEpoch == _reportedRecoveryGeneration;
+        }
+
         internal MetaGameSnapshot GetSnapshotForTests()
         {
             lock (_gate) return RequireHostLocked().Service.GetSnapshot();
@@ -173,15 +216,34 @@ namespace AiMiner.UiHost
 
         private void InvalidateAfterMutationFailureLocked()
         {
-            _recoveryGeneration = checked(_recoveryGeneration + 1);
+            ScheduleControllerRebaseLocked();
+            // This generation already tells the controller to rebuild its ordered envelope.
+            // If reconstruction also closes a persisted active sidecar session, the same reset
+            // covers both facts; emitting a second generation would rebase the FIFO twice. Keep
+            // the suppression intent across a failed immediate reload and consume it only when
+            // some later operation successfully constructs the replacement Host.
+            _recoverySignalCoversNextReload = true;
             InvalidateAndReloadLocked();
         }
 
         private bool TryReloadLocked()
         {
+            string activeSessionBeforeLoad = ReadActiveSessionIdBeforeHostConstruction();
             try
             {
-                _host = new StoneMetaGameHost(_dataPath, _statePath, _developmentMode);
+                StoneMetaGameHost host = new StoneMetaGameHost(_dataPath, _statePath,
+                    _developmentMode);
+                // MetaGameService deliberately closes an interrupted session during
+                // construction, accounting only through its last verified reward. Tell the
+                // controller before it processes a stale END-only head so AHK can replace the
+                // old envelope with a fresh BEGIN/reward/END transaction. This keeps recovery
+                // metadata out of the completed sidecar state schema.
+                if (!_recoverySignalCoversNextReload
+                    && !String.IsNullOrEmpty(activeSessionBeforeLoad)
+                    && String.IsNullOrEmpty(host.Service.GetSnapshot().Mining.ActiveSessionId))
+                    ScheduleControllerRebaseLocked();
+                _host = host;
+                _recoverySignalCoversNextReload = false;
                 _lastError = null;
                 return true;
             }
@@ -193,7 +255,33 @@ namespace AiMiner.UiHost
             }
         }
 
-        private static bool TryReadMutationOutcome(string json, out bool ok, out string error)
+        private void ScheduleControllerRebaseLocked()
+        {
+            if (_controllerRebaseOutstanding) return;
+            _controllerRebaseOutstanding = true;
+            _recoveryGeneration = checked(_recoveryGeneration + 1);
+        }
+
+        private string ReadActiveSessionIdBeforeHostConstruction()
+        {
+            // Avoid creating a state file merely to probe a fresh install. For an existing
+            // state, use the sidecar's own checksum/fallback loader so a corrupt primary cannot
+            // manufacture a false recovery signal.
+            if (!File.Exists(_statePath) && !File.Exists(_statePath + ".bak")) return null;
+            try
+            {
+                MetaGameState state = new MetaGameStateStore(_statePath)
+                    .LoadOrCreate(DateTimeOffset.UtcNow);
+                return state.Mining == null ? null : state.Mining.ActiveSessionId;
+            }
+            catch
+            {
+                // Host construction below remains the authority for reporting load failures.
+                return null;
+            }
+        }
+
+        internal static bool TryReadMutationOutcome(string json, out bool ok, out string error)
         {
             ok = false;
             error = null;
@@ -248,6 +336,8 @@ namespace AiMiner.UiHost
                 Directory.CreateDirectory(root);
                 string data = Path.Combine(assetsPath, "metagame", "data");
                 TestExpectedFailureKeepsSession(data, Path.Combine(root, "domain.json"));
+                TestHostRestartSignalsInterruptedSessionRecovery(data,
+                    Path.Combine(root, "host-restart.json"));
                 TestMiningPersistenceRecovery(data, Path.Combine(root, "mining.json"));
                 TestProfilePersistenceRollback(data, Path.Combine(root, "profile.json"));
                 TestGachaPersistenceRollback(data, Path.Combine(root, "gacha.json"));
@@ -339,6 +429,9 @@ namespace AiMiner.UiHost
                 Id = "mine:fault:0001",
                 TimestampUtc = now.AddSeconds(1)
             });
+            if (runtime.TryGetRecoverySignal(out token))
+                throw new InvalidOperationException(
+                    "successful delayed Host reload emitted a duplicate reset");
             MetaGameSnapshot recovered = runtime.GetSnapshotForTests();
             if (recovered.Mining.TotalStoneMined != 1
                 || recovered.Mining.ActiveSessionId != "session:fault:new1")
@@ -346,6 +439,161 @@ namespace AiMiner.UiHost
             var restarted = new MetaGameRuntime(data, state, false);
             if (restarted.GetSnapshotForTests().Mining.TotalStoneMined != 1)
                 throw new InvalidOperationException("mining retry was not durable after restart");
+        }
+
+        private static void TestHostRestartSignalsInterruptedSessionRecovery(string data,
+            string state)
+        {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            DateTimeOffset startedAt = now.AddMinutes(-1);
+            DateTimeOffset minedAt = now.AddSeconds(-30);
+            const string oldSession = "session:restart:old1";
+            const string eventId = "mine:restart:event1";
+            var firstHost = new MetaGameRuntime(data, state, false);
+            AssertTrustedMutationOk(firstHost.ApplyTrusted(new TrustedMetaCommand
+            {
+                Kind = TrustedMetaCommandKind.SessionBegin,
+                Id = oldSession,
+                TimestampUtc = startedAt
+            }), "restart fixture BEGIN failed");
+            AssertTrustedMutationOk(firstHost.ApplyTrusted(new TrustedMetaCommand
+            {
+                Kind = TrustedMetaCommandKind.MiningSuccess,
+                Id = eventId,
+                TimestampUtc = minedAt
+            }), "restart fixture reward failed");
+            string token;
+            if (firstHost.TryGetRecoverySignal(out token))
+                throw new InvalidOperationException("fresh Host emitted a recovery reset");
+
+            // Constructing a new runtime is the real Host-process restart boundary. The
+            // unchanged sidecar closes its persisted active session through lastMined; the
+            // runtime must signal AHK before it can process the stale END-only FIFO head.
+            var restarted = new MetaGameRuntime(data, state, false);
+            MetaGameSnapshot recovered = restarted.GetSnapshotForTests();
+            if (recovered.Mining.ActiveSessionId != ""
+                || recovered.Mining.TotalStoneMined != 1
+                || recovered.Mining.TotalActiveSeconds != 30)
+                throw new InvalidOperationException("Host restart recovery state was incorrect");
+            if (!restarted.TryGetRecoverySignal(out token)
+                || !token.EndsWith(":1", StringComparison.Ordinal))
+                throw new InvalidOperationException("Host restart did not request one FIFO rebase");
+            restarted.MarkRecoverySignalSent(token);
+            if (restarted.TryGetRecoverySignal(out token))
+                throw new InvalidOperationException("Host restart recovery reset repeated");
+
+            // Mirrors the AHK reset transaction: a fresh closed envelope surrounds any retained
+            // stable reward IDs. The reward replay is a duplicate and the new END is accepted,
+            // so the old END-only row can never wedge the durable FIFO.
+            const string rebasedSession = "session:restart:rebased1";
+            AssertTrustedMutationOk(restarted.ApplyTrusted(new TrustedMetaCommand
+            {
+                Kind = TrustedMetaCommandKind.SessionBegin,
+                Id = rebasedSession,
+                TimestampUtc = now
+            }), "rebased BEGIN failed");
+            AssertTrustedMutationOk(restarted.ApplyTrusted(new TrustedMetaCommand
+            {
+                Kind = TrustedMetaCommandKind.MiningSuccess,
+                Id = eventId,
+                TimestampUtc = minedAt
+            }), "rebased reward replay failed");
+            AssertTrustedMutationOk(restarted.ApplyTrusted(new TrustedMetaCommand
+            {
+                Kind = TrustedMetaCommandKind.SessionEnd,
+                Id = rebasedSession,
+                TimestampUtc = now.AddMilliseconds(1)
+            }), "rebased END failed");
+            MetaGameSnapshot final = restarted.GetSnapshotForTests();
+            if (final.Mining.ActiveSessionId != "" || final.Mining.TotalStoneMined != 1
+                || final.Mining.TotalActiveSeconds != 30)
+                throw new InvalidOperationException("rebased recovery changed durable progress");
+
+            // A second Host process that starts after END was durably committed sees an
+            // intentionally inactive sidecar, so there is no eager startup reset. If the old
+            // controller END survived because its ACK was lost, its strict rejection schedules
+            // exactly one reset; the rejected END itself remains unacknowledgeable.
+            var afterCommittedEndRestart = new MetaGameRuntime(data, state, false);
+            if (afterCommittedEndRestart.TryGetRecoverySignal(out token))
+                throw new InvalidOperationException(
+                    "inactive sidecar incorrectly requested an eager restart reset");
+            AssertTrustedMutationFailure(afterCommittedEndRestart.ApplyTrusted(
+                new TrustedMetaCommand
+                {
+                    Kind = TrustedMetaCommandKind.SessionEnd,
+                    Id = rebasedSession,
+                    TimestampUtc = now.AddMilliseconds(2)
+                }), "SESSION_NOT_ACTIVE", "lost-ACK END replay was unexpectedly accepted");
+            afterCommittedEndRestart.RequestControllerRebaseForRejectedSessionEnd();
+            if (!afterCommittedEndRestart.TryGetRecoverySignal(out token)
+                || !token.EndsWith(":1", StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    "lost-ACK END replay did not request a Host-restart FIFO rebase");
+            afterCommittedEndRestart.MarkRecoverySignalSent(token);
+            afterCommittedEndRestart.RequestControllerRebaseForRejectedSessionEnd();
+            if (afterCommittedEndRestart.TryGetRecoverySignal(out token))
+                throw new InvalidOperationException(
+                    "duplicate stale END scheduled a second reset before replacement BEGIN");
+
+            // A successful replacement BEGIN is the only release barrier. After it commits, a
+            // different mismatched END while active may request one new generation, but remains
+            // rejected and cannot close or receive credit for the active session.
+            const string liveSession = "session:restart:live1";
+            AssertTrustedMutationOk(afterCommittedEndRestart.ApplyTrusted(
+                new TrustedMetaCommand
+                {
+                    Kind = TrustedMetaCommandKind.SessionBegin,
+                    Id = liveSession,
+                    TimestampUtc = now.AddMilliseconds(3)
+                }), "post-reset BEGIN failed");
+            AssertTrustedMutationFailure(afterCommittedEndRestart.ApplyTrusted(
+                new TrustedMetaCommand
+                {
+                    Kind = TrustedMetaCommandKind.SessionEnd,
+                    Id = "session:restart:foreign1",
+                    TimestampUtc = now.AddMilliseconds(4)
+                }), "SESSION_NOT_ACTIVE", "foreign END was unexpectedly accepted");
+            if (afterCommittedEndRestart.GetSnapshotForTests().Mining.ActiveSessionId != liveSession)
+                throw new InvalidOperationException("foreign END changed the active session");
+            afterCommittedEndRestart.RequestControllerRebaseForRejectedSessionEnd();
+            if (!afterCommittedEndRestart.TryGetRecoverySignal(out token)
+                || !token.EndsWith(":2", StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    "successful replacement BEGIN did not release reset deduplication");
+            afterCommittedEndRestart.MarkRecoverySignalSent(token);
+            const string finalSession = "session:restart:final1";
+            AssertTrustedMutationOk(afterCommittedEndRestart.ApplyTrusted(
+                new TrustedMetaCommand
+                {
+                    Kind = TrustedMetaCommandKind.SessionBegin,
+                    Id = finalSession,
+                    TimestampUtc = now.AddMilliseconds(5)
+                }), "second recovery BEGIN failed");
+            AssertTrustedMutationOk(afterCommittedEndRestart.ApplyTrusted(
+                new TrustedMetaCommand
+                {
+                    Kind = TrustedMetaCommandKind.SessionEnd,
+                    Id = finalSession,
+                    TimestampUtc = now.AddMilliseconds(6)
+                }), "second recovery END failed");
+        }
+
+        private static void AssertTrustedMutationOk(string result, string message)
+        {
+            bool ok;
+            string error;
+            if (!TryReadMutationOutcome(result, out ok, out error) || !ok)
+                throw new InvalidOperationException(message + ": " + (error ?? "INVALID_META_RESULT"));
+        }
+
+        private static void AssertTrustedMutationFailure(string result, string expectedError,
+            string message)
+        {
+            bool ok;
+            string error;
+            if (!TryReadMutationOutcome(result, out ok, out error) || ok
+                || !String.Equals(error, expectedError, StringComparison.Ordinal))
+                throw new InvalidOperationException(message + ": " + (error ?? "INVALID_META_RESULT"));
         }
 
         private static void TestProfilePersistenceRollback(string data, string state)

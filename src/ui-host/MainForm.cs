@@ -140,14 +140,66 @@ namespace AiMiner.UiHost
             string statePath = Path.Combine(temporaryRoot, "state.json");
             string dataPath = Path.Combine(assetsPath, "metagame", "data");
             const string session = "transport-session-0001";
-            string eventId = "transport:mining:" + Guid.NewGuid().ToString("N");
+            const int eventCount = 93;
+            string runId = Guid.NewGuid().ToString("N");
+            string startupStaleSessionId = "transport:startup-old:" + runId;
+            string startupReplacementSessionId = "transport:startup-new:" + runId;
+            string committedEndSessionId = "transport:end:" + runId;
+            string barrierSessionId = "transport:barrier:" + runId;
+            string secondBarrierSessionId = "transport:barrier2:" + runId;
+            string neverCommittedEndId = "transport:unknown:" + runId;
+            string[] sourceModes = { "mining", "washing", "gold" };
+            string[] eventIds = new string[eventCount];
+            for (int index = 0; index < eventIds.Length; index++)
+            {
+                eventIds[index] = "transport:" + sourceModes[index % sourceModes.Length]
+                    + ":" + runId + ":" + index.ToString("D3", CultureInfo.InvariantCulture);
+            }
             MainForm form = null;
             MetaTransportTestBackend backend = null;
             TransportTestSenderWindow impostor = null;
             try
             {
                 Directory.CreateDirectory(temporaryRoot);
-                backend = new MetaTransportTestBackend(session, eventId, dataPath, statePath);
+                long timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                var failureRuntime = new MetaGameRuntime(dataPath,
+                    Path.Combine(temporaryRoot, "failure-state.json"), false);
+                AssertTrustedFailureIsNotAckEligible(failureRuntime,
+                    new TrustedMetaCommand
+                    {
+                        Kind = TrustedMetaCommandKind.SessionBegin,
+                        Id = "bad",
+                        TimestampUtc = DateTimeOffset.UtcNow
+                    }, "failed SESSION_BEGIN");
+                AssertTrustedFailureIsNotAckEligible(failureRuntime,
+                    new TrustedMetaCommand
+                    {
+                        Kind = TrustedMetaCommandKind.MiningSuccess,
+                        Id = "bad",
+                        TimestampUtc = DateTimeOffset.UtcNow
+                    }, "failed MINING_SUCCESS");
+
+                // Leave a durable active S1 exactly as a Host/process interruption would. The
+                // MainForm runtime constructed below closes it through sidecar recovery and has
+                // a meta.reset pending before its worker sees the controller's stale S1 BEGIN.
+                var startupSeedRuntime = new MetaGameRuntime(dataPath, statePath, false);
+                string seedError;
+                string seedResult = startupSeedRuntime.ApplyTrusted(new TrustedMetaCommand
+                {
+                    Kind = TrustedMetaCommandKind.SessionBegin,
+                    Id = startupStaleSessionId,
+                    TimestampUtc = DateTimeOffset.FromUnixTimeMilliseconds(timestamp - 5000)
+                });
+                if (!TrustedMutationSucceeded(seedResult, out seedError))
+                    throw new InvalidOperationException(
+                        "startup interrupted-session fixture could not be seeded: " + seedError);
+                backend = new MetaTransportTestBackend(session, eventIds,
+                    new[]
+                    {
+                        startupStaleSessionId, startupReplacementSessionId,
+                        committedEndSessionId, barrierSessionId, secondBarrierSessionId
+                    },
+                    committedEndSessionId, dataPath, statePath);
                 impostor = new TransportTestSenderWindow();
                 Program.HostOptions options = new Program.HostOptions
                 {
@@ -170,8 +222,7 @@ namespace AiMiner.UiHost
                         "transport fixture did not use its isolated metagame state");
                 }
 
-                long timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                string wire = "AIUIMETA1\t" + session + "\tMINING_SUCCESS\t" + eventId
+                string wire = "AIUIMETA1\t" + session + "\tMINING_SUCCESS\t" + eventIds[0]
                     + "\t" + timestamp.ToString(CultureInfo.InvariantCulture);
 
                 IntPtr dispatchResult;
@@ -183,36 +234,234 @@ namespace AiMiner.UiHost
                 }
                 MetaGameState rejectedState = new MetaGameStateStore(statePath)
                     .LoadOrCreate(DateTimeOffset.UtcNow);
-                if (rejectedState.Mining.TotalStoneMined != 0 || backend.MiningAckCount != 0)
+                if (rejectedState.Mining.TotalStoneMined != 0
+                    || !String.IsNullOrEmpty(rejectedState.Mining.ActiveSessionId)
+                    || backend.MiningAckCount != 0)
                     throw new InvalidOperationException(
                         "rejected transport mutated state or emitted an ACK");
 
-                if (!SendTransportTestCopyData(hostWindow, backend.Handle, wire,
+                // Queue the stale S1 BEGIN before the worker enters its pending-reset check. The
+                // reset is synchronous, but this already-dequeued command must then fail the
+                // accepted-epoch guard and disappear without mutation or ACK. S2 models the
+                // fresh durable envelope emitted by AHK after accepting meta.reset.
+                string startupStaleBeginWire = "AIUIMETA1\t" + session
+                    + "\tSESSION_BEGIN\t" + startupStaleSessionId + "\t"
+                    + (timestamp - 5000).ToString(CultureInfo.InvariantCulture);
+                if (!SendTransportTestCopyData(hostWindow, backend.Handle, startupStaleBeginWire,
                         out dispatchResult) || dispatchResult != new IntPtr(1))
-                    throw new InvalidOperationException("authenticated mining event was not queued");
-                PumpTransportMessagesUntil(backend, 1, 5000);
+                    throw new InvalidOperationException("startup stale BEGIN was not queued");
+                PumpTransportMessagesUntil(backend,
+                    delegate
+                    {
+                        return backend.ResetCount == 1
+                            && form._metaGame.CaptureControllerQueueEpoch() == 1;
+                    },
+                    5000, "startup interrupted-session reset");
+                string startupReplacementBeginWire = "AIUIMETA1\t" + session
+                    + "\tSESSION_BEGIN\t" + startupReplacementSessionId + "\t"
+                    + timestamp.ToString(CultureInfo.InvariantCulture);
+                if (!SendTransportTestCopyData(hostWindow, backend.Handle,
+                        startupReplacementBeginWire, out dispatchResult)
+                    || dispatchResult != new IntPtr(1))
+                    throw new InvalidOperationException("startup replacement BEGIN was not queued");
+                PumpTransportMessagesUntil(backend,
+                    delegate
+                    {
+                        return backend.SessionBeginAckCount(startupReplacementSessionId) == 1;
+                    }, 5000, "startup replacement BEGIN ACK");
+                if (backend.SessionBeginAckCount(startupStaleSessionId) != 0
+                    || backend.ResetCount != 1 || backend.UniqueResetCount != 1)
+                    throw new InvalidOperationException(
+                        "pre-reset stale BEGIN was applied, ACKed, or reset repeatedly");
+                string startupReplacementEndWire = "AIUIMETA1\t" + session
+                    + "\tSESSION_END\t" + startupReplacementSessionId + "\t"
+                    + (timestamp + 1).ToString(CultureInfo.InvariantCulture);
+                if (!SendTransportTestCopyData(hostWindow, backend.Handle,
+                        startupReplacementEndWire, out dispatchResult)
+                    || dispatchResult != new IntPtr(1))
+                    throw new InvalidOperationException("startup replacement END was not queued");
+                PumpTransportMessagesUntil(backend,
+                    delegate
+                    {
+                        return backend.SessionEndAckCount(startupReplacementSessionId) == 1;
+                    }, 5000, "startup replacement END ACK");
 
-                // A durable outbox retry must receive another ACK but must not increment again.
-                if (!SendTransportTestCopyData(hostWindow, backend.Handle, wire,
-                        out dispatchResult) || dispatchResult != new IntPtr(1))
-                    throw new InvalidOperationException("authenticated mining replay was not queued");
-                PumpTransportMessagesUntil(backend, 2, 5000);
+                // Burst all three farm-source ID shapes through the authenticated production
+                // ingress before waiting, proving the host queue does not lose rapid completions.
+                for (int index = 0; index < eventIds.Length; index++)
+                {
+                    wire = "AIUIMETA1\t" + session + "\tMINING_SUCCESS\t" + eventIds[index]
+                        + "\t" + timestamp.ToString(CultureInfo.InvariantCulture);
+                    if (!SendTransportTestCopyData(hostWindow, backend.Handle, wire,
+                            out dispatchResult) || dispatchResult != new IntPtr(1))
+                        throw new InvalidOperationException(
+                            "authenticated mining burst event was not queued at index "
+                            + index.ToString(CultureInfo.InvariantCulture));
+                }
+                PumpTransportMessagesUntil(backend, eventCount, 30000);
+
+                if (backend.MiningAckCount != eventCount
+                    || backend.DurableMiningAckCount != eventCount
+                    || backend.UniqueMiningAckCount != eventCount
+                    || !backend.AllExpectedEventsAcknowledgedExactly(1))
+                    throw new InvalidOperationException(
+                        "unique mining burst was not fully ACKed after durable persistence");
+
+                // A complete durable-outbox replay must ACK every item but increment none.
+                for (int index = 0; index < eventIds.Length; index++)
+                {
+                    wire = "AIUIMETA1\t" + session + "\tMINING_SUCCESS\t" + eventIds[index]
+                        + "\t" + timestamp.ToString(CultureInfo.InvariantCulture);
+                    if (!SendTransportTestCopyData(hostWindow, backend.Handle, wire,
+                            out dispatchResult) || dispatchResult != new IntPtr(1))
+                        throw new InvalidOperationException(
+                            "authenticated mining replay was not queued at index "
+                            + index.ToString(CultureInfo.InvariantCulture));
+                }
+                PumpTransportMessagesUntil(backend, eventCount * 2, 30000);
 
                 if (!String.IsNullOrEmpty(backend.Failure))
                     throw new InvalidOperationException(backend.Failure);
-                if (backend.MiningAckCount != 2 || backend.DurableMiningAckCount != 2)
+                if (backend.MiningAckCount != eventCount * 2
+                    || backend.DurableMiningAckCount != eventCount * 2
+                    || backend.UniqueMiningAckCount != eventCount
+                    || !backend.AllExpectedEventsAcknowledgedExactly(2))
                     throw new InvalidOperationException(
-                        "typed mining ACKs were not emitted after durable persistence");
+                        "replayed mining burst did not produce durable typed ACKs exactly once");
 
                 MetaGameState finalState = new MetaGameStateStore(statePath)
                     .LoadOrCreate(DateTimeOffset.UtcNow);
-                int eventOccurrences = 0;
-                foreach (string processedId in finalState.ProcessedMiningEventIds)
-                    if (String.Equals(processedId, eventId, StringComparison.Ordinal))
-                        eventOccurrences++;
-                if (finalState.Mining.TotalStoneMined != 1 || eventOccurrences != 1)
+                if (finalState.Mining.TotalStoneMined != eventCount)
                     throw new InvalidOperationException(
-                        "transport replay was not persisted exactly once");
+                        "transport replay changed the persisted mining total");
+                foreach (string eventId in eventIds)
+                {
+                    int eventOccurrences = 0;
+                    foreach (string processedId in finalState.ProcessedMiningEventIds)
+                        if (String.Equals(processedId, eventId, StringComparison.Ordinal))
+                            eventOccurrences++;
+                    if (eventOccurrences != 1)
+                        throw new InvalidOperationException(
+                            "transport event was not persisted exactly once: " + eventId);
+                }
+
+                // Commit one real session END, but make the fixture reject its first ACK as if
+                // the controller could not durably consume WM_COPYDATA. The Host must never
+                // guess that a later SESSION_NOT_ACTIVE means success; it asks the controller
+                // to durably rebase its FIFO and deliberately withholds the END ACK.
+                long sessionStart = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                string beginWire = "AIUIMETA1\t" + session + "\tSESSION_BEGIN\t"
+                    + committedEndSessionId + "\t"
+                    + sessionStart.ToString(CultureInfo.InvariantCulture);
+                if (!SendTransportTestCopyData(hostWindow, backend.Handle, beginWire,
+                        out dispatchResult) || dispatchResult != new IntPtr(1))
+                    throw new InvalidOperationException("session BEGIN was not queued");
+                PumpTransportMessagesUntil(backend,
+                    delegate { return backend.SessionBeginAckCount(committedEndSessionId) == 1; },
+                    5000, "session BEGIN ACK");
+
+                string endWire = "AIUIMETA1\t" + session + "\tSESSION_END\t"
+                    + committedEndSessionId + "\t"
+                    + (sessionStart + 1).ToString(CultureInfo.InvariantCulture);
+                if (!SendTransportTestCopyData(hostWindow, backend.Handle, endWire,
+                        out dispatchResult) || dispatchResult != new IntPtr(1))
+                    throw new InvalidOperationException("session END was not queued");
+                PumpTransportMessagesUntil(backend,
+                    delegate { return backend.SessionEndAckAttemptCount(committedEndSessionId) == 1; },
+                    5000, "first session END ACK attempt");
+                if (backend.SessionEndAckCount(committedEndSessionId) != 0)
+                    throw new InvalidOperationException("fixture did not drop the first END ACK");
+
+                if (!SendTransportTestCopyData(hostWindow, backend.Handle, endWire,
+                        out dispatchResult) || dispatchResult != new IntPtr(1))
+                    throw new InvalidOperationException("session END replay was not queued");
+                PumpTransportMessagesUntil(backend,
+                    delegate
+                    {
+                        return backend.ResetCount == 2
+                            && form._metaGame.CaptureControllerQueueEpoch() == 2;
+                    },
+                    5000, "lost END ACK recovery reset");
+                MetaGameState afterEndReplay = new MetaGameStateStore(statePath)
+                    .LoadOrCreate(DateTimeOffset.UtcNow);
+                if (!String.IsNullOrEmpty(afterEndReplay.Mining.ActiveSessionId)
+                    || afterEndReplay.Mining.TotalStoneMined != eventCount
+                    || backend.SessionEndAckAttemptCount(committedEndSessionId) != 1
+                    || backend.UnexpectedAckCount != 0)
+                    throw new InvalidOperationException("END replay changed durable sidecar state");
+
+                // Model a stale retry that was already queued while the reset handshake ran.
+                // It is still not ACKed and must not create a second reset generation. The fresh
+                // BEGIN is the ordered controller-rebase barrier that releases the dedupe guard.
+                if (!SendTransportTestCopyData(hostWindow, backend.Handle, endWire,
+                        out dispatchResult) || dispatchResult != new IntPtr(1))
+                    throw new InvalidOperationException("stale END retry was not queued");
+                string barrierBeginWire = "AIUIMETA1\t" + session + "\tSESSION_BEGIN\t"
+                    + barrierSessionId + "\t"
+                    + (sessionStart + 3).ToString(CultureInfo.InvariantCulture);
+                if (!SendTransportTestCopyData(hostWindow, backend.Handle, barrierBeginWire,
+                        out dispatchResult) || dispatchResult != new IntPtr(1))
+                    throw new InvalidOperationException("barrier BEGIN was not queued");
+                PumpTransportMessagesUntil(backend,
+                    delegate { return backend.SessionBeginAckCount(barrierSessionId) == 1; },
+                    5000, "barrier BEGIN ACK");
+                if (backend.ResetCount != 2
+                    || backend.UniqueResetCount != 2
+                    || backend.SessionEndAckAttemptCount(committedEndSessionId) != 1
+                    || backend.UnexpectedAckCount != 0)
+                    throw new InvalidOperationException(
+                        "queued stale END was ACKed or emitted a duplicate reset");
+
+                // While a different session is genuinely active, an unrelated never-committed
+                // END is also unsafe to ACK. It starts exactly one new recovery generation; its
+                // duplicate is suppressed until the next replacement BEGIN commits.
+                string unknownEndWire = "AIUIMETA1\t" + session + "\tSESSION_END\t"
+                    + neverCommittedEndId + "\t"
+                    + (sessionStart + 4).ToString(CultureInfo.InvariantCulture);
+                if (!SendTransportTestCopyData(hostWindow, backend.Handle, unknownEndWire,
+                        out dispatchResult) || dispatchResult != new IntPtr(1))
+                    throw new InvalidOperationException("unknown active-session END was not queued");
+                PumpTransportMessagesUntil(backend,
+                    delegate
+                    {
+                        return backend.ResetCount == 3
+                            && form._metaGame.CaptureControllerQueueEpoch() == 3;
+                    },
+                    5000, "active-session mismatch recovery reset");
+                if (!SendTransportTestCopyData(hostWindow, backend.Handle, unknownEndWire,
+                        out dispatchResult) || dispatchResult != new IntPtr(1))
+                    throw new InvalidOperationException("duplicate unknown END was not queued");
+                string secondBarrierBeginWire = "AIUIMETA1\t" + session
+                    + "\tSESSION_BEGIN\t" + secondBarrierSessionId + "\t"
+                    + (sessionStart + 5).ToString(CultureInfo.InvariantCulture);
+                if (!SendTransportTestCopyData(hostWindow, backend.Handle, secondBarrierBeginWire,
+                        out dispatchResult) || dispatchResult != new IntPtr(1))
+                    throw new InvalidOperationException("second barrier BEGIN was not queued");
+                PumpTransportMessagesUntil(backend,
+                    delegate { return backend.SessionBeginAckCount(secondBarrierSessionId) == 1; },
+                    5000, "second barrier BEGIN ACK");
+                if (backend.ResetCount != 3
+                    || backend.UniqueResetCount != 3
+                    || backend.SessionEndAckAttemptCount(neverCommittedEndId) != 0
+                    || backend.UnexpectedAckCount != 0)
+                    throw new InvalidOperationException(
+                        "unknown END was ACKed or emitted a duplicate reset");
+
+                // A correctly matched END still takes the normal durable mutation + typed ACK
+                // path; recovery handling must not interfere with a valid active session.
+                string secondBarrierEndWire = "AIUIMETA1\t" + session
+                    + "\tSESSION_END\t" + secondBarrierSessionId + "\t"
+                    + (sessionStart + 6).ToString(CultureInfo.InvariantCulture);
+                if (!SendTransportTestCopyData(hostWindow, backend.Handle, secondBarrierEndWire,
+                        out dispatchResult) || dispatchResult != new IntPtr(1))
+                    throw new InvalidOperationException("valid recovery END was not queued");
+                PumpTransportMessagesUntil(backend,
+                    delegate
+                    {
+                        return backend.SessionEndAckCount(secondBarrierSessionId) == 1;
+                    }, 5000, "valid recovery END ACK");
+                if (backend.ResetCount != 3 || backend.UnexpectedAckCount != 0)
+                    throw new InvalidOperationException("valid END incorrectly requested recovery");
                 return true;
             }
             catch (Exception exception)
@@ -258,8 +507,16 @@ namespace AiMiner.UiHost
         private static void PumpTransportMessagesUntil(MetaTransportTestBackend backend,
             int expectedAckCount, int timeoutMilliseconds)
         {
+            PumpTransportMessagesUntil(backend,
+                delegate { return backend.MiningAckCount >= expectedAckCount; },
+                timeoutMilliseconds, "persisted metagame ACK");
+        }
+
+        private static void PumpTransportMessagesUntil(MetaTransportTestBackend backend,
+            Func<bool> completed, int timeoutMilliseconds, string description)
+        {
             Stopwatch stopwatch = Stopwatch.StartNew();
-            while (backend.MiningAckCount < expectedAckCount
+            while (!completed()
                 && String.IsNullOrEmpty(backend.Failure)
                 && stopwatch.ElapsedMilliseconds < timeoutMilliseconds)
             {
@@ -269,8 +526,8 @@ namespace AiMiner.UiHost
             Application.DoEvents();
             if (!String.IsNullOrEmpty(backend.Failure))
                 throw new InvalidOperationException(backend.Failure);
-            if (backend.MiningAckCount < expectedAckCount)
-                throw new TimeoutException("timed out waiting for the persisted metagame ACK");
+            if (!completed())
+                throw new TimeoutException("timed out waiting for " + description);
         }
 
         private static bool SendTransportTestCopyData(IntPtr target, IntPtr sender, string message,
@@ -321,8 +578,13 @@ namespace AiMiner.UiHost
                         if (MetaGameBridge.TryParseTrustedMessage(raw, _options.Session,
                             DateTimeOffset.UtcNow, out metaCommand))
                         {
-                            bool accepted = _metaGame != null && !_metaWork.IsAddingCompleted
-                                && _metaWork.TryAdd(MetaWorkItem.FromTrusted(metaCommand));
+                            bool accepted = false;
+                            if (_metaGame != null && !_metaWork.IsAddingCompleted)
+                            {
+                                long recoveryEpoch = _metaGame.CaptureControllerQueueEpoch();
+                                accepted = _metaWork.TryAdd(
+                                    MetaWorkItem.FromTrusted(metaCommand, recoveryEpoch));
+                            }
                             message.Result = accepted ? new IntPtr(1) : IntPtr.Zero;
                             return;
                         }
@@ -648,7 +910,16 @@ namespace AiMiner.UiHost
                 {
                     if (_closing) break;
                     if (!WaitForMetaRecoveryReset()) break;
-                    if (item.Trusted != null) ProcessTrustedMetaWork(item.Trusted);
+                    if (item.Trusted != null)
+                    {
+                        // WaitForMetaRecoveryReset may have synchronously replaced AHK's durable
+                        // FIFO after this item was dequeued. Never apply or ACK that stale copy:
+                        // a replacement BEGIN/reward/END envelope will be retried independently.
+                        if (!_metaGame.IsControllerQueueEpochCurrent(
+                                item.ControllerRecoveryEpoch))
+                            continue;
+                        ProcessTrustedMetaWork(item.Trusted);
+                    }
                     else if (item.Web != null) ProcessWebMetaWork(item.Web);
                 }
             }
@@ -664,13 +935,32 @@ namespace AiMiner.UiHost
             try
             {
                 string result = _metaGame.ApplyTrusted(command);
+                string mutationError;
+                if (!TrustedMutationSucceeded(result, out mutationError))
+                {
+                    if (command.Kind == TrustedMetaCommandKind.SessionEnd
+                        && String.Equals(mutationError, "SESSION_NOT_ACTIVE",
+                            StringComparison.Ordinal))
+                    {
+                        // The sidecar cannot prove whether this is an already-committed END whose
+                        // ACK was lost or a stale/foreign END, so it must never be ACKed. Rebase
+                        // the authenticated controller FIFO instead; retained reward IDs remain
+                        // idempotent and a new BEGIN establishes an ordered recovery barrier.
+                        _metaGame.RequestControllerRebaseForRejectedSessionEnd();
+                        WaitForMetaRecoveryReset();
+                        return;
+                    }
+                    // A domain rejection did not commit the durable mutation. Preserve the
+                    // controller's outbox head by withholding its ACK, while still publishing
+                    // the sidecar result for diagnostics.
+                    PostMetaResultFromWorker(result);
+                    return;
+                }
                 // Queue acceptance is not an ACK. A verified mining event is acknowledged only
                 // after the sidecar transaction, including its atomic save, returned successfully.
                 // Include command + id: BEGIN and END intentionally share a session ID, so an
                 // id-only ACK could incorrectly remove a different durable outbox head.
-                string acknowledgement = Protocol.BuildActionLine(_options.Session,
-                    "meta.ack", new[] { MetaGameBridge.CommandToken(command.Kind), command.Id });
-                SendCopyData(acknowledgement, 1500);
+                SendTrustedMetaAcknowledgement(command);
                 PostMetaResultFromWorker(result);
             }
             catch (Exception exception)
@@ -678,6 +968,33 @@ namespace AiMiner.UiHost
                 WaitForMetaRecoveryReset();
                 PostMetaErrorFromWorker("META_PROCESSING_FAILED", exception.Message);
             }
+        }
+
+        private void SendTrustedMetaAcknowledgement(TrustedMetaCommand command)
+        {
+            string acknowledgement = Protocol.BuildActionLine(_options.Session,
+                "meta.ack", new[] { MetaGameBridge.CommandToken(command.Kind), command.Id });
+            SendCopyData(acknowledgement, 1500);
+        }
+
+        private static bool TrustedMutationSucceeded(string result, out string error)
+        {
+            bool ok;
+            if (!MetaGameRuntime.TryReadMutationOutcome(result, out ok, out error))
+                throw new InvalidDataException("INVALID_META_RESULT");
+            return ok;
+        }
+
+        private static void AssertTrustedFailureIsNotAckEligible(MetaGameRuntime runtime,
+            TrustedMetaCommand command, string description)
+        {
+            // This is a predicate-level guard. The authenticated transport test below covers
+            // ACK egress for successful durable mutations; these fixtures prove that a domain
+            // result with Ok=false cannot pass the exact gate used by ProcessTrustedMetaWork.
+            string mutationError;
+            string result = runtime.ApplyTrusted(command);
+            if (TrustedMutationSucceeded(result, out mutationError))
+                throw new InvalidOperationException(description + " was ACK-eligible");
         }
 
         private void ProcessWebMetaWork(MetaWebRequest request)
@@ -1021,15 +1338,36 @@ namespace AiMiner.UiHost
         private sealed class MetaTransportTestBackend : NativeWindow, IDisposable
         {
             private readonly string _session;
-            private readonly string _eventId;
+            private readonly HashSet<string> _expectedEventIds;
+            private readonly Dictionary<string, int> _acknowledgementCounts
+                = new Dictionary<string, int>(StringComparer.Ordinal);
+            private readonly HashSet<string> _expectedSessionIds;
+            private readonly string _dropFirstSessionEndId;
+            private readonly Dictionary<string, int> _sessionBeginAcknowledgements
+                = new Dictionary<string, int>(StringComparer.Ordinal);
+            private readonly Dictionary<string, int> _sessionEndAckAttempts
+                = new Dictionary<string, int>(StringComparer.Ordinal);
+            private readonly Dictionary<string, int> _sessionEndAcknowledgements
+                = new Dictionary<string, int>(StringComparer.Ordinal);
+            private readonly HashSet<string> _resetTokens
+                = new HashSet<string>(StringComparer.Ordinal);
             private readonly string _dataPath;
             private readonly string _statePath;
 
-            internal MetaTransportTestBackend(string session, string eventId, string dataPath,
-                string statePath)
+            internal MetaTransportTestBackend(string session, IEnumerable<string> eventIds,
+                IEnumerable<string> sessionIds, string dropFirstSessionEndId,
+                string dataPath, string statePath)
             {
                 _session = session;
-                _eventId = eventId;
+                _expectedEventIds = new HashSet<string>(eventIds, StringComparer.Ordinal);
+                _expectedSessionIds = new HashSet<string>(sessionIds, StringComparer.Ordinal);
+                _dropFirstSessionEndId = dropFirstSessionEndId;
+                if (_expectedEventIds.Count == 0)
+                    throw new ArgumentException("transport test requires mining event IDs", nameof(eventIds));
+                if (_expectedSessionIds.Count == 0
+                    || !_expectedSessionIds.Contains(_dropFirstSessionEndId))
+                    throw new ArgumentException("transport test requires its dropped END session",
+                        nameof(sessionIds));
                 _dataPath = dataPath;
                 _statePath = statePath;
                 CreateHandle(new CreateParams
@@ -1042,7 +1380,39 @@ namespace AiMiner.UiHost
             internal IntPtr ExpectedHostWindow { get; set; }
             internal int MiningAckCount { get; private set; }
             internal int DurableMiningAckCount { get; private set; }
+            internal int UniqueMiningAckCount { get { return _acknowledgementCounts.Count; } }
+            internal int ResetCount { get; private set; }
+            internal int UniqueResetCount { get { return _resetTokens.Count; } }
+            internal int UnexpectedAckCount { get; private set; }
             internal string Failure { get; private set; }
+
+            internal int SessionBeginAckCount(string sessionId)
+            {
+                return CountFor(_sessionBeginAcknowledgements, sessionId);
+            }
+
+            internal int SessionEndAckAttemptCount(string sessionId)
+            {
+                return CountFor(_sessionEndAckAttempts, sessionId);
+            }
+
+            internal int SessionEndAckCount(string sessionId)
+            {
+                return CountFor(_sessionEndAcknowledgements, sessionId);
+            }
+
+            internal bool AllExpectedEventsAcknowledgedExactly(int expectedCount)
+            {
+                if (_acknowledgementCounts.Count != _expectedEventIds.Count) return false;
+                foreach (string eventId in _expectedEventIds)
+                {
+                    int actualCount;
+                    if (!_acknowledgementCounts.TryGetValue(eventId, out actualCount)
+                        || actualCount != expectedCount)
+                        return false;
+                }
+                return true;
+            }
 
             protected override void WndProc(ref Message message)
             {
@@ -1066,13 +1436,59 @@ namespace AiMiner.UiHost
                         || wire.IndexOf('\0') != wire.Length - 1)
                         throw new InvalidOperationException("ACK COPYDATA string was invalid");
                     string[] parts = wire.Substring(0, wire.Length - 1).Split('\t');
+
+                    if (parts.Length == 4 && parts[0] == "AIUI1" && parts[1] == _session
+                        && parts[2] == "meta.reset")
+                    {
+                        if (!IsValidRecoveryToken(parts[3]))
+                            throw new InvalidOperationException(
+                                "metagame reset token was invalid");
+                        ResetCount++;
+                        _resetTokens.Add(parts[3]);
+                        message.Result = new IntPtr(1);
+                        return;
+                    }
                     if (parts.Length != 5 || parts[0] != "AIUI1" || parts[1] != _session
-                        || parts[2] != "meta.ack" || parts[3] != "MINING_SUCCESS"
-                        || parts[4] != _eventId)
-                        throw new InvalidOperationException("typed mining ACK payload was invalid");
+                        || parts[2] != "meta.ack")
+                        throw new InvalidOperationException("typed metagame ACK payload was invalid");
+
+                    if (parts[3] == "SESSION_BEGIN" && _expectedSessionIds.Contains(parts[4]))
+                    {
+                        if (!IsSessionStateDurable(parts[4], true))
+                            throw new InvalidOperationException(
+                                "SESSION_BEGIN ACK arrived before durable persistence");
+                        Increment(_sessionBeginAcknowledgements, parts[4]);
+                        message.Result = new IntPtr(1);
+                        return;
+                    }
+                    if (parts[3] == "SESSION_END" && _expectedSessionIds.Contains(parts[4]))
+                    {
+                        if (!IsSessionStateDurable(parts[4], false))
+                            throw new InvalidOperationException(
+                                "SESSION_END ACK arrived before durable persistence");
+                        int attempt = Increment(_sessionEndAckAttempts, parts[4]);
+                        if (String.Equals(parts[4], _dropFirstSessionEndId,
+                                StringComparison.Ordinal) && attempt == 1)
+                        {
+                            // Model an ACK that reached the controller but could not be committed
+                            // to its durable outbox tombstone. It therefore resends the same END.
+                            message.Result = IntPtr.Zero;
+                            return;
+                        }
+                        Increment(_sessionEndAcknowledgements, parts[4]);
+                        message.Result = new IntPtr(1);
+                        return;
+                    }
+                    if (parts[3] != "MINING_SUCCESS"
+                        || !_expectedEventIds.Contains(parts[4]))
+                    {
+                        UnexpectedAckCount++;
+                        throw new InvalidOperationException("unexpected metagame ACK was emitted");
+                    }
 
                     MiningAckCount++;
-                    if (IsMiningStateDurable()) DurableMiningAckCount++;
+                    Increment(_acknowledgementCounts, parts[4]);
+                    if (IsMiningStateDurable(parts[4])) DurableMiningAckCount++;
                     else throw new InvalidOperationException(
                         "mining ACK arrived before the atomic state was durable");
                     message.Result = new IntPtr(1);
@@ -1086,7 +1502,34 @@ namespace AiMiner.UiHost
                 }
             }
 
-            private bool IsMiningStateDurable()
+            private static bool IsValidRecoveryToken(string token)
+            {
+                if (String.IsNullOrEmpty(token)) return false;
+                int separator = token.LastIndexOf(':');
+                if (separator != 32 || separator >= token.Length - 1) return false;
+                Guid epoch;
+                long generation;
+                return Guid.TryParseExact(token.Substring(0, separator), "N", out epoch)
+                    && token[separator + 1] >= '1' && token[separator + 1] <= '9'
+                    && long.TryParse(token.Substring(separator + 1), NumberStyles.None,
+                        CultureInfo.InvariantCulture, out generation)
+                    && generation > 0;
+            }
+
+            private static int CountFor(Dictionary<string, int> values, string key)
+            {
+                int count;
+                return values.TryGetValue(key, out count) ? count : 0;
+            }
+
+            private static int Increment(Dictionary<string, int> values, string key)
+            {
+                int count = CountFor(values, key) + 1;
+                values[key] = count;
+                return count;
+            }
+
+            private bool IsSessionStateDurable(string sessionId, bool activeExpected)
             {
                 FileInfo stateFile = new FileInfo(_statePath);
                 string directory = Path.GetDirectoryName(_statePath);
@@ -1096,12 +1539,39 @@ namespace AiMiner.UiHost
                     return false;
                 MetaGameState state = new MetaGameStateStore(_statePath)
                     .LoadOrCreate(DateTimeOffset.UtcNow);
-                int occurrences = 0;
+                bool activeMatches = String.Equals(state.Mining.ActiveSessionId, sessionId,
+                    StringComparison.Ordinal);
+                return state.SchemaVersion == 2
+                    && (activeExpected ? activeMatches
+                        : String.IsNullOrEmpty(state.Mining.ActiveSessionId));
+            }
+
+            private bool IsMiningStateDurable(string acknowledgedEventId)
+            {
+                FileInfo stateFile = new FileInfo(_statePath);
+                string directory = Path.GetDirectoryName(_statePath);
+                if (!stateFile.Exists || stateFile.Length <= 0
+                    || Directory.GetFiles(directory,
+                        Path.GetFileName(_statePath) + ".tmp-*").Length != 0)
+                    return false;
+                MetaGameState state = new MetaGameStateStore(_statePath)
+                    .LoadOrCreate(DateTimeOffset.UtcNow);
+                if (state.SchemaVersion != 2
+                    || state.Mining.TotalStoneMined != _acknowledgementCounts.Count)
+                    return false;
+                foreach (string expectedId in _acknowledgementCounts.Keys)
+                {
+                    int occurrences = 0;
+                    foreach (string processedId in state.ProcessedMiningEventIds)
+                        if (String.Equals(processedId, expectedId, StringComparison.Ordinal))
+                            occurrences++;
+                    if (occurrences != 1) return false;
+                }
+                int acknowledgedOccurrences = 0;
                 foreach (string processedId in state.ProcessedMiningEventIds)
-                    if (String.Equals(processedId, _eventId, StringComparison.Ordinal))
-                        occurrences++;
-                return state.SchemaVersion == 2 && state.Mining.TotalStoneMined == 1
-                    && occurrences == 1;
+                    if (String.Equals(processedId, acknowledgedEventId, StringComparison.Ordinal))
+                        acknowledgedOccurrences++;
+                return acknowledgedOccurrences == 1;
             }
 
             public void Dispose()
@@ -1115,10 +1585,16 @@ namespace AiMiner.UiHost
     {
         internal TrustedMetaCommand Trusted;
         internal MetaWebRequest Web;
+        internal long ControllerRecoveryEpoch;
 
-        internal static MetaWorkItem FromTrusted(TrustedMetaCommand command)
+        internal static MetaWorkItem FromTrusted(TrustedMetaCommand command,
+            long controllerRecoveryEpoch)
         {
-            return new MetaWorkItem { Trusted = command };
+            return new MetaWorkItem
+            {
+                Trusted = command,
+                ControllerRecoveryEpoch = controllerRecoveryEpoch
+            };
         }
 
         internal static MetaWorkItem FromWeb(MetaWebRequest request)

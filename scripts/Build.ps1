@@ -299,6 +299,8 @@ $updaterOutput = Join-Path $stageRoot 'AI採掘機_Updater.exe'
 Invoke-CSharpBuild -Source $bridgeSource -Output $bridgeOutput
 Invoke-CSharpBuild -Source $updaterSource -Output $updaterOutput
 & (Join-Path $PSScriptRoot 'Test-CameraRecoveryContract.ps1') -SourcePath $mainSource
+& (Join-Path $PSScriptRoot 'Test-WashRecoveryContract.ps1') -SourcePath $mainSource
+& (Join-Path $PSScriptRoot 'Test-StoneProgressContract.ps1') -SourcePath $mainSource
 & (Join-Path $PSScriptRoot 'Test-WashDomExpressions.ps1') -Bridge $bridgeOutput
 Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'CAPS 11 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HOTBAR INVENTORYKEY HEALTH COMPANION ACTIONWAIT'
 Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'SELFTEST OK' -Mode 'self-test'
@@ -541,19 +543,39 @@ finally {
     Pop-Location
 }
 
-foreach ($testMode in @('--validate', '--smoke-test')) {
-    $testProcess = Start-Process -FilePath $outputExe -ArgumentList $testMode -PassThru -WindowStyle Hidden
-    # A cold WebView2 profile may consume most of the app's own 27-second
-    # handshake + smoke window on slower PCs. Keep validation strict but give
-    # the full UI round-trip enough wall-clock headroom.
-    $testTimeoutMs = if ($testMode -eq '--smoke-test') { 60000 } else { 30000 }
-    if (-not $testProcess.WaitForExit($testTimeoutMs)) {
-        try { $testProcess.Kill() } catch { }
-        throw "Compiled application $testMode timed out."
+& (Join-Path $PSScriptRoot 'Test-StoneBackfillExecutable.ps1') `
+    -ExecutablePath $outputExe
+
+$smokeDiagnosticPath = Join-Path (Split-Path -Parent $outputExe) 'AI採掘機_診断.log'
+$smokeDiagnosticSentinel = 'AIMINER_UPDATER_TEST_MUST_PRESERVE_THIS_DIAGNOSTIC'
+if (Test-Path -LiteralPath $smokeDiagnosticPath) {
+    throw "Unexpected diagnostic test target already exists: $smokeDiagnosticPath"
+}
+[System.IO.File]::WriteAllText($smokeDiagnosticPath, $smokeDiagnosticSentinel,
+    [System.Text.UTF8Encoding]::new($false))
+try {
+    foreach ($testMode in @('--validate', '--smoke-test')) {
+        $testProcess = Start-Process -FilePath $outputExe -ArgumentList $testMode -PassThru -WindowStyle Hidden
+        # A cold WebView2 profile may consume most of the app's own 27-second
+        # handshake + smoke window on slower PCs. Keep validation strict but give
+        # the full UI round-trip enough wall-clock headroom.
+        $testTimeoutMs = if ($testMode -eq '--smoke-test') { 60000 } else { 30000 }
+        if (-not $testProcess.WaitForExit($testTimeoutMs)) {
+            try { $testProcess.Kill() } catch { }
+            throw "Compiled application $testMode timed out."
+        }
+        if ($testProcess.ExitCode -ne 0) {
+            throw "Compiled application $testMode failed with exit code $($testProcess.ExitCode)."
+        }
+        if (-not (Test-Path -LiteralPath $smokeDiagnosticPath -PathType Leaf) -or
+            [System.IO.File]::ReadAllText($smokeDiagnosticPath) -cne
+                $smokeDiagnosticSentinel) {
+            throw "Compiled application $testMode modified the install diagnostic log."
+        }
     }
-    if ($testProcess.ExitCode -ne 0) {
-        throw "Compiled application $testMode failed with exit code $($testProcess.ExitCode)."
-    }
+}
+finally {
+    Remove-Item -LiteralPath $smokeDiagnosticPath -Force -ErrorAction SilentlyContinue
 }
 
 Assert-X64PortableExecutable -Path $outputExe

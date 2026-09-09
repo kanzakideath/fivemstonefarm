@@ -284,17 +284,30 @@ namespace AiMiner.UiHost
                 string statePath = Path.Combine(temporaryRoot, "state.json");
                 StoneMetaGameHost host = new StoneMetaGameHost(dataPath, statePath, false);
                 host.BeginMiningSessionJson("session:integration:1", now);
-                host.RecordVerifiedMiningSuccessJson("mine:integration:1", now);
-                host.RecordVerifiedMiningSuccessJson("mine:integration:1", now);
-                if (host.Service.GetSnapshot().Mining.TotalStoneMined != 1)
-                    throw new InvalidOperationException("one verified mining event was not idempotent");
-                for (int index = 2; index <= 10; index++)
+                string[] verifiedWorkIds =
                 {
-                    string eventId = "mine:integration:" + index.ToString(CultureInfo.InvariantCulture);
+                    "work:mining:integration:1",
+                    "work:washing:integration:2",
+                    "work:gold:integration:3"
+                };
+                for (int index = 0; index < verifiedWorkIds.Length; index++)
+                    host.RecordVerifiedMiningSuccessJson(verifiedWorkIds[index],
+                        now.AddMilliseconds(index + 1));
+                for (int index = verifiedWorkIds.Length - 1; index >= 0; index--)
+                    host.RecordVerifiedMiningSuccessJson(verifiedWorkIds[index],
+                        now.AddMilliseconds(20 + index));
+                if (host.Service.GetSnapshot().Mining.TotalStoneMined != 3)
+                    throw new InvalidOperationException(
+                        "verified mining, washing, and gold events were not idempotent");
+                for (int index = 4; index <= 10; index++)
+                {
+                    string eventId = "work:mining:integration:"
+                        + index.ToString(CultureInfo.InvariantCulture);
                     host.RecordVerifiedMiningSuccessJson(eventId, now.AddMilliseconds(index));
                 }
                 if (host.Service.GetSnapshot().Mining.TotalStoneMined != 10)
-                    throw new InvalidOperationException("ten unique mining events did not produce ten records");
+                    throw new InvalidOperationException(
+                        "ten unique verified work events did not produce ten records");
                 host.EndMiningSessionJson("session:integration:1", now.AddSeconds(1));
                 host = new StoneMetaGameHost(dataPath, statePath, false);
                 if (host.Service.GetSnapshot().Mining.TotalStoneMined != 10)

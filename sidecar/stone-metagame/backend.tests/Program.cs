@@ -36,6 +36,82 @@ internal static class Program
             Assert(duplicate.Ok && duplicate.Duplicate, "duplicate mining event is idempotent");
             Assert(duplicate.Snapshot.Mining.TotalStoneMined == 1, "duplicate does not increment");
 
+            // The domain API intentionally counts a trusted, verified work-completion event
+            // without knowing which Farm mode produced it. The controller owns that distinction
+            // and encodes it in the stable event ID. This keeps mining/washing/gold integration
+            // outside the validated progression, gacha, pity, and persistence implementation.
+            string mixedWorkState = Path.Combine(temporary, "mixed-work-state.json");
+            var mixedWorkService = new MetaGameService(catalog,
+                new MetaGameStateStore(mixedWorkState), new SequenceRandom(0), clock);
+            string[] mixedWorkIds =
+            {
+                "work:mining:run0001:attempt0001:revision0003",
+                "work:washing:run0001:attempt0002:revision0006",
+                "work:gold:run0001:attempt0003:revision0009"
+            };
+            for (int index = 0; index < mixedWorkIds.Length; index++)
+            {
+                MutationResult recorded = mixedWorkService.RecordVerifiedMiningSuccess(
+                    mixedWorkIds[index], clock.UtcNow.AddSeconds(index));
+                Assert(recorded.Ok && !recorded.Duplicate
+                    && recorded.Snapshot.Mining.TotalStoneMined == index + 1,
+                    "each verified Farm mode advances STONE exactly once");
+            }
+            foreach (string eventId in mixedWorkIds.Reverse())
+            {
+                MutationResult replay = mixedWorkService.RecordVerifiedMiningSuccess(
+                    eventId, clock.UtcNow.AddMinutes(1));
+                Assert(replay.Ok && replay.Duplicate
+                    && replay.Snapshot.Mining.TotalStoneMined == mixedWorkIds.Length,
+                    "mixed Farm event replay is idempotent");
+            }
+            var mixedWorkReloaded = new MetaGameService(catalog,
+                new MetaGameStateStore(mixedWorkState), new SequenceRandom(0), clock);
+            Assert(mixedWorkReloaded.GetSnapshot().Mining.TotalStoneMined == 3
+                && mixedWorkReloaded.GetSnapshot().Mining.MiningXp == 3
+                && mixedWorkReloaded.GetSnapshot().Mining.AvailableMiningPoints == 3,
+                "mixed Farm progression remains exact after restart");
+
+            // Historical import is modeled as a sequence of stable per-completion IDs, never as
+            // an untrusted total. A restart can occur after any saved row; replaying the complete
+            // batch must fill only missing rows and must not grant XP/points twice.
+            string backfillState = Path.Combine(temporary, "backfill-state.json");
+            string[] historicalIds =
+            {
+                "backfill:v1:mining:20260908T010101001:a1:r3",
+                "backfill:v1:washing:20260908T010111002:a2:r6",
+                "backfill:v1:gold:20260908T010121003:a3:r9",
+                "backfill:v1:gold:20260908T010131004:a4:r12",
+                "backfill:v1:washing:20260908T010141005:a5:r15"
+            };
+            var interruptedBackfill = new MetaGameService(catalog,
+                new MetaGameStateStore(backfillState), new SequenceRandom(0), clock);
+            for (int index = 0; index < 2; index++)
+                Assert(interruptedBackfill.RecordVerifiedMiningSuccess(historicalIds[index],
+                    clock.UtcNow.AddDays(-2).AddSeconds(index)).Ok,
+                    "historical prefix is committed before simulated restart");
+            var resumedBackfill = new MetaGameService(catalog,
+                new MetaGameStateStore(backfillState), new SequenceRandom(0), clock);
+            for (int index = 0; index < historicalIds.Length; index++)
+            {
+                MutationResult imported = resumedBackfill.RecordVerifiedMiningSuccess(
+                    historicalIds[index], clock.UtcNow.AddDays(-2).AddSeconds(index));
+                Assert(imported.Ok && imported.Duplicate == (index < 2),
+                    "historical replay imports only rows missing after restart");
+            }
+            MetaGameSnapshot importedSnapshot = resumedBackfill.GetSnapshot();
+            Assert(importedSnapshot.Mining.TotalStoneMined == historicalIds.Length
+                && importedSnapshot.Mining.MiningXp == historicalIds.Length
+                && importedSnapshot.Mining.AvailableMiningPoints == historicalIds.Length,
+                "historical batch awards exactly one progression unit per verified row");
+            var replayedBackfill = new MetaGameService(catalog,
+                new MetaGameStateStore(backfillState), new SequenceRandom(0), clock);
+            foreach (string eventId in historicalIds)
+                Assert(replayedBackfill.RecordVerifiedMiningSuccess(eventId,
+                    clock.UtcNow).Duplicate, "completed historical batch remains idempotent");
+            Assert(replayedBackfill.GetSnapshot().Mining.TotalStoneMined
+                == historicalIds.Length, "re-running backfill leaves the exact total unchanged");
+
             Assert(service.DebugGrantMiningPoints(9999).Ok, "debug point grant works in service");
             Assert(service.DebugPrimePity("ssr").Ok, "SSR pity can be primed for tests");
             MutationResult pityDraw = service.Draw("draw:test-session:0001", 1, "points");
