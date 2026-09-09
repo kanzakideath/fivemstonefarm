@@ -9,7 +9,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "8.0.5"
+global AppVersion := "8.0.6"
 processId := DllCall("GetCurrentProcessId")
 isUiSmokeTest := HasCommandLineArgument("--smoke-test")
 isVisualTest := HasCommandLineArgument("--visual-test")
@@ -166,9 +166,9 @@ global State := {
     attempts: 0,
     meals: 0,
     nudges: 0,
-    washCompletionPending: false,
-    washDispatchUncertain: false,
-    washCompletionFailures: 0,
+    actionCompletionPending: false,
+    actionCompletionMode: "",
+    actionDispatchUncertain: false,
     goldMissingSince: 0,
     goldRecoveryStep: 0,
     goldRecoveryExhausted: false,
@@ -307,7 +307,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
         : !FileExist(State.backgroundBridgePath) ? 15
         : !FileExist(State.updaterPath) ? 16
         : MonotonicMs() <= 0 ? 17
-        : RunBackgroundBridge("capabilities") != "CAPS 10 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HOTBAR INVENTORYKEY HEALTH COMPANION WASHWAIT" ? 18
+        : RunBackgroundBridge("capabilities") != "CAPS 11 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HOTBAR INVENTORYKEY HEALTH COMPANION ACTIONWAIT" ? 18
         : updaterCapabilities != "UPDATE_CAPS 1 CHECK DOWNLOAD APPLY" ? 19
         : !IsSafeConfiguredHotkey("F8") ? 20
         : IsSafeConfiguredHotkey("A") ? 21
@@ -389,15 +389,27 @@ if A_Args.Length && A_Args[1] = "--validate" {
         : !CapacityNeedsStorage({weight: 149995, maxWeight: 150000,
             used: 8, slots: 50}, &testCapacityReason, &testFreeWeight) ? 81
         : testCapacityReason != "weight" || testFreeWeight != 5 ? 82
-        : !ParseWashCompletionResult("WASH_COMPLETED 9123", &testWashElapsed) ? 83
-        : testWashElapsed != 9123 ? 84
-        : ParseWashCompletionResult("WASH_COMPLETED -1", &testWashElapsed) ? 85
-        : ParseWashCompletionResult("WASH_COMPLETED 24001", &testWashElapsed) ? 86
-        : ParseWashCompletionResult("WASH_COMPLETED 1 extra", &testWashElapsed) ? 87
-        : State.washCompletionPending ? 88
-        : State.HasOwnProp("washNudgePending") ? 89
-        : State.washCompletionFailures != 0 ? 90
-        : State.washDispatchUncertain ? 91 : 0
+        : !ParseActionCompletionResult("ACTION_COMPLETED WASH 9123",
+            "washing", &testActionElapsed) ? 83
+        : testActionElapsed != 9123 ? 84
+        : ParseActionCompletionResult("ACTION_COMPLETED WASH -1",
+            "washing", &testActionElapsed) ? 85
+        : ParseActionCompletionResult("ACTION_COMPLETED WASH 30001",
+            "washing", &testActionElapsed) ? 86
+        : ParseActionCompletionResult("ACTION_COMPLETED WASH 1 extra",
+            "washing", &testActionElapsed) ? 87
+        : ParseActionCompletionResult("ACTION_COMPLETED MINE 5000",
+            "washing", &testActionElapsed) ? 88
+        : BackgroundActionCommandToken("mining") != "mine"
+            || BackgroundActionResultToken("gold") != "GOLD" ? 89
+        : State.actionCompletionPending ? 90
+        : State.actionCompletionMode != "" ? 91
+        : State.HasOwnProp("washCompletionPending") ? 92
+        : State.actionDispatchUncertain ? 93
+        : !IsActionCompletionBridgeResult("ERROR MINE_NOT_STARTED", "mining") ? 94
+        : IsActionCompletionBridgeResult("ERROR WASH_NOT_STARTED", "mining") ? 95
+        : !IsActionCompletionBridgeResult("ACTION_COMPLETED GOLD 6100", "gold") ? 96
+        : IsActionCompletionBridgeResult("ERROR GOLD_UNKNOWN", "gold") ? 97 : 0
     if exitCode = 19
         try FileAppend "UPDATER_CAPS=" updaterCapabilities "`r`n",
             State.diagnosticPath, "UTF-8"
@@ -3307,9 +3319,7 @@ StartMining(*) {
     State.attempts := 0
     State.meals := 0
     State.nudges := 0
-    State.washCompletionPending := false
-    State.washDispatchUncertain := false
-    State.washCompletionFailures := 0
+    ResetActionCompletionState()
     ResetGoldRecoveryState()
     State.nextHungerCheckAt := 0
     State.nextEatAllowedAt := 0
@@ -3480,9 +3490,7 @@ StopMining(*) {
     State.running := false
     State.generation += 1
     State.automationPhase := "stopped"
-    State.washCompletionPending := false
-    State.washDispatchUncertain := false
-    State.washCompletionFailures := 0
+    ResetActionCompletionState()
     State.inventoryBaseline := ""
     State.nextActionAt := 0
     State.capacityProbeFailures := 0
@@ -4308,7 +4316,7 @@ PlayLocalRoute(expectedGeneration, route) {
     global State
     if !IsCurrentRun(expectedGeneration) || !route || !State.serverEpoch
         return false
-    if !EnsureDevConPort()
+    if !EnsureDevConPort(false)
         return false
     port := State.lastDevConPort
     result := RunBackgroundBridgeCancelable(expectedGeneration,
@@ -4438,9 +4446,13 @@ RunVehicleStorageCycle(expectedGeneration) {
     RunLocalVehicleStorageCycle(expectedGeneration)
 }
 
-EnsureDevConPort() {
+EnsureDevConPort(preflightRelease := true) {
     global State
     if State.lastDevConPort = 29200 || State.lastDevConPort = 29300 {
+        ; play-route(-health) はhelper自身が実行前後に全入力を解除します。
+        ; 既知portに別helperの解除を重ねる約2秒の空白は省けます。
+        if !preflightRelease
+            return true
         cachedRelease := RunBackgroundBridge("deactivate-" State.lastDevConPort)
         if cachedRelease != "RELEASED" {
             Sleep 75
@@ -4580,10 +4592,10 @@ AutomationCycle(expectedGeneration) {
     if !IsCurrentRun(expectedGeneration)
         return
 
-    ; クリック済みの洗浄は、完了確認が取れるまで他の保守処理や次のクリックへ
-    ; 進めません。監視の再試行でも同じ洗浄だけを待ち、補正を重複させません。
-    if State.runMode = "washing" && State.washCompletionPending {
-        WashAttemptBackground(expectedGeneration)
+    ; クリック済みの作業は、実際の進捗UIが完了するまで容量・視点・食事や
+    ; 次のクリックへ進めません。完了後だけ通常cycleへ戻します。
+    if State.actionCompletionPending {
+        WaitPendingBackgroundActionCompletion(expectedGeneration)
         return
     }
 
@@ -4633,7 +4645,7 @@ MaintainBackgroundWorkView(expectedGeneration, force := false) {
         && now - State.lastWorkViewAt < Config.workViewIntervalMs
         return true
     route := WorkViewDownRoute(Config.workViewDownPulseMs)
-    portReady := route ? EnsureDevConPort() : false
+    portReady := route ? EnsureDevConPort(false) : false
     if !IsCurrentRun(expectedGeneration)
         return false
     if !route || !portReady {
@@ -4837,9 +4849,200 @@ PerformBackgroundEating(expectedGeneration, reason) {
     return true
 }
 
+BackgroundActionCommandToken(actionMode) {
+    return actionMode = "washing" ? "wash"
+        : actionMode = "gold" ? "gold"
+        : actionMode = "mining" ? "mine" : ""
+}
+
+BackgroundActionResultToken(actionMode) {
+    return actionMode = "washing" ? "WASH"
+        : actionMode = "gold" ? "GOLD"
+        : actionMode = "mining" ? "MINE" : ""
+}
+
+BackgroundActionDisplayName(actionMode) {
+    return actionMode = "washing" ? "洗浄"
+        : actionMode = "gold" ? "砂金採り" : "採掘"
+}
+
+ResetActionCompletionState() {
+    global State
+    State.actionCompletionPending := false
+    State.actionCompletionMode := ""
+    State.actionDispatchUncertain := false
+}
+
+BeginActionCompletionWait(actionMode, dispatchUncertain := false) {
+    global State
+    State.actionCompletionPending := true
+    State.actionCompletionMode := actionMode
+    State.actionDispatchUncertain := dispatchUncertain
+    ; 再出現猶予が必要な収納・食事だけはクリック起点で計算します。
+    ; 完了時刻で上書きすると、完了検知後にも同じ待ち時間が丸ごと加算されます。
+    State.lastMineAt := MonotonicMs()
+    State.nextActionAt := 0
+}
+
+ParseActionCompletionResult(result, expectedMode, &elapsedMs) {
+    elapsedMs := 0
+    expectedToken := BackgroundActionResultToken(expectedMode)
+    if !expectedToken
+        return false
+    if !RegExMatch(result,
+        "^ACTION_COMPLETED (MINE|WASH|GOLD) ([0-9]{1,5})$", &parts)
+        return false
+    if StrCompare(parts[1], expectedToken, true) != 0
+        return false
+    try elapsedMs := Integer(parts[2])
+    catch
+        return false
+    return elapsedMs >= 0 && elapsedMs <= 30000
+}
+
+IsActionCompletionBridgeResult(result, expectedMode) {
+    if ParseActionCompletionResult(result, expectedMode, &elapsedMs)
+        return true
+    resultToken := BackgroundActionResultToken(expectedMode)
+    if !resultToken
+        return false
+    return result = "ERROR " resultToken "_NOT_STARTED"
+        || result = "ERROR " resultToken "_COMPLETION_TIMEOUT"
+        || result = "ERROR " resultToken "_PROGRESS_UNAVAILABLE"
+}
+
+PerformWashCompletionCorrection(expectedGeneration) {
+    global State, Config
+    if !Config.washForwardCorrection
+        return true
+    portReady := EnsureDevConPort(false)
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    if !portReady {
+        WriteDiagnostic("attempt=" State.attempts " WASH_FORWARD_PORT_MISSING")
+        StopAutomationWithFault(
+            "洗浄直後の位置補正を開始できないため安全停止しました")
+        return false
+    }
+    port := State.lastDevConPort
+    State.statusLabel.Text := "●  洗浄完了。位置を少し前へ補正中"
+    nudgeResult := RunBackgroundBridgeCancelable(expectedGeneration,
+        "play-route-health", port, Config.washForwardPulseMs ":1",
+        State.serverEpoch)
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    if nudgeResult != "ROUTE " port " " Config.washForwardPulseMs {
+        WriteDiagnostic("attempt=" State.attempts " WASH_FORWARD_ERROR=" nudgeResult)
+        ; 入力が一部届いた可能性を否定できないため、補正を再送しません。
+        StopAutomationWithFault(
+            "洗浄位置の補正結果を確認できないため安全停止しました")
+        return false
+    }
+    State.nudges += 1
+    State.mealLabel.Text := "後退補正`n" State.nudges
+    WriteDiagnostic("attempt=" State.attempts " WASH_FORWARD_SENT pulse="
+        Config.washForwardPulseMs)
+    return WaitWhileBackgroundReady(Config.washForwardSettleMs + 50,
+        expectedGeneration)
+}
+
+WaitPendingBackgroundActionCompletion(expectedGeneration, suppliedResult := "") {
+    global State, Config
+    if !IsCurrentRun(expectedGeneration) || !State.actionCompletionPending
+        return
+    actionMode := State.actionCompletionMode
+    commandToken := BackgroundActionCommandToken(actionMode)
+    resultToken := BackgroundActionResultToken(actionMode)
+    if !commandToken || !resultToken || actionMode != State.runMode {
+        StopAutomationWithFault(
+            "作業完了の内部状態が一致しないため安全停止しました")
+        return
+    }
+
+    displayName := BackgroundActionDisplayName(actionMode)
+    dispatchUncertain := State.actionDispatchUncertain
+    State.statusLabel.Text := "●  " displayName "完了を確認中"
+    completionWasBundled := suppliedResult != ""
+    completionResult := completionWasBundled ? suppliedResult
+        : RunBackgroundBridgeCancelable(expectedGeneration,
+            "wait-action-completion", commandToken, State.serverEpoch)
+    if !IsCurrentRun(expectedGeneration)
+        return
+    if ParseActionCompletionResult(completionResult, actionMode,
+        &completionElapsedMs) {
+        ; pendingを先に消費し、この完了に対する計数と補正を必ず一度だけにします。
+        ResetActionCompletionState()
+        State.successes += 1
+        completionAt := MonotonicMs()
+        if completionWasBundled
+            State.lastMineAt := Max(1, completionAt - completionElapsedMs)
+        ; bridgeが返却直前に同じCDP接続で3つのNUI frameを照合済みです。
+        ; 直後に別helperで同じhealthを重ねず、次の定期確認まで有効扱いにします。
+        State.serverHealthFailures := 0
+        State.nextServerHealthAt := completionAt + Config.serverHealthIntervalMs
+        State.countLabel.Text := actionMode = "washing"
+            ? "石洗い回数`n" State.successes
+            : actionMode = "gold" ? "砂金採り回数`n" State.successes
+            : "採掘回数`n" State.successes
+        if actionMode = "gold"
+            ResetGoldRecoveryState()
+        WriteDiagnostic("attempt=" State.attempts " ACTION_PROGRESS_DONE mode="
+            actionMode " elapsed=" completionElapsedMs
+            " bundled=" completionWasBundled
+            " clickAge=" (State.lastMineAt ? completionAt - State.lastMineAt : -1))
+        if actionMode = "washing"
+            && !PerformWashCompletionCorrection(expectedGeneration)
+            return
+        if !IsCurrentRun(expectedGeneration)
+            return
+        State.statusLabel.Text := "●  " displayName "完了。次の作業を確認します"
+        ScheduleNext(expectedGeneration, 1)
+        return
+    }
+
+    WriteDiagnostic("attempt=" State.attempts " ACTION_PROGRESS_ERROR mode="
+        actionMode " bundled=" completionWasBundled " result=" completionResult)
+    if completionResult = "ERROR SERVER_SESSION_CHANGED" {
+        StopAutomationWithFault(
+            "サーバー再起動または再接続を検知したため自動停止しました")
+        return
+    }
+    expectedPrefix := "ERROR " resultToken "_"
+    if completionResult = expectedPrefix "NOT_STARTED" {
+        ; dispatch後に応答を失った場合は「送信されなかった」と断定できません。
+        ; 二重実行を避けるため、確定CLICKEDだけを再選択し、不確定送信は停止します。
+        ResetActionCompletionState()
+        ; bundled結果は、このhelper内でDOMクリックが成功した後の監視結果です。
+        ; 旧bridgeのCLICKED後に単独監視した場合も再クリックは安全ではありません。
+        ; 進捗表示だけを取りこぼした可能性があるため、NOT_STARTEDでも停止します。
+        if dispatchUncertain || completionWasBundled {
+            StopAutomationWithFault(
+                displayName "を開始したか確認できないため安全停止しました")
+            return
+        }
+        State.lastMineAt := 0
+        State.statusLabel.Text := "●  " displayName "が始まらなかったため再選択します"
+        ScheduleNext(expectedGeneration, 1)
+        return
+    }
+    if completionResult = expectedPrefix "COMPLETION_TIMEOUT" {
+        StopAutomationWithFault(
+            displayName "の進捗が完了しないため安全停止しました")
+        return
+    }
+    if completionResult = expectedPrefix "PROGRESS_UNAVAILABLE" {
+        StopAutomationWithFault(
+            displayName "の進捗を確認できないため安全停止しました")
+        return
+    }
+    ; helper起動失敗や結果ファイル欠落も、実行済みか否かを区別できません。
+    ; pendingのまま再監視・再クリックせず、二重操作を避けて停止します。
+    StopAutomationWithFault(
+        displayName "完了の結果を確認できないため安全停止しました")
+}
+
 WashAttemptBackground(expectedGeneration) {
     global State, Config
-
     if !IsCurrentRun(expectedGeneration)
         return
     State.timerFn := 0
@@ -4850,157 +5053,39 @@ WashAttemptBackground(expectedGeneration) {
     }
 
     State.attempts += 1
-    State.statusLabel.Text := "●  石洗いの準備中"
-    cycleCompleted := false
-
-    try {
-        if !State.washCompletionPending {
-            State.statusLabel.Text := "●  「石を洗う」を確認中"
-            clickResult := RunBackgroundBridgeCancelable(expectedGeneration,
-                "try-washing", State.serverEpoch)
-            if !IsCurrentRun(expectedGeneration)
-                return
-            if clickResult != "CLICKED WASH" && clickResult != "UNCERTAIN WASH" {
-                WriteDiagnostic("attempt=" State.attempts " WASH_TRY=" clickResult)
-                if clickResult = "ERROR SERVER_SESSION_CHANGED" {
-                    StopAutomationWithFault(
-                        "サーバー再起動または再接続を検知したため自動停止しました")
-                    return
-                }
-                State.statusLabel.Text := clickResult = "MISSING WASH"
-                    ? "●  「石を洗う」を待っています"
-                    : "●  FiveM内部UIへ再接続中"
-                return
-            }
-            State.washCompletionPending := true
-            State.washDispatchUncertain := clickResult = "UNCERTAIN WASH"
-            WriteDiagnostic("attempt=" State.attempts " WASH_DISPATCH=" clickResult)
-        }
-
-        ; 進捗UIの完了確認をクリック直後から待ちます。この待機中は
-        ; AutomationCycleへ戻らないため、容量・食事・視点処理は割り込みません。
-        State.statusLabel.Text := "●  洗浄完了を確認中"
-        completionResult := RunBackgroundBridgeCancelable(expectedGeneration,
-            "wait-wash-completion", State.serverEpoch)
-        if !IsCurrentRun(expectedGeneration)
-            return
-        if !ParseWashCompletionResult(completionResult, &completionElapsedMs) {
-            State.washCompletionFailures += 1
-            WriteDiagnostic("attempt=" State.attempts
-                " WASH_PROGRESS_ERROR failures=" State.washCompletionFailures
-                " result=" completionResult)
-            if completionResult = "ERROR SERVER_SESSION_CHANGED" {
-                StopAutomationWithFault(
-                    "サーバー再起動または再接続を検知したため自動停止しました")
-                return
-            }
-            if completionResult = "ERROR WASH_COMPLETION_TIMEOUT" {
-                StopAutomationWithFault(
-                    "洗浄の進捗が完了しないため安全停止しました")
-                return
-            }
-            if completionResult = "ERROR WASH_PROGRESS_UNAVAILABLE" {
-                StopAutomationWithFault(
-                    "洗浄の進捗を確認できないため安全停止しました")
-                return
-            }
-            if State.washCompletionFailures >= 3 {
-                StopAutomationWithFault(
-                    "洗浄完了を3回確認できないため安全停止しました")
-                return
-            }
-            if completionResult = "ERROR WASH_NOT_STARTED" {
-                if State.washDispatchUncertain {
-                    StopAutomationWithFault(
-                        "洗浄クリックの結果を確定できないため安全停止しました")
-                    return
-                }
-                ; 3秒間進捗が一度も始まらなかったことを確認できた場合だけ、
-                ; pendingを解除してtarget選択から安全にやり直します。
-                State.washCompletionPending := false
-                State.washDispatchUncertain := false
-                State.statusLabel.Text := "●  洗浄が始まらなかったため再選択します"
-            } else {
-                ; helper起動失敗や結果ファイル欠落も、洗浄済みか否かを
-                ; 区別できません。pendingのまま再監視・再クリックせず停止します。
-                StopAutomationWithFault(
-                    "洗浄完了の結果を確認できないため安全停止しました")
-                return
-            }
-            return
-        }
-
-        ; pendingを先に消費し、この完了に対する計数と前進を必ず一度だけにします。
-        State.washCompletionPending := false
-        State.washDispatchUncertain := false
-        State.washCompletionFailures := 0
-        State.successes += 1
-        State.lastMineAt := MonotonicMs()
-        State.countLabel.Text := "石洗い回数`n" State.successes
-        WriteDiagnostic("attempt=" State.attempts " WASH_PROGRESS_DONE elapsed="
-            completionElapsedMs)
-
-        if Config.washForwardCorrection {
-            portReady := EnsureDevConPort()
-            if !IsCurrentRun(expectedGeneration)
-                return
-            if !portReady {
-                WriteDiagnostic("attempt=" State.attempts " WASH_FORWARD_PORT_MISSING")
-                StopAutomationWithFault(
-                    "洗浄直後の位置補正を開始できないため安全停止しました")
-                return
-            }
-            port := State.lastDevConPort
-            State.statusLabel.Text := "●  洗浄完了。位置を少し前へ補正中"
-            nudgeResult := RunBackgroundBridgeCancelable(expectedGeneration,
-                "play-route-health", port, Config.washForwardPulseMs ":1",
-                State.serverEpoch)
-            if !IsCurrentRun(expectedGeneration)
-                return
-            if nudgeResult != "ROUTE " port " " Config.washForwardPulseMs {
-                WriteDiagnostic("attempt=" State.attempts
-                    " WASH_FORWARD_ERROR=" nudgeResult)
-                ; 入力が一部届いた可能性を否定できないため、補正を再送しません。
-                StopAutomationWithFault(
-                    "洗浄位置の補正結果を確認できないため安全停止しました")
-                return
-            }
-            State.nudges += 1
-            State.mealLabel.Text := "後退補正`n" State.nudges
-            WriteDiagnostic("attempt=" State.attempts " WASH_FORWARD_SENT pulse="
-                Config.washForwardPulseMs)
-            if !WaitWhileBackgroundReady(Config.washForwardSettleMs + 50,
-                expectedGeneration)
-                return
-        }
-
-        cycleCompleted := true
-        State.statusLabel.Text := "●  洗浄完了。次の作業を確認します"
-    } catch as err {
-        WriteDiagnostic("attempt=" State.attempts " WASH_ERROR=" err.Message)
-        if IsCurrentRun(expectedGeneration)
-            State.statusLabel.Text := "●  石洗いを安全に再試行します"
-    } finally {
-        if IsCurrentRun(expectedGeneration) {
-            if !State.targetHwnd || !WinExist("ahk_id " State.targetHwnd) {
-                StopMining()
-                State.statusLabel.Text := "●  FiveMが終了したため停止"
-            } else {
-                ScheduleNext(expectedGeneration,
-                    cycleCompleted ? 1 : Config.notFoundRetryMs)
-            }
-        }
+    State.statusLabel.Text := "●  「石を洗う」を確認中"
+    clickResult := RunBackgroundBridgeCancelable(expectedGeneration,
+        "try-washing", State.serverEpoch)
+    if !IsCurrentRun(expectedGeneration)
+        return
+    WriteDiagnostic("attempt=" State.attempts " WASH_TRY=" clickResult)
+    if IsActionCompletionBridgeResult(clickResult, "washing") {
+        BeginActionCompletionWait("washing")
+        WaitPendingBackgroundActionCompletion(expectedGeneration, clickResult)
+        return
     }
-}
-
-ParseWashCompletionResult(result, &elapsedMs) {
-    elapsedMs := 0
-    if !RegExMatch(result, "^WASH_COMPLETED ([0-9]{1,5})$", &parts)
-        return false
-    try elapsedMs := Integer(parts[1])
-    catch
-        return false
-    return elapsedMs >= 0 && elapsedMs <= 24000
+    if clickResult = "CLICKED WASH" {
+        BeginActionCompletionWait("washing", true)
+        WaitPendingBackgroundActionCompletion(expectedGeneration)
+        return
+    }
+    if clickResult = "UNCERTAIN WASH" {
+        BeginActionCompletionWait("washing", true)
+        WaitPendingBackgroundActionCompletion(expectedGeneration)
+        return
+    }
+    if clickResult = "ERROR SERVER_SESSION_CHANGED" {
+        StopAutomationWithFault(
+            "サーバー再起動または再接続を検知したため自動停止しました")
+        return
+    }
+    if clickResult != "MISSING WASH" {
+        StopAutomationWithFault(
+            "洗浄クリックの結果を確認できないため安全停止しました")
+        return
+    }
+    State.statusLabel.Text := "●  「石を洗う」を待っています"
+    ScheduleNext(expectedGeneration, Config.notFoundRetryMs)
 }
 
 ResetGoldRecoveryState() {
@@ -5066,7 +5151,7 @@ PerformGoldRecoveryStep(expectedGeneration) {
     route := GoldRecoveryRoute(nextStep)
     if !route
         return false
-    portReady := EnsureDevConPort()
+    portReady := EnsureDevConPort(false)
     if !IsCurrentRun(expectedGeneration)
         return false
     if !portReady {
@@ -5116,82 +5201,74 @@ GoldAttemptBackground(expectedGeneration) {
         return
     }
 
-    nextCycleAnchor := MonotonicMs()
-    clickedThisAttempt := false
     State.attempts += 1
-    State.statusLabel.Text := "●  砂金採りの準備中"
-
-    try {
-        ; 毎回まず現在位置を検査します。前周期のMISSINGだけを根拠に先に
-        ; 移動すると、自然復帰したtargetから離れる競合が起きるためです。
-        State.statusLabel.Text := "●  「砂金採りトレイ」を確認中"
-        clickRequestedAt := MonotonicMs()
-        clickResult := RunBackgroundBridgeCancelable(expectedGeneration, "try-gold")
-        if !IsCurrentRun(expectedGeneration)
-            return
-        if clickResult != "CLICKED GOLD" {
-            WriteDiagnostic("attempt=" State.attempts " GOLD_TRY=" clickResult)
-            if clickResult = "MISSING GOLD" {
-                missingNow := MonotonicMs()
-                if !State.goldMissingSince {
-                    State.goldMissingSince := missingNow
-                    WriteDiagnostic("attempt=" State.attempts " GOLD_MISSING_STARTED")
-                }
-                missingForMs := missingNow - State.goldMissingSince
-                if Config.goldRecoveryEnabled
-                    && missingForMs >= Config.goldRecoveryAfterMs {
-                    if State.goldRecoveryFault {
-                        State.statusLabel.Text := "●  位置補正を完了できません。停止して位置を確認してください"
-                    } else if State.goldRecoveryStep >= 6 {
-                        if !State.goldRecoveryExhausted
-                            WriteDiagnostic("attempt=" State.attempts " GOLD_RECOVERY_EXHAUSTED")
-                        State.goldRecoveryExhausted := true
-                        State.statusLabel.Text := "●  補正範囲外。位置を戻すと自動再開します"
-                    } else {
-                        recoveryMoved := PerformGoldRecoveryStep(expectedGeneration)
-                        if recoveryMoved && IsCurrentRun(expectedGeneration)
-                            State.statusLabel.Text := "●  補正後の位置を再確認します"
-                    }
-                } else {
-                    State.statusLabel.Text := "●  「砂金採りトレイ」を待っています"
-                }
-            } else {
-                ; 接続系の失敗を挟んだ時間は「連続未検出」に数えません。
-                State.goldMissingSince := 0
-                State.statusLabel.Text := "●  FiveM内部UIへ再接続中"
-            }
-            return
-        }
-
+    ; 毎回まず現在位置を検査します。bridgeが同じCDPセッションでtargetを
+    ; 長時間監視するため、固定6秒待機や短い再起動ループは挟みません。
+    State.statusLabel.Text := "●  「砂金採りトレイ」を確認中"
+    clickResult := RunBackgroundBridgeCancelable(expectedGeneration,
+        "try-gold", State.serverEpoch)
+    if !IsCurrentRun(expectedGeneration)
+        return
+    WriteDiagnostic("attempt=" State.attempts " GOLD_TRY=" clickResult)
+    if IsActionCompletionBridgeResult(clickResult, "gold") {
         recoveredSteps := State.goldRecoveryStep
-        ResetGoldRecoveryState()
-        State.successes += 1
-        clickedThisAttempt := true
-        State.lastMineAt := MonotonicMs()
-        nextCycleAnchor := clickRequestedAt
-        State.countLabel.Text := "砂金採り回数`n" State.successes
-        State.statusLabel.Text := "●  約6秒後にもう一度採ります"
         if recoveredSteps
-            WriteDiagnostic("attempt=" State.attempts " GOLD_RECOVERED steps=" recoveredSteps)
-        WriteDiagnostic("attempt=" State.attempts " GOLD_CLICKED")
-    } catch as err {
-        WriteDiagnostic("attempt=" State.attempts " GOLD_ERROR=" err.Message)
-        if IsCurrentRun(expectedGeneration)
-            State.statusLabel.Text := "●  砂金採りを安全に再試行します"
-    } finally {
-        if IsCurrentRun(expectedGeneration) {
-            if !State.targetHwnd || !WinExist("ahk_id " State.targetHwnd) {
-                StopMining()
-                State.statusLabel.Text := "●  FiveMが終了したため停止"
-            } else {
-                if clickedThisAttempt
-                    ScheduleWorkCooldown(expectedGeneration, nextCycleAnchor,
-                        Config.goldCycleMs)
-                else
-                    ScheduleNext(expectedGeneration, Config.notFoundRetryMs)
-            }
-        }
+            WriteDiagnostic("attempt=" State.attempts
+                " GOLD_RECOVERED steps=" recoveredSteps)
+        BeginActionCompletionWait("gold")
+        WaitPendingBackgroundActionCompletion(expectedGeneration, clickResult)
+        return
     }
+    if clickResult = "CLICKED GOLD" {
+        recoveredSteps := State.goldRecoveryStep
+        if recoveredSteps
+            WriteDiagnostic("attempt=" State.attempts
+                " GOLD_RECOVERED steps=" recoveredSteps)
+        BeginActionCompletionWait("gold", true)
+        WaitPendingBackgroundActionCompletion(expectedGeneration)
+        return
+    }
+    if clickResult = "UNCERTAIN GOLD" {
+        BeginActionCompletionWait("gold", true)
+        WaitPendingBackgroundActionCompletion(expectedGeneration)
+        return
+    }
+    if clickResult = "ERROR SERVER_SESSION_CHANGED" {
+        StopAutomationWithFault(
+            "サーバー再起動または再接続を検知したため自動停止しました")
+        return
+    }
+    if clickResult != "MISSING GOLD" {
+        State.goldMissingSince := 0
+        StopAutomationWithFault(
+            "砂金採りクリックの結果を確認できないため安全停止しました")
+        return
+    }
+
+    missingNow := MonotonicMs()
+    if !State.goldMissingSince {
+        State.goldMissingSince := missingNow
+        WriteDiagnostic("attempt=" State.attempts " GOLD_MISSING_STARTED")
+    }
+    missingForMs := missingNow - State.goldMissingSince
+    if Config.goldRecoveryEnabled && missingForMs >= Config.goldRecoveryAfterMs {
+        if State.goldRecoveryFault {
+            State.statusLabel.Text := "●  位置補正を完了できません。停止して位置を確認してください"
+        } else if State.goldRecoveryStep >= 6 {
+            if !State.goldRecoveryExhausted
+                WriteDiagnostic("attempt=" State.attempts " GOLD_RECOVERY_EXHAUSTED")
+            State.goldRecoveryExhausted := true
+            State.statusLabel.Text := "●  補正範囲外。位置を戻すと自動再開します"
+        } else {
+            recoveryMoved := PerformGoldRecoveryStep(expectedGeneration)
+            if recoveryMoved && IsCurrentRun(expectedGeneration)
+                State.statusLabel.Text := "●  補正後の位置を再確認します"
+        }
+    } else {
+        State.statusLabel.Text := "●  「砂金採りトレイ」を待っています"
+    }
+    if IsCurrentRun(expectedGeneration)
+        ScheduleNext(expectedGeneration, Config.notFoundRetryMs)
 }
 
 MineAttempt(expectedGeneration) {
@@ -5457,110 +5534,41 @@ MineAttemptBackground(expectedGeneration) {
 
     State.attempts += 1
     State.statusLabel.Text := "●  石をバックグラウンド確認中"
-    clickIssued := false
-    clickRequestedAt := 0
-
-    try {
-        if State.waitingForStone {
-            ; 1プロセス内でtargetを開閉して確認し、物理マウスや前面画面には触れません。
-            probeResult := RunBackgroundBridgeCancelable(expectedGeneration,
-                "try-probe-mining")
-            if !IsCurrentRun(expectedGeneration)
-                return
-            if probeResult != "PRESENT MINE" && probeResult != "MISSING MINE" {
-                State.lastBridgeError := probeResult
-                State.statusLabel.Text := "●  FiveM内部UIへ再接続中"
-                WriteDiagnostic("attempt=" State.attempts " BG_PROBE_ERROR=" probeResult)
-                ScheduleNext(expectedGeneration, Config.notFoundRetryMs)
-                return
-            }
-            found := probeResult = "PRESENT MINE"
-            WriteDiagnostic("attempt=" State.attempts " BG_BUTTON_"
-                (found ? "PRESENT" : "MISSING"))
-            elapsedSinceClick := State.lastMineAt
-                ? MonotonicMs() - State.lastMineAt : 0
-
-            if !State.stoneGoneObserved {
-                safeResyncFrame := found
-                    && elapsedSinceClick >= Config.stoneResyncAfterMs
-                if safeResyncFrame {
-                    State.stoneAbsentVotes := 0
-                    State.stoneReadyVotes += 1
-                    if State.stoneReadyVotes >= Config.stoneReadyConfirmations {
-                        State.stoneGoneObserved := true
-                        WriteDiagnostic("attempt=" State.attempts
-                            " BG_CYCLE_RESYNC elapsed=" elapsedSinceClick)
-                    } else {
-                        State.statusLabel.Text := "●  石を安全に再同期中"
-                        ScheduleNext(expectedGeneration, Config.stoneProbeRetryMs)
-                        return
-                    }
-                } else {
-                    State.stoneReadyVotes := 0
-                    State.stoneAbsentVotes := found ? 0 : State.stoneAbsentVotes + 1
-                    if State.stoneAbsentVotes >= Config.stoneGoneConfirmations {
-                        State.stoneGoneObserved := true
-                        State.statusLabel.Text := "●  石の再出現を待っています"
-                        WriteDiagnostic("attempt=" State.attempts " BG_GONE_CONFIRMED")
-                    } else {
-                        State.statusLabel.Text := "●  採掘完了を確認中"
-                    }
-                    ScheduleNext(expectedGeneration, Config.stoneProbeRetryMs)
-                    return
-                }
-            }
-
-            if !found {
-                State.stoneReadyVotes := 0
-                State.statusLabel.Text := "●  石の再出現を待っています"
-                ScheduleNext(expectedGeneration, Config.stoneProbeRetryMs)
-                return
-            }
-
-            State.stoneReadyVotes += 1
-            if State.stoneReadyVotes < Config.stoneReadyConfirmations {
-                State.statusLabel.Text := "●  石の再出現を確認中"
-                ScheduleNext(expectedGeneration, Config.stoneProbeRetryMs)
-                return
-            }
-            WriteDiagnostic("attempt=" State.attempts " BG_RESPAWN_CONFIRMED")
-        }
-
-        State.statusLabel.Text := "●  採掘しています"
-        clickRequestedAt := MonotonicMs()
-        clickResult := RunBackgroundBridgeCancelable(expectedGeneration, "try-mining")
-        if !IsCurrentRun(expectedGeneration)
-            return
-        if clickResult != "CLICKED MINE" {
-            State.statusLabel.Text := clickResult = "MISSING MINE"
-                ? "●  採掘ボタンを待っています"
-                : "●  FiveM内部UIへ再接続中"
-            WriteDiagnostic("attempt=" State.attempts " BG_TRY=" clickResult)
-            ScheduleNext(expectedGeneration, Config.notFoundRetryMs)
-            return
-        }
-        clickIssued := true
-        WriteDiagnostic("attempt=" State.attempts " BG_CLICKED")
-    } catch as err {
-        WriteDiagnostic("attempt=" State.attempts " BG_ERROR=" err.Message)
-        if IsCurrentRun(expectedGeneration) {
-            State.statusLabel.Text := "●  バックグラウンド接続を再試行中"
-            ScheduleNext(expectedGeneration, Config.notFoundRetryMs)
-        }
-    } finally {
-        if clickIssued && IsCurrentRun(expectedGeneration) {
-            State.successes += 1
-            State.waitingForStone := true
-            State.stoneGoneObserved := false
-            State.stoneAbsentVotes := 0
-            State.stoneReadyVotes := 0
-            State.lastMineAt := MonotonicMs()
-            State.countLabel.Text := "採掘回数`n" State.successes
-            State.statusLabel.Text := "●  採掘完了を待っています"
-            ScheduleWorkCooldown(expectedGeneration, State.lastMineAt,
-                Config.miningCompleteWaitMs)
-        }
+    ; bridgeが石の再出現を同じセッションで待ってから原子的にクリックします。
+    ; 旧来の350ms probe・消失3票・再出現2票・固定5.2秒待機は使いません。
+    State.statusLabel.Text := "●  採掘ボタンを待っています"
+    clickResult := RunBackgroundBridgeCancelable(expectedGeneration,
+        "try-mining", State.serverEpoch)
+    if !IsCurrentRun(expectedGeneration)
+        return
+    WriteDiagnostic("attempt=" State.attempts " BG_TRY=" clickResult)
+    if IsActionCompletionBridgeResult(clickResult, "mining") {
+        BeginActionCompletionWait("mining")
+        WaitPendingBackgroundActionCompletion(expectedGeneration, clickResult)
+        return
     }
+    if clickResult = "CLICKED MINE" {
+        BeginActionCompletionWait("mining", true)
+        WaitPendingBackgroundActionCompletion(expectedGeneration)
+        return
+    }
+    if clickResult = "UNCERTAIN MINE" {
+        BeginActionCompletionWait("mining", true)
+        WaitPendingBackgroundActionCompletion(expectedGeneration)
+        return
+    }
+    if clickResult = "ERROR SERVER_SESSION_CHANGED" {
+        StopAutomationWithFault(
+            "サーバー再起動または再接続を検知したため自動停止しました")
+        return
+    }
+    if clickResult != "MISSING MINE" {
+        StopAutomationWithFault(
+            "採掘クリックの結果を確認できないため安全停止しました")
+        return
+    }
+    State.statusLabel.Text := "●  採掘ボタンを待っています"
+    ScheduleNext(expectedGeneration, Config.notFoundRetryMs)
 }
 
 RunBackgroundBridge(mode, extra1 := "", extra2 := "") {
@@ -5663,11 +5671,12 @@ RunBackgroundBridgeCancelable(expectedGeneration, mode, bridgeArgs*) {
             } else {
                 timeoutMs := Min(125000, Max(9000, routeDurationMs + 5000))
             }
-        } else if mode = "try-washing" {
-            ; bridge側が再出現を最大7秒監視し、使用可能になった瞬間に押します。
-            ; helper起動・CDP接続・最終入力解放ぶんを含めて余裕を持たせます。
-            timeoutMs := 15000
-        } else if mode = "wait-wash-completion" {
+        } else if mode = "try-washing" || mode = "try-mining"
+            || mode = "try-gold" {
+            ; target待機・クリック・進捗完了を同じhelperで連続監視します。
+            ; 石洗いの異常時上限19.5秒も含め、プロセスを途中で切らない余裕を持たせます。
+            timeoutMs := 52000
+        } else if mode = "wait-action-completion" {
             timeoutMs := 35000
         } else if mode = "companion-command" && bridgeArgs.Length >= 1 {
             companionCommand := bridgeArgs[1]

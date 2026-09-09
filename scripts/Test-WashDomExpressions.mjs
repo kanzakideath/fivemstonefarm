@@ -236,8 +236,9 @@ function targetFixture(options = {}) {
     'DOM order must provide a deterministic final tie-break.');
 }
 
-function progressFixture({ animated = true, visible = true, paused = false,
-  includeToast = false } = {}) {
+function progressFixture(label, { animated = true, visible = true, paused = false,
+  includeToast = false, animationName = 'progress-bar',
+  animationPlayState } = {}) {
   const body = new FakeElement('body', {
     rect: { left: 0, top: 0, width: 1000, height: 800 },
   });
@@ -245,34 +246,57 @@ function progressFixture({ animated = true, visible = true, paused = false,
     const bar = new FakeElement('div', {
       rect: { left: 325, top: 700, width: 350, height: 45 },
       style: {
-        animationName: 'progress-bar',
-        animationPlayState: paused ? 'paused' : 'running',
+        animationName,
+        animationPlayState: animationPlayState || (paused ? 'paused' : 'running'),
         display: visible ? 'block' : 'none',
       },
     });
     bar.append(new FakeElement('span', {
-      text: '石を洗っています..',
+      text: `${label}..`,
       rect: { left: 390, top: 708, width: 220, height: 28 },
     }));
     body.append(bar);
   }
   if (includeToast) {
     body.append(new FakeElement('div', {
-      text: '石を洗っています.. 通知',
+      text: `${label}.. 通知`,
       rect: { left: 20, top: 20, width: 250, height: 40 },
     }));
   }
   return createDocument(body);
 }
 
-assert(evaluate(expressions.progress, progressFixture()) === true,
-  'A visible active ox_lib progress bar must be detected.');
-assert(evaluate(expressions.progress, progressFixture({ visible: false })) === false,
-  'A hidden progress bar must not be detected.');
-assert(evaluate(expressions.progress, progressFixture({ paused: true })) === false,
-  'A paused progress bar must not be accepted as active work.');
-assert(evaluate(expressions.progress,
-  progressFixture({ animated: false, includeToast: true })) === false,
-  'Matching toast text must not impersonate the progress component.');
+const workProgressCases = [
+  ['progressMine', '採掘中'],
+  ['progressWash', '石を洗っています'],
+  ['progressGold', '砂金採りをしています'],
+];
 
-console.log('Wash DOM expression tests passed.');
+for (const [expressionName, label] of workProgressCases) {
+  const expression = expressions[expressionName];
+  assert(evaluate(expression, progressFixture(label)) === true,
+    `${label}: a visible running ox_lib progress bar must be detected.`);
+  assert(evaluate(expression, progressFixture(label, { visible: false })) === false,
+    `${label}: a hidden progress bar must not be detected.`);
+  assert(evaluate(expression, progressFixture(label, { paused: true })) === false,
+    `${label}: a paused progress bar must not be accepted as active work.`);
+  assert(evaluate(expression,
+    progressFixture(label, { animated: false, includeToast: true })) === false,
+    `${label}: matching toast text must not impersonate the progress component.`);
+  assert(evaluate(expression, progressFixture(label, {
+    animationName: 'pulse, progress-bar',
+    animationPlayState: 'running, paused',
+  })) === false,
+  `${label}: the play state paired with progress-bar must be running.`);
+  assert(evaluate(expression, progressFixture(label, {
+    animationName: 'pulse, progress-bar',
+    animationPlayState: 'paused, running',
+  })) === true,
+  `${label}: a running progress-bar in a multi-animation list must be detected.`);
+  for (const [, otherLabel] of workProgressCases.filter((entry) => entry[1] !== label)) {
+    assert(evaluate(expression, progressFixture(otherLabel)) === false,
+      `${label}: another action's progress must not be accepted.`);
+  }
+}
+
+console.log('Work DOM expression tests passed.');

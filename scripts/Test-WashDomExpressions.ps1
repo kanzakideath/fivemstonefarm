@@ -18,17 +18,28 @@ $assembly = [Reflection.Assembly]::LoadFile($resolvedBridge)
 $bridgeType = $assembly.GetType('CdpBridge', $true)
 $mainMethod = $bridgeType.GetMethod('Main', [Reflection.BindingFlags]'Public,Static')
 $targetMethod = $bridgeType.GetMethod('WashTargetExpression', $bindingFlags)
-$progressMethod = $bridgeType.GetMethod('WashProgressExpression', $bindingFlags)
+$progressMethod = $bridgeType.GetMethod('WorkProgressExpression', $bindingFlags)
+$actionType = $assembly.GetType('CdpBridge+WorkAction', $true)
 if (-not $mainMethod -or -not $targetMethod -or -not $progressMethod) {
-    throw 'The wash DOM expression methods were not found in the bridge.'
+    throw 'The work DOM expression methods were not found in the bridge.'
 }
 
-# Mutating wash operations must be tied to the captured three-frame epoch.
+# Every mutating work operation and completion monitor must be tied to the
+# captured target/inventory/progress three-frame epoch.
 foreach ($invalidCall in @(
+    [string[]]@('try-mining', 'unused-result.txt'),
     [string[]]@('try-washing', 'unused-result.txt'),
+    [string[]]@('try-gold', 'unused-result.txt'),
+    [string[]]@('click-mining', 'unused-result.txt'),
     [string[]]@('wait-wash-completion', 'unused-result.txt'),
     [string[]]@('click-washing', 'unused-result.txt'),
-    [string[]]@('try-washing', 'unused-result.txt', 'invalid-epoch')
+    [string[]]@('click-gold', 'unused-result.txt'),
+    [string[]]@('wait-action-completion', 'unused-result.txt'),
+    [string[]]@('wait-action-completion', 'unused-result.txt', 'ore', 'invalid-epoch'),
+    [string[]]@('wait-action-completion', 'unused-result.txt', 'mine', 'invalid-epoch'),
+    [string[]]@('try-mining', 'unused-result.txt', 'invalid-epoch'),
+    [string[]]@('try-washing', 'unused-result.txt', 'invalid-epoch'),
+    [string[]]@('try-gold', 'unused-result.txt', 'invalid-epoch')
 )) {
     $exitCode = [int]$mainMethod.Invoke($null, [object[]]@(,$invalidCall))
     if ($exitCode -ne 64) {
@@ -42,7 +53,12 @@ try {
     $payload = [ordered]@{
         probe = [string]$targetMethod.Invoke($null, [object[]]@($false))
         click = [string]$targetMethod.Invoke($null, [object[]]@($true))
-        progress = [string]$progressMethod.Invoke($null, $null)
+        progressMine = [string]$progressMethod.Invoke($null, [object[]]@(
+            [Enum]::Parse($actionType, 'Mine')))
+        progressWash = [string]$progressMethod.Invoke($null, [object[]]@(
+            [Enum]::Parse($actionType, 'Wash')))
+        progressGold = [string]$progressMethod.Invoke($null, [object[]]@(
+            [Enum]::Parse($actionType, 'Gold')))
     } | ConvertTo-Json -Compress
     [IO.File]::WriteAllText($payloadPath, $payload, [Text.UTF8Encoding]::new($false))
 

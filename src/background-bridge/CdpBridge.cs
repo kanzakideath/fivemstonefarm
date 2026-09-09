@@ -21,12 +21,10 @@ internal static class CdpBridge
     private const string CompanionFramePart = "cfx-nui-ai_miner_companion/ui/index.html";
     private const string CompanionProtocol = "ai-miner-companion";
     private const string CompanionResource = "ai_miner_companion";
-    private const string Capabilities = "CAPS 10 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HOTBAR INVENTORYKEY HEALTH COMPANION WASHWAIT";
-    private const int WashProgressStartMilliseconds = 3000;
-    private const int WashProgressTotalMilliseconds = 19500;
-    private const int WashProgressPollMilliseconds = 70;
-    private const int WashProgressMinimumActiveMilliseconds = 4000;
-    private const int WashProgressStableAbsentMilliseconds = 500;
+    private const string Capabilities = "CAPS 11 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HOTBAR INVENTORYKEY HEALTH COMPANION ACTIONWAIT";
+    private const int WorkProgressPollMilliseconds = 70;
+    private const int WorkProgressStableAbsentMilliseconds = 280;
+    private const int BundledProgressSessionMilliseconds = 40000;
     private const int MaximumRouteSteps = 240;
     private const int MaximumRouteMilliseconds = 90000;
     private const int RouteHealthIntervalMilliseconds = 2500;
@@ -60,19 +58,20 @@ internal static class CdpBridge
         string mode = args[0];
         bool twoArgumentMode = args.Length == 2 && (mode == "capabilities"
             || mode == "self-test"
-            || mode == "probe-mining" || mode == "click-mining"
+            || mode == "probe-mining"
             || mode == "probe-washing"
-            || mode == "probe-gold" || mode == "click-gold"
+            || mode == "probe-gold"
             || mode == "probe-storage" || mode == "click-storage"
             || mode == "inventory-snapshot" || mode == "capture-storage"
             || mode == "health"
             || mode == "companion-status"
             || mode == "close-inventory"
-            || mode == "try-mining" || mode == "try-probe-mining"
-            || mode == "try-gold"
+            || mode == "try-probe-mining"
             || mode == "activate" || mode == "deactivate"
             || mode == "deactivate-29200" || mode == "deactivate-29300");
-        bool washTryMode = args.Length == 3 && mode == "try-washing";
+        bool actionTryMode = args.Length == 3 && (mode == "try-mining"
+            || mode == "try-washing" || mode == "try-gold");
+        bool actionCompletionMode = args.Length == 4 && mode == "wait-action-completion";
         bool washCompletionMode = args.Length == 3 && mode == "wait-wash-completion";
         bool nudgeMode = (args.Length == 4 || args.Length == 5) && mode == "nudge-forward";
         bool routeMode = (args.Length == 4 || args.Length == 5) && mode == "play-route";
@@ -85,7 +84,7 @@ internal static class CdpBridge
         bool cancelOperationMode = args.Length == 3 && mode == "cancel-operation";
         bool companionCommandMode = (args.Length == 3 || args.Length == 4)
             && mode == "companion-command";
-        if (!twoArgumentMode && !washTryMode && !washCompletionMode
+        if (!twoArgumentMode && !actionTryMode && !actionCompletionMode && !washCompletionMode
             && !nudgeMode && !routeMode && !routeHealthMode && !viewMode
             && !hotbarMode && !inventoryKeyMode
             && !testDeactivateMode && !depositMode && !cancelOperationMode
@@ -221,18 +220,27 @@ internal static class CdpBridge
                     throw new InvalidOperationException("INPUT_RELEASE_UNAVAILABLE");
                 result = "RELEASED";
             }
-            else if (mode.StartsWith("try-", StringComparison.Ordinal))
+            else if (actionTryMode || mode == "try-probe-mining")
             {
-                if (washTryMode && !IsValidServerEpoch(args[2]))
+                if (actionTryMode && !IsValidServerEpoch(args[2]))
                     return 64;
-                result = TryActionAsync(mode, washTryMode ? args[2] : null)
-                    .GetAwaiter().GetResult();
+                result = actionTryMode
+                    ? TryAndWaitActionAsync(mode, args[2]).GetAwaiter().GetResult()
+                    : TryActionAsync(mode, null, null).GetAwaiter().GetResult();
+            }
+            else if (actionCompletionMode)
+            {
+                WorkAction action;
+                if (!TryParseWorkAction(args[2], out action)
+                    || !IsValidServerEpoch(args[3]))
+                    return 64;
+                result = WaitActionCompletionAsync(action, args[3]).GetAwaiter().GetResult();
             }
             else if (washCompletionMode)
             {
                 if (!IsValidServerEpoch(args[2]))
                     return 64;
-                result = WaitWashCompletionAsync(args[2]).GetAwaiter().GetResult();
+                result = WaitLegacyWashCompletionAsync(args[2]).GetAwaiter().GetResult();
             }
             else if (mode == "inventory-snapshot")
             {
@@ -297,11 +305,28 @@ internal static class CdpBridge
             || result.StartsWith("HEALTH READY ", StringComparison.Ordinal)
             || result.StartsWith("COMPANION 1 ", StringComparison.Ordinal)
             || result.StartsWith("COMPANION_DONE ", StringComparison.Ordinal)
+            || IsActionCompletionResult(result)
             || IsWashCompletionResult(result)
             || result.StartsWith("SNAPSHOT ", StringComparison.Ordinal)
             || result.StartsWith("STORAGE ", StringComparison.Ordinal)
             || result.StartsWith("DEPOSITED ", StringComparison.Ordinal)
             || result == "CLOSED" || result == "RELEASED" || result == "CANCELLED";
+    }
+
+    private static bool IsActionCompletionResult(string result)
+    {
+        if (String.IsNullOrEmpty(result))
+            return false;
+        string[] parts = result.Split(' ');
+        if (parts.Length != 3 || parts[0] != "ACTION_COMPLETED")
+            return false;
+        WorkAction action;
+        int elapsedMilliseconds;
+        return TryParseWorkActionToken(parts[1], out action)
+            && Int32.TryParse(parts[2], NumberStyles.None, CultureInfo.InvariantCulture,
+                out elapsedMilliseconds)
+            && elapsedMilliseconds >= 0
+            && elapsedMilliseconds <= 30000;
     }
 
     private static bool IsWashCompletionResult(string result)
@@ -318,6 +343,77 @@ internal static class CdpBridge
             && elapsedMilliseconds <= 24000;
     }
 
+    private static bool TryParseWorkAction(string value, out WorkAction action)
+    {
+        if (value == "mine")
+        {
+            action = WorkAction.Mine;
+            return true;
+        }
+        if (value == "wash")
+        {
+            action = WorkAction.Wash;
+            return true;
+        }
+        if (value == "gold")
+        {
+            action = WorkAction.Gold;
+            return true;
+        }
+        action = WorkAction.Mine;
+        return false;
+    }
+
+    private static bool TryParseWorkActionToken(string value, out WorkAction action)
+    {
+        if (value == "MINE")
+        {
+            action = WorkAction.Mine;
+            return true;
+        }
+        if (value == "WASH")
+        {
+            action = WorkAction.Wash;
+            return true;
+        }
+        if (value == "GOLD")
+        {
+            action = WorkAction.Gold;
+            return true;
+        }
+        action = WorkAction.Mine;
+        return false;
+    }
+
+    private static string WorkActionToken(WorkAction action)
+    {
+        return action == WorkAction.Wash ? "WASH"
+            : action == WorkAction.Gold ? "GOLD" : "MINE";
+    }
+
+    private static string WorkProgressPrefix(WorkAction action)
+    {
+        return action == WorkAction.Wash ? "石を洗っています"
+            : action == WorkAction.Gold ? "砂金採りをしています" : "採掘中";
+    }
+
+    private static int WorkProgressStartMilliseconds(WorkAction action)
+    {
+        return action == WorkAction.Wash ? 3000 : 2500;
+    }
+
+    private static int WorkProgressTotalMilliseconds(WorkAction action)
+    {
+        return action == WorkAction.Wash ? 19500
+            : action == WorkAction.Gold ? 14000 : 12000;
+    }
+
+    private static int WorkProgressMinimumActiveMilliseconds(WorkAction action)
+    {
+        return action == WorkAction.Wash ? 4000
+            : action == WorkAction.Gold ? 3000 : 2500;
+    }
+
     private static string RunSelfTest()
     {
         List<RouteStep> route = ParseRoute("150:65,25:0,150:136");
@@ -332,26 +428,55 @@ internal static class CdpBridge
         Dictionary<string, int> exponentBaseline = ParseBaseline(
             "0004.ore." + EncodeBase64Url(exponentMetadata) + "=2");
         string serverEpoch = EncodeBase64Url(
-            "target-frame\ninventory-frame\nprogress-frame");
+            "target-frame\ntarget-loader\ninventory-frame\ninventory-loader\nprogress-frame\nprogress-loader");
+        string[] serverEpochFrames;
+        bool serverEpochDecoded = TryDecodeServerEpoch(serverEpoch, out serverEpochFrames);
+        WorkAction tryMineAction;
+        WorkAction tryWashAction;
+        WorkAction tryGoldAction;
+        WorkAction invalidTryAction;
+        bool tryMineMapped = TryGetWorkActionForTryMode("try-mining", out tryMineAction);
+        bool tryWashMapped = TryGetWorkActionForTryMode("try-washing", out tryWashAction);
+        bool tryGoldMapped = TryGetWorkActionForTryMode("try-gold", out tryGoldAction);
+        bool invalidTryMapped = TryGetWorkActionForTryMode("try-probe-mining", out invalidTryAction);
+        const long timingStart = 1234;
+        long timingFiveSeconds = timingStart + Stopwatch.Frequency * 5;
+        long timingOverLimit = timingStart + Stopwatch.Frequency * 31;
+        string rewrittenMineCompletion = RewriteBundledActionCompletionElapsed(
+            "ACTION_COMPLETED MINE 4100", WorkAction.Mine,
+            timingStart, timingFiveSeconds);
+        string preservedCompletionError = RewriteBundledActionCompletionElapsed(
+            "ERROR MINE_NOT_STARTED", WorkAction.Mine,
+            timingStart, timingFiveSeconds);
+        string overLimitCompletion = RewriteBundledActionCompletionElapsed(
+            "ACTION_COMPLETED GOLD 6000", WorkAction.Gold,
+            timingStart, timingOverLimit);
+        string invalidTimingCompletion = RewriteBundledActionCompletionElapsed(
+            "ACTION_COMPLETED WASH 9000", WorkAction.Wash,
+            -1, timingFiveSeconds);
         var routeCommand = new StringBuilder(InputReleaseCommand());
         AppendRoutePresses(routeCommand, 65);
         var viewCommand = new StringBuilder(ViewReleaseCommand());
         AppendViewPresses(viewCommand, 10);
         string inventorySnapshotExpression = InventorySnapshotExpression();
-        string washProgressExpression = WashProgressExpression();
+        string mineProgressExpression = WorkProgressExpression(WorkAction.Mine);
+        string washProgressExpression = WorkProgressExpression(WorkAction.Wash);
+        string goldProgressExpression = WorkProgressExpression(WorkAction.Gold);
         string washProbeExpression = WashTargetExpression(false);
         string washClickExpression = WashTargetExpression(true);
         string strictProbeExpression = ProbeExpression("砂金採りトレイ", true);
         string strictClickExpression = ClickExpression("鉱石を採掘する", false);
-        int washWaitingState = AdvanceWashProgressState(0, false);
-        int washFlickerState = AdvanceWashProgressState(washWaitingState, true);
-        int washFlickerResetState = AdvanceWashProgressState(washFlickerState, false);
-        int washFirstVisibleState = AdvanceWashProgressState(washFlickerResetState, true);
-        int washArmedState = AdvanceWashProgressState(washFirstVisibleState, true);
-        int washFirstAbsentState = AdvanceWashProgressState(washArmedState, false);
-        int washActiveResetState = AdvanceWashProgressState(washFirstAbsentState, true);
-        int washSecondFirstAbsentState = AdvanceWashProgressState(washActiveResetState, false);
-        int washCompletedState = AdvanceWashProgressState(washSecondFirstAbsentState, false);
+        string storageProbeExpression = StorageTargetExpression(false);
+        string storageClickExpression = StorageTargetExpression(true);
+        int progressWaitingState = AdvanceWorkProgressState(0, false);
+        int progressFlickerState = AdvanceWorkProgressState(progressWaitingState, true);
+        int progressFlickerResetState = AdvanceWorkProgressState(progressFlickerState, false);
+        int progressFirstVisibleState = AdvanceWorkProgressState(progressFlickerResetState, true);
+        int progressArmedState = AdvanceWorkProgressState(progressFirstVisibleState, true);
+        int progressFirstAbsentState = AdvanceWorkProgressState(progressArmedState, false);
+        int progressActiveResetState = AdvanceWorkProgressState(progressFirstAbsentState, true);
+        int progressSecondFirstAbsentState = AdvanceWorkProgressState(progressActiveResetState, false);
+        int progressCompletedState = AdvanceWorkProgressState(progressSecondFirstAbsentState, false);
         string staleWeightSnapshot = FormatInventorySnapshotResult("SNAPSHOT_DETAIL "
             + "{\"weight\":42,\"max\":1000,\"used\":2,\"slots\":5,\"items\":["
             + "{\"slot\":1,\"name\":\"ore\",\"count\":3,\"meta\":\"{}\"},"
@@ -462,17 +587,19 @@ internal static class CdpBridge
             || viewCommand.ToString().IndexOf(";+look_right", StringComparison.Ordinal) < 0
             || inventorySnapshotExpression.IndexOf("left.weight", StringComparison.Ordinal) >= 0
             || inventorySnapshotExpression.IndexOf("weight:whole(calculatedWeight)", StringComparison.Ordinal) < 0
-            || washWaitingState != 0 || washFlickerState != 1 || washFlickerResetState != 0
-            || washFirstVisibleState != 1 || washArmedState != 2 || washFirstAbsentState != 3
-            || washActiveResetState != 2 || washSecondFirstAbsentState != 3 || washCompletedState != 4
-            || WashProgressStartTimedOut(0, 2, 3000)
-            || WashProgressStartTimedOut(1, 3, 3000)
-            || WashProgressStartTimedOut(0, 3, 2999)
-            || !WashProgressStartTimedOut(0, 3, 3000)
-            || WashProgressCompletionReady(1000, 5000, 5499)
-            || WashProgressCompletionReady(1600, 5000, 5500)
-            || !WashProgressCompletionReady(1000, 5000, 5500)
+            || progressWaitingState != 0 || progressFlickerState != 1 || progressFlickerResetState != 0
+            || progressFirstVisibleState != 1 || progressArmedState != 2 || progressFirstAbsentState != 3
+            || progressActiveResetState != 2 || progressSecondFirstAbsentState != 3 || progressCompletedState != 4
+            || WorkProgressStartTimedOut(WorkAction.Wash, 0, 2, 3000)
+            || WorkProgressStartTimedOut(WorkAction.Wash, 1, 3, 3000)
+            || WorkProgressStartTimedOut(WorkAction.Wash, 0, 3, 2999)
+            || !WorkProgressStartTimedOut(WorkAction.Wash, 0, 3, 3000)
+            || WorkProgressCompletionReady(WorkAction.Wash, 1000, 5000, 5279)
+            || WorkProgressCompletionReady(WorkAction.Wash, 1600, 5000, 5280)
+            || !WorkProgressCompletionReady(WorkAction.Wash, 1000, 5000, 5280)
+            || mineProgressExpression.IndexOf("採掘中", StringComparison.Ordinal) < 0
             || washProgressExpression.IndexOf("石を洗っています", StringComparison.Ordinal) < 0
+            || goldProgressExpression.IndexOf("砂金採りをしています", StringComparison.Ordinal) < 0
             || washProgressExpression.IndexOf("startsWith(q)", StringComparison.Ordinal) < 0
             || washProgressExpression.IndexOf("nodes.some", StringComparison.Ordinal) < 0
             || washProgressExpression.IndexOf("animationName", StringComparison.Ordinal) < 0
@@ -488,7 +615,21 @@ internal static class CdpBridge
             || washClickExpression.IndexOf("a.distance-b.distance||a.order-b.order", StringComparison.Ordinal) < 0
             || washClickExpression.IndexOf("choice.hit.click();return true", StringComparison.Ordinal) < 0
             || strictProbeExpression.IndexOf("matches.length!==1", StringComparison.Ordinal) < 0
+            || strictProbeExpression.IndexOf("!shown(root)", StringComparison.Ordinal) < 0
+            || strictProbeExpression.IndexOf("visible(e)", StringComparison.Ordinal) < 0
             || strictClickExpression.IndexOf("matches.length!==1", StringComparison.Ordinal) < 0
+            || strictClickExpression.IndexOf("!shown(root)", StringComparison.Ordinal) < 0
+            || storageProbeExpression.IndexOf("seen=new Set()", StringComparison.Ordinal) < 0
+            || storageProbeExpression.IndexOf("!shown(root)", StringComparison.Ordinal) < 0
+            || storageProbeExpression.IndexOf("hit.click()", StringComparison.Ordinal) >= 0
+            || storageClickExpression.IndexOf("hit.click();return 'CLICKED'", StringComparison.Ordinal) < 0
+            || !IsSuccess("ACTION_COMPLETED MINE 5100")
+            || !IsSuccess("ACTION_COMPLETED WASH 9200")
+            || !IsSuccess("ACTION_COMPLETED GOLD 6100")
+            || IsSuccess("ACTION_COMPLETED ORE 5100")
+            || IsSuccess("ACTION_COMPLETED MINE -1")
+            || IsSuccess("ACTION_COMPLETED MINE 30001")
+            || IsSuccess("ACTION_COMPLETED MINE 5100 extra")
             || !IsSuccess("WASH_COMPLETED 9750")
             || IsSuccess("WASH_COMPLETED ")
             || IsSuccess("WASH_COMPLETED -1")
@@ -502,11 +643,43 @@ internal static class CdpBridge
             || largeToken.Length <= 8192 || largeToken.Length > MaximumMetadataTokenLength
             || !largeBaseline.TryGetValue("3\nore\n" + largeMetadata, out count) || count != 7
             || !exponentBaseline.TryGetValue("4\nore\n" + exponentMetadata, out count) || count != 2
-            || !IsValidServerEpoch(serverEpoch)
+            || !IsValidServerEpoch(serverEpoch) || !serverEpochDecoded
+            || serverEpochFrames == null || serverEpochFrames.Length != 6
+            || serverEpochFrames[0] != "target-frame"
+            || serverEpochFrames[1] != "target-loader"
+            || serverEpochFrames[2] != "inventory-frame"
+            || serverEpochFrames[3] != "inventory-loader"
+            || serverEpochFrames[4] != "progress-frame"
+            || serverEpochFrames[5] != "progress-loader"
+            || !ServerFrameEpochMatches(serverEpochFrames,
+                new[] { "target-frame", "target-loader" },
+                new[] { "inventory-frame", "inventory-loader" },
+                new[] { "progress-frame", "progress-loader" })
+            || ServerFrameEpochMatches(serverEpochFrames,
+                new[] { "target-frame", "target-loader" },
+                new[] { "inventory-frame", "inventory-loader-2" },
+                new[] { "progress-frame", "progress-loader" })
+            || ServerFrameEpochMatches(serverEpochFrames,
+                new[] { "target-frame", "target-loader" },
+                new[] { "inventory-frame", "inventory-loader" },
+                new[] { "progress-frame-2", "progress-loader" })
+            || !tryMineMapped || tryMineAction != WorkAction.Mine
+            || !tryWashMapped || tryWashAction != WorkAction.Wash
+            || !tryGoldMapped || tryGoldAction != WorkAction.Gold
+            || invalidTryMapped
+            || rewrittenMineCompletion != "ACTION_COMPLETED MINE 5000"
+            || preservedCompletionError != "ERROR MINE_NOT_STARTED"
+            || overLimitCompletion != "ERROR GOLD_COMPLETION_TIMEOUT"
+            || invalidTimingCompletion != "ERROR ACTION_TIMING_UNAVAILABLE"
+            || BundledProgressSessionMilliseconds < 35000
             || IsValidServerEpoch(EncodeBase64Url("target-frame"))
             || IsValidServerEpoch(EncodeBase64Url("target\ninventory"))
-            || IsValidServerEpoch(EncodeBase64Url("target\ninventory\nprogress\nextra"))
-            || IsValidServerEpoch(EncodeBase64Url("target\r\ninventory\nprogress"))
+            || IsValidServerEpoch(EncodeBase64Url(
+                "target\ntarget-loader\ninventory\ninventory-loader\nprogress"))
+            || IsValidServerEpoch(EncodeBase64Url(
+                "target\ntarget-loader\ninventory\ninventory-loader\nprogress\nprogress-loader\nextra"))
+            || IsValidServerEpoch(EncodeBase64Url(
+                "target\r\ntarget-loader\ninventory\ninventory-loader\nprogress\nprogress-loader"))
             || IsValidServerEpoch("invalid+epoch")
             || !BaselineMetadataIsRejected("not-json")
             || DecodeIdentifier(EncodeIdentifier("trunk-test")) != "trunk-test"
@@ -683,84 +856,151 @@ internal static class CdpBridge
         }
     }
 
-    private static async Task<string> WaitWashCompletionAsync(string expectedEpoch)
+    private static async Task<string> WaitLegacyWashCompletionAsync(string expectedEpoch)
     {
-        var stopwatch = new Stopwatch();
+        string result = await WaitActionCompletionAsync(
+            WorkAction.Wash, expectedEpoch).ConfigureAwait(false);
+        const string prefix = "ACTION_COMPLETED WASH ";
+        return result.StartsWith(prefix, StringComparison.Ordinal)
+            ? "WASH_COMPLETED " + result.Substring(prefix.Length) : result;
+    }
+
+    private static async Task<string> WaitActionCompletionAsync(
+        WorkAction action, string expectedEpoch)
+    {
+        string actionToken = WorkActionToken(action);
+        int totalMilliseconds = WorkProgressTotalMilliseconds(action);
+        string[] expectedFrames;
+        if (!TryDecodeServerEpoch(expectedEpoch, out expectedFrames))
+            return "ERROR SERVER_SESSION_CHANGED";
+        CdpSession progressSession = null;
+        bool openFailed = false;
+        try
+        {
+            progressSession = await CdpSession.OpenAsync(
+                ProgressFramePart, TimeSpan.FromMilliseconds(totalMilliseconds + 5000),
+                expectedFrames).ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            openFailed = true;
+        }
+        if (openFailed || progressSession == null)
+            return await CompletionFailureAfterFullEpochCheckAsync(expectedEpoch,
+                actionToken + "_PROGRESS_UNAVAILABLE").ConfigureAwait(false);
+        using (progressSession)
+        {
+            return await MonitorActionCompletionAsync(action, expectedEpoch,
+                progressSession, Stopwatch.GetTimestamp()).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task<string> MonitorActionCompletionAsync(WorkAction action,
+        string expectedEpoch, CdpSession progressSession, long originTimestamp)
+    {
         int progressState = 0;
         int idleAbsentSamples = 0;
         long progressArmedAt = -1;
         long progressAbsentAt = -1;
+        string actionToken = WorkActionToken(action);
+        int totalMilliseconds = WorkProgressTotalMilliseconds(action);
         bool monitorFailed = false;
+        string failureToken = null;
         try
         {
-            if (!await ServerEpochMatchesAsync(expectedEpoch).ConfigureAwait(false))
-                return "ERROR SERVER_SESSION_CHANGED";
-            using (var session = await CdpSession.OpenAsync(
-                ProgressFramePart, TimeSpan.FromMilliseconds(24000)).ConfigureAwait(false))
+            int elapsedMilliseconds = ElapsedMillisecondsBetweenTimestamps(
+                originTimestamp, Stopwatch.GetTimestamp());
+            while (elapsedMilliseconds >= 0 && elapsedMilliseconds < totalMilliseconds)
             {
-                // Connection/setup time must not consume the three-second start window.
-                stopwatch.Start();
-                while (stopwatch.ElapsedMilliseconds < WashProgressTotalMilliseconds)
+                bool visible = await progressSession.EvaluateBooleanAsync(
+                    WorkProgressExpression(action), false).ConfigureAwait(false);
+                elapsedMilliseconds = ElapsedMillisecondsBetweenTimestamps(
+                    originTimestamp, Stopwatch.GetTimestamp());
+                if (elapsedMilliseconds < 0)
                 {
-                    long elapsedMilliseconds = stopwatch.ElapsedMilliseconds;
-                    bool visible = await session.EvaluateBooleanAsync(
-                        WashProgressExpression(), false).ConfigureAwait(false);
-                    int previousState = progressState;
-                    progressState = AdvanceWashProgressState(progressState, visible);
-                    if (!visible && progressState == 0)
-                        idleAbsentSamples += 1;
-                    else
-                        idleAbsentSamples = 0;
-                    if (progressState == 2 && previousState < 2)
-                        progressArmedAt = elapsedMilliseconds;
-                    if (visible)
-                    {
-                        progressAbsentAt = -1;
-                    }
-                    else if (progressState == 3 && previousState == 2)
-                    {
-                        progressAbsentAt = elapsedMilliseconds;
-                    }
-                    if (progressState == 4)
-                    {
-                        if (WashProgressCompletionReady(progressArmedAt,
-                            progressAbsentAt, elapsedMilliseconds))
-                        {
-                            if (!await ServerEpochMatchesAsync(expectedEpoch).ConfigureAwait(false))
-                                return "ERROR SERVER_SESSION_CHANGED";
-                            return "WASH_COMPLETED "
-                                + elapsedMilliseconds.ToString(CultureInfo.InvariantCulture);
-                        }
-                        // Keep the stable-absence candidate alive until both time floors pass.
-                        progressState = 3;
-                    }
-                    // A first visible sample at the deadline still gets one poll to arm.
-                    // Only the fully idle state proves that progress never started.
-                    if (WashProgressStartTimedOut(progressState, idleAbsentSamples,
-                        stopwatch.ElapsedMilliseconds))
-                    {
-                        if (!await ServerEpochMatchesAsync(expectedEpoch).ConfigureAwait(false))
-                            return "ERROR SERVER_SESSION_CHANGED";
-                        return "ERROR WASH_NOT_STARTED";
-                    }
-
-                    await Task.Delay(WashProgressPollMilliseconds, session.Token).ConfigureAwait(false);
+                    monitorFailed = true;
+                    break;
                 }
+                int previousState = progressState;
+                progressState = AdvanceWorkProgressState(progressState, visible);
+                if (!visible && progressState == 0)
+                    idleAbsentSamples += 1;
+                else
+                    idleAbsentSamples = 0;
+                if (progressState == 2 && previousState < 2)
+                    progressArmedAt = elapsedMilliseconds;
+                if (visible)
+                {
+                    progressAbsentAt = -1;
+                }
+                else if (progressState == 3 && previousState == 2)
+                {
+                    progressAbsentAt = elapsedMilliseconds;
+                }
+                if (progressState == 4)
+                {
+                    if (WorkProgressCompletionReady(action, progressArmedAt,
+                        progressAbsentAt, elapsedMilliseconds))
+                    {
+                        if (!await progressSession.MatchesServerEpochAsync()
+                                .ConfigureAwait(false))
+                            return "ERROR SERVER_SESSION_CHANGED";
+                        return "ACTION_COMPLETED " + actionToken + " "
+                            + elapsedMilliseconds.ToString(CultureInfo.InvariantCulture);
+                    }
+                    // Preserve the candidate while the action-specific duration floor
+                    // or short anti-flicker absence window is still pending.
+                    progressState = 3;
+                }
+                // One visible sample at the deadline still receives another poll to arm.
+                // Only a fully idle state proves that this action never started.
+                if (WorkProgressStartTimedOut(action, progressState,
+                    idleAbsentSamples, elapsedMilliseconds))
+                {
+                    failureToken = actionToken + "_NOT_STARTED";
+                    break;
+                }
+
+                await Task.Delay(WorkProgressPollMilliseconds, progressSession.Token)
+                    .ConfigureAwait(false);
+                elapsedMilliseconds = ElapsedMillisecondsBetweenTimestamps(
+                    originTimestamp, Stopwatch.GetTimestamp());
             }
         }
         catch (Exception)
         {
-            // Re-check below after the failed/expired CDP session has been disposed.
             monitorFailed = true;
         }
-        if (!await ServerEpochMatchesAsync(expectedEpoch).ConfigureAwait(false))
-            return "ERROR SERVER_SESSION_CHANGED";
         if (monitorFailed)
-            return "ERROR WASH_PROGRESS_UNAVAILABLE";
-        return progressState < 2 ? "ERROR WASH_NOT_STARTED" : "ERROR WASH_COMPLETION_TIMEOUT";
+            failureToken = actionToken + "_PROGRESS_UNAVAILABLE";
+        else if (String.IsNullOrEmpty(failureToken))
+            failureToken = progressState < 2 ? actionToken + "_NOT_STARTED"
+                : actionToken + "_COMPLETION_TIMEOUT";
+        return await CompletionFailureAfterFullEpochCheckAsync(
+            expectedEpoch, failureToken).ConfigureAwait(false);
     }
 
-    private static async Task<string> TryActionAsync(string mode, string expectedEpoch)
+    private static async Task<string> CompletionFailureAfterFullEpochCheckAsync(
+        string expectedEpoch, string failureToken)
+    {
+        try
+        {
+            string healthResult = await HealthAsync().ConfigureAwait(false);
+            if (!String.Equals(healthResult, "HEALTH READY " + expectedEpoch,
+                    StringComparison.Ordinal))
+                return "ERROR SERVER_SESSION_CHANGED";
+        }
+        catch (Exception)
+        {
+            // A failed full-health probe cannot prove the old session is still current.
+            // Never turn that ambiguity into NOT_STARTED, because the caller may reclick.
+            return "ERROR SERVER_SESSION_CHANGED";
+        }
+        return "ERROR " + failureToken;
+    }
+
+    private static async Task<string> TryActionAsync(string mode, string expectedEpoch,
+        Action<long> clickDispatchObserver)
     {
         bool probeOnly = mode == "try-probe-mining";
         bool washingMode = mode == "try-washing";
@@ -769,15 +1009,25 @@ internal static class CdpBridge
         string actionToken = washingMode ? "WASH" : goldMode ? "GOLD" : "MINE";
         bool exactOnly = washingMode || goldMode;
         int port = 0;
-        bool washClickMayHaveBeenDispatched = false;
+        bool clickMayHaveBeenDispatched = false;
+        string expectedTargetFrameId = null;
+        string[] expectedFrames = null;
+        if (!probeOnly)
+        {
+            if (!TryDecodeServerEpoch(expectedEpoch, out expectedFrames))
+                return "ERROR SERVER_SESSION_CHANGED";
+            expectedTargetFrameId = expectedFrames[0];
+        }
         try
         {
             if (!SendRelease(0))
                 throw new InvalidOperationException("INPUT_RELEASE_UNAVAILABLE");
             port = ActivatePort();
-            int sessionMilliseconds = washingMode ? 9000 : 5000;
+            int targetWaitMilliseconds = washingMode ? 7000 : goldMode ? 4000 : 8500;
+            int sessionMilliseconds = targetWaitMilliseconds + 4000;
             using (var session = await CdpSession.OpenAsync(
-                TargetFramePart, TimeSpan.FromMilliseconds(sessionMilliseconds)).ConfigureAwait(false))
+                TargetFramePart, TimeSpan.FromMilliseconds(sessionMilliseconds),
+                expectedFrames).ConfigureAwait(false))
             {
                 if (probeOnly)
                 {
@@ -786,7 +1036,7 @@ internal static class CdpBridge
                         ProbeExpression(targetLabel, exactOnly), false).ConfigureAwait(false);
                     return (probeResult ? "PRESENT " : "MISSING ") + actionToken;
                 }
-                DateTime deadline = DateTime.UtcNow.AddMilliseconds(washingMode ? 7000 : 1600);
+                DateTime deadline = DateTime.UtcNow.AddMilliseconds(targetWaitMilliseconds);
                 while (DateTime.UtcNow < deadline)
                 {
                     string expression = washingMode
@@ -795,14 +1045,16 @@ internal static class CdpBridge
                         expression, false).ConfigureAwait(false);
                     if (present)
                     {
-                        if (washingMode
-                            && !await ServerEpochMatchesAsync(expectedEpoch).ConfigureAwait(false))
+                        if (!probeOnly && (!String.Equals(session.FrameId,
+                                expectedTargetFrameId, StringComparison.Ordinal)
+                            || !await session.MatchesServerEpochAsync().ConfigureAwait(false)))
                             return "ERROR SERVER_SESSION_CHANGED";
                         expression = washingMode
                             ? WashTargetExpression(true) : ClickExpression(targetLabel, exactOnly);
                         bool clicked;
-                        if (washingMode)
-                            washClickMayHaveBeenDispatched = true;
+                        clickMayHaveBeenDispatched = true;
+                        if (clickDispatchObserver != null)
+                            clickDispatchObserver(Stopwatch.GetTimestamp());
                         try
                         {
                             clicked = await session.EvaluateBooleanAsync(
@@ -810,22 +1062,22 @@ internal static class CdpBridge
                         }
                         catch (Exception)
                         {
-                            if (washingMode && washClickMayHaveBeenDispatched)
-                                return "UNCERTAIN WASH";
+                            if (clickMayHaveBeenDispatched)
+                                return "UNCERTAIN " + actionToken;
                             throw;
                         }
                         if (!clicked)
-                            washClickMayHaveBeenDispatched = false;
+                            clickMayHaveBeenDispatched = false;
                         if (clicked)
                         {
                             try
                             {
-                                await Task.Delay(300, session.Token).ConfigureAwait(false);
+                                await Task.Delay(75, session.Token).ConfigureAwait(false);
                             }
                             catch (Exception)
                             {
-                                if (washingMode)
-                                    return "UNCERTAIN WASH";
+                                if (clickMayHaveBeenDispatched)
+                                    return "UNCERTAIN " + actionToken;
                                 throw;
                             }
                             return "CLICKED " + actionToken;
@@ -836,28 +1088,130 @@ internal static class CdpBridge
                 return "MISSING " + actionToken;
             }
         }
+        catch (Exception ex)
+        {
+            if (!probeOnly && IsBoundFrameSessionFailure(ex))
+                return "ERROR SERVER_SESSION_CHANGED";
+            throw;
+        }
         finally
         {
-            if (!(port != 0 ? SendRelease(port) : SendRelease(0))
-                && !(washingMode && washClickMayHaveBeenDispatched))
-                throw new InvalidOperationException("INPUT_RELEASE_UNAVAILABLE");
+            if (!(port != 0 ? SendRelease(port) : SendRelease(0)))
+                throw new InvalidOperationException(clickMayHaveBeenDispatched
+                    ? "ACTION_RELEASE_UNAVAILABLE" : "INPUT_RELEASE_UNAVAILABLE");
         }
     }
 
-    private static async Task<bool> ServerEpochMatchesAsync(string expectedEpoch)
+    private static async Task<string> TryAndWaitActionAsync(
+        string mode, string expectedEpoch)
     {
-        if (!IsValidServerEpoch(expectedEpoch))
-            return false;
+        WorkAction action;
+        if (!TryGetWorkActionForTryMode(mode, out action))
+            throw new ArgumentException();
+        string actionToken = WorkActionToken(action);
+        string[] expectedFrames;
+        if (!TryDecodeServerEpoch(expectedEpoch, out expectedFrames))
+            return "ERROR SERVER_SESSION_CHANGED";
+
+        // Arm the progress frame before waiting for the target or dispatching a click.
+        // A short action therefore cannot finish while a second helper/session is starting.
+        CdpSession progressSession = null;
+        bool progressOpenFailed = false;
         try
         {
-            string healthResult = await HealthAsync().ConfigureAwait(false);
-            return String.Equals(healthResult, "HEALTH READY " + expectedEpoch,
-                StringComparison.Ordinal);
+            progressSession = await CdpSession.OpenAsync(ProgressFramePart,
+                TimeSpan.FromMilliseconds(BundledProgressSessionMilliseconds),
+                expectedFrames).ConfigureAwait(false);
         }
         catch (Exception)
         {
-            return false;
+            progressOpenFailed = true;
         }
+        if (progressOpenFailed || progressSession == null)
+            return await CompletionFailureAfterFullEpochCheckAsync(expectedEpoch,
+                actionToken + "_PROGRESS_UNAVAILABLE").ConfigureAwait(false);
+
+        using (progressSession)
+        {
+            long clickDispatchTimestamp = -1;
+            string clickResult = await TryActionAsync(mode, expectedEpoch,
+                delegate(long timestamp) { clickDispatchTimestamp = timestamp; })
+                .ConfigureAwait(false);
+            string clickedResult = "CLICKED " + actionToken;
+            if (!String.Equals(clickResult, clickedResult, StringComparison.Ordinal))
+                return clickResult;
+            if (clickDispatchTimestamp < 0)
+                return "ERROR ACTION_TIMING_UNAVAILABLE";
+            string completionResult = await MonitorActionCompletionAsync(action,
+                expectedEpoch, progressSession, clickDispatchTimestamp)
+                .ConfigureAwait(false);
+            return RewriteBundledActionCompletionElapsed(completionResult, action,
+                clickDispatchTimestamp, Stopwatch.GetTimestamp());
+        }
+    }
+
+    private static string RewriteBundledActionCompletionElapsed(string result,
+        WorkAction action, long clickTimestamp, long completionTimestamp)
+    {
+        string prefix = "ACTION_COMPLETED " + WorkActionToken(action) + " ";
+        if (!result.StartsWith(prefix, StringComparison.Ordinal)
+            || !IsActionCompletionResult(result))
+            return result;
+        int elapsedMilliseconds = ElapsedMillisecondsBetweenTimestamps(
+            clickTimestamp, completionTimestamp);
+        if (elapsedMilliseconds < 0)
+            return "ERROR ACTION_TIMING_UNAVAILABLE";
+        if (elapsedMilliseconds > 30000)
+            return "ERROR " + WorkActionToken(action) + "_COMPLETION_TIMEOUT";
+        return prefix + elapsedMilliseconds.ToString(CultureInfo.InvariantCulture);
+    }
+
+    private static int ElapsedMillisecondsBetweenTimestamps(
+        long startTimestamp, long endTimestamp)
+    {
+        if (startTimestamp < 0 || endTimestamp < startTimestamp
+            || Stopwatch.Frequency <= 0)
+            return -1;
+        long delta = endTimestamp - startTimestamp;
+        long wholeSeconds = delta / Stopwatch.Frequency;
+        if (wholeSeconds > Int32.MaxValue / 1000)
+            return Int32.MaxValue;
+        long remainder = delta % Stopwatch.Frequency;
+        long milliseconds = wholeSeconds * 1000
+            + remainder * 1000 / Stopwatch.Frequency;
+        return milliseconds > Int32.MaxValue ? Int32.MaxValue : (int)milliseconds;
+    }
+
+    private static bool TryGetWorkActionForTryMode(string mode, out WorkAction action)
+    {
+        if (mode == "try-mining")
+        {
+            action = WorkAction.Mine;
+            return true;
+        }
+        if (mode == "try-washing")
+        {
+            action = WorkAction.Wash;
+            return true;
+        }
+        if (mode == "try-gold")
+        {
+            action = WorkAction.Gold;
+            return true;
+        }
+        action = WorkAction.Mine;
+        return false;
+    }
+
+    private static bool IsBoundFrameSessionFailure(Exception exception)
+    {
+        if (exception is IOException || exception is WebSocketException
+            || exception is OperationCanceledException)
+            return true;
+        string token = SafeErrorToken(exception == null ? null : exception.Message);
+        return token == "SERVER_SESSION_CHANGED"
+            || token.StartsWith("CDP_", StringComparison.Ordinal)
+            || token.StartsWith("NUI_", StringComparison.Ordinal);
     }
 
     private static async Task<string> InventorySnapshotAsync()
@@ -948,17 +1302,48 @@ internal static class CdpBridge
             await socket.ConnectAsync(new Uri(FindRootSocketUrl()), timeout.Token).ConfigureAwait(false);
             var response = await CommandAsync(socket, "Page.getFrameTree", null, timeout.Token).ConfigureAwait(false);
             var frameTree = GetObject(GetObject(response, "result"), "frameTree");
-            string targetFrameId = FindFrame(frameTree, TargetFramePart);
-            string inventoryFrameId = FindFrame(frameTree, InventoryFramePart);
-            string progressFrameId = FindFrame(frameTree, ProgressFramePart);
-            if (String.IsNullOrEmpty(targetFrameId)
-                || String.IsNullOrEmpty(inventoryFrameId)
-                || String.IsNullOrEmpty(progressFrameId))
+            string[] targetFrame = FindFrameIdentity(frameTree, TargetFramePart);
+            string[] inventoryFrame = FindFrameIdentity(frameTree, InventoryFramePart);
+            string[] progressFrame = FindFrameIdentity(frameTree, ProgressFramePart);
+            if (!HasFrameIdentity(targetFrame) || !HasFrameIdentity(inventoryFrame)
+                || !HasFrameIdentity(progressFrame))
                 return "ERROR SERVER_SESSION_UNAVAILABLE";
-            string epoch = EncodeBase64Url(targetFrameId + "\n" + inventoryFrameId
-                + "\n" + progressFrameId);
+            string epoch = EncodeBase64Url(targetFrame[0] + "\n" + targetFrame[1]
+                + "\n" + inventoryFrame[0] + "\n" + inventoryFrame[1]
+                + "\n" + progressFrame[0] + "\n" + progressFrame[1]);
             return "HEALTH READY " + epoch;
         }
+    }
+
+    private static bool HasFrameIdentity(string[] identity)
+    {
+        return identity != null && identity.Length == 2
+            && !String.IsNullOrEmpty(identity[0]) && !String.IsNullOrEmpty(identity[1]);
+    }
+
+    private static bool ServerFrameEpochMatches(string[] expectedFrames,
+        string[] targetFrame, string[] inventoryFrame, string[] progressFrame)
+    {
+        return expectedFrames != null && expectedFrames.Length == 6
+            && HasFrameIdentity(targetFrame) && HasFrameIdentity(inventoryFrame)
+            && HasFrameIdentity(progressFrame)
+            && String.Equals(expectedFrames[0], targetFrame[0], StringComparison.Ordinal)
+            && String.Equals(expectedFrames[1], targetFrame[1], StringComparison.Ordinal)
+            && String.Equals(expectedFrames[2], inventoryFrame[0], StringComparison.Ordinal)
+            && String.Equals(expectedFrames[3], inventoryFrame[1], StringComparison.Ordinal)
+            && String.Equals(expectedFrames[4], progressFrame[0], StringComparison.Ordinal)
+            && String.Equals(expectedFrames[5], progressFrame[1], StringComparison.Ordinal);
+    }
+
+    private static bool ServerFrameTreeMatches(
+        Dictionary<string, object> frameTree, string[] expectedFrames)
+    {
+        if (frameTree == null)
+            return false;
+        return ServerFrameEpochMatches(expectedFrames,
+            FindFrameIdentity(frameTree, TargetFramePart),
+            FindFrameIdentity(frameTree, InventoryFramePart),
+            FindFrameIdentity(frameTree, ProgressFramePart));
     }
 
     private static async Task<string> CompanionStatusAsync()
@@ -1666,9 +2051,20 @@ internal static class CdpBridge
         int lastHealthAt = 0;
         string result = null;
         Exception pendingFailure = null;
+        CdpSession healthSession = null;
         try
         {
-            VerifyRouteHealth(port, expectedEpoch);
+            string[] expectedFrames;
+            if (!TryDecodeServerEpoch(expectedEpoch, out expectedFrames))
+                throw new InvalidOperationException("SERVER_SESSION_CHANGED");
+            // Releasing stale movement is safe before binding to the server document.
+            // OpenAsync already checks all frame/loader identities on this socket, so
+            // a second identical Page.getFrameTree query here only delays short routes.
+            if (!SendInputRelease(port))
+                throw new InvalidOperationException("INPUT_RELEASE_UNAVAILABLE");
+            healthSession = CdpSession.OpenAsync(TargetFramePart,
+                TimeSpan.FromMilliseconds(MaximumRouteMilliseconds + 30000),
+                expectedFrames).GetAwaiter().GetResult();
             foreach (RouteStep step in steps)
             {
                 var command = new StringBuilder(InputReleaseCommand());
@@ -1680,12 +2076,12 @@ internal static class CdpBridge
 
                 if (total - lastHealthAt >= RouteHealthIntervalMilliseconds)
                 {
-                    VerifyRouteHealth(port, expectedEpoch);
+                    VerifyRouteHealth(port, healthSession);
                     lastHealthAt = total;
                 }
             }
             if (lastHealthAt != total)
-                VerifyRouteHealth(port, expectedEpoch);
+                VerifyRouteHealth(port, healthSession);
             result = "ROUTE " + port.ToString(CultureInfo.InvariantCulture) + " "
                 + total.ToString(CultureInfo.InvariantCulture);
         }
@@ -1697,6 +2093,8 @@ internal static class CdpBridge
         {
             if (!SendInputRelease(port) && pendingFailure == null)
                 pendingFailure = new InvalidOperationException("INPUT_RELEASE_UNAVAILABLE");
+            if (healthSession != null)
+                healthSession.Dispose();
         }
 
         if (pendingFailure != null)
@@ -1704,23 +2102,20 @@ internal static class CdpBridge
         return result;
     }
 
-    private static void VerifyRouteHealth(int port, string expectedEpoch)
+    private static void VerifyRouteHealth(int port, CdpSession session)
     {
         if (!SendInputRelease(port))
             throw new InvalidOperationException("INPUT_RELEASE_UNAVAILABLE");
-
-        string healthResult;
         try
         {
-            healthResult = HealthAsync().GetAwaiter().GetResult();
+            if (session == null
+                || !session.MatchesServerEpochAsync().GetAwaiter().GetResult())
+                throw new InvalidOperationException("SERVER_SESSION_CHANGED");
         }
         catch (Exception)
         {
             throw new InvalidOperationException("SERVER_SESSION_CHANGED");
         }
-        if (!String.Equals(healthResult, "HEALTH READY " + expectedEpoch,
-                StringComparison.Ordinal))
-            throw new InvalidOperationException("SERVER_SESSION_CHANGED");
     }
 
     private static string SetViewInput(int port, int mask)
@@ -1860,15 +2255,22 @@ internal static class CdpBridge
 
     private static bool IsValidServerEpoch(string value)
     {
+        string[] frameIds;
+        return TryDecodeServerEpoch(value, out frameIds);
+    }
+
+    private static bool TryDecodeServerEpoch(string value, out string[] frameIds)
+    {
+        frameIds = null;
         if (!ServerEpochPattern.IsMatch(value ?? String.Empty))
             return false;
         try
         {
             string decoded = DecodeBase64Url(value);
-            string[] frameIds = decoded.Split('\n');
-            if (frameIds.Length != 3)
+            string[] decodedFrameIds = decoded.Split('\n');
+            if (decodedFrameIds.Length != 6)
                 return false;
-            foreach (string frameId in frameIds)
+            foreach (string frameId in decodedFrameIds)
             {
                 if (String.IsNullOrEmpty(frameId))
                     return false;
@@ -1876,6 +2278,7 @@ internal static class CdpBridge
                     if (Char.IsControl(character))
                         return false;
             }
+            frameIds = decodedFrameIds;
             return true;
         }
         catch (ArgumentException)
@@ -2304,21 +2707,47 @@ internal static class CdpBridge
         return null;
     }
 
+    private static string[] FindFrameIdentity(
+        Dictionary<string, object> frameTree, string framePart)
+    {
+        var frame = GetObject(frameTree, "frame");
+        if (GetString(frame, "url").IndexOf(framePart,
+                StringComparison.OrdinalIgnoreCase) >= 0)
+            return new[] { GetString(frame, "id"), GetString(frame, "loaderId") };
+        object childrenObject;
+        if (frameTree.TryGetValue("childFrames", out childrenObject))
+        {
+            var children = childrenObject as object[];
+            if (children != null)
+            {
+                foreach (object child in children)
+                {
+                    var childDictionary = child as Dictionary<string, object>;
+                    if (childDictionary == null) continue;
+                    string[] found = FindFrameIdentity(childDictionary, framePart);
+                    if (found != null) return found;
+                }
+            }
+        }
+        return null;
+    }
+
     private static string ProbeExpression(string targetLabel, bool exactOnly)
     {
         return "(() => {"
             + "const q=" + Json.Serialize(targetLabel) + ",exact=" + (exactOnly ? "true" : "false")
             + ",n=s=>String(s||'').replace(/\\s+/g,' ').trim(),body=document.body;"
-            + "if(!body||getComputedStyle(body).visibility!=='visible')return false;"
-            + "const root=document.querySelector('#options-wrapper');if(!root)return false;"
+            + "const shown=e=>{if(!e||!e.isConnected)return false;for(let p=e;p;p=p.parentElement){const s=getComputedStyle(p);"
+            + "if(s.visibility==='hidden'||s.display==='none'||Number(s.opacity)<=0)return false;}return true;};"
+            + "const visible=e=>{if(!shown(e))return false;const r=e.getBoundingClientRect();return r.width>0&&r.height>0;};"
+            + "if(!shown(body))return false;const root=document.querySelector('#options-wrapper');if(!shown(root))return false;"
             + "const match=t=>exact?t===q:(t===q||t.startsWith(q+' ')||t.startsWith(q+'（')||t.startsWith(q+'('));"
             + "const matches=[...root.querySelectorAll('*')].filter(e=>{const t=n(e.textContent);"
-            + "return match(t)&&![...e.children].some(c=>match(n(c.textContent)));});"
-            + "if(matches.length!==1)return false;const e=matches[0],s=getComputedStyle(e),r=e.getBoundingClientRect();"
-            + "return s.visibility!=='hidden'&&s.display!=='none'&&r.width>0&&r.height>0;})()";
+            + "return match(t)&&![...e.children].some(c=>match(n(c.textContent)))&&visible(e);});"
+            + "if(matches.length!==1)return false;return true;})()";
     }
 
-    private static int AdvanceWashProgressState(int state, bool visible)
+    private static int AdvanceWorkProgressState(int state, bool visible)
     {
         if (visible)
             return state == 0 ? 1 : 2;
@@ -2333,32 +2762,38 @@ internal static class CdpBridge
         return state;
     }
 
-    private static bool WashProgressCompletionReady(
+    private static bool WorkProgressCompletionReady(WorkAction action,
         long progressArmedAt, long progressAbsentAt, long elapsedMilliseconds)
     {
         return progressArmedAt >= 0 && progressAbsentAt >= 0
             && elapsedMilliseconds >= progressArmedAt
-                + WashProgressMinimumActiveMilliseconds
+                + WorkProgressMinimumActiveMilliseconds(action)
             && elapsedMilliseconds >= progressAbsentAt
-                + WashProgressStableAbsentMilliseconds;
+                + WorkProgressStableAbsentMilliseconds;
     }
 
-    private static bool WashProgressStartTimedOut(
+    private static bool WorkProgressStartTimedOut(WorkAction action,
         int progressState, int idleAbsentSamples, long elapsedMilliseconds)
     {
         return progressState == 0 && idleAbsentSamples >= 3
-            && elapsedMilliseconds >= WashProgressStartMilliseconds;
+            && elapsedMilliseconds >= WorkProgressStartMilliseconds(action);
     }
 
     private static string WashProgressExpression()
     {
+        return WorkProgressExpression(WorkAction.Wash);
+    }
+
+    private static string WorkProgressExpression(WorkAction action)
+    {
         return "(() => {"
-            + "const q='石を洗っています',n=s=>String(s||'').replace(/\\s+/g,' ').trim(),body=document.body;"
+            + "const q=" + Json.Serialize(WorkProgressPrefix(action))
+            + ",n=s=>String(s||'').replace(/\\s+/g,' ').trim(),body=document.body;"
             + "if(!body||!body.isConnected)return false;"
             + "const visible=e=>{if(!e||!e.isConnected)return false;for(let p=e;p;p=p.parentElement){const s=getComputedStyle(p);"
             + "if(s.visibility==='hidden'||s.display==='none'||Number(s.opacity)<=0)return false;}const r=e.getBoundingClientRect();return r.width>0&&r.height>0;};"
-            + "const progress=e=>{for(let p=e;p&&p!==body;p=p.parentElement){const s=getComputedStyle(p),names=String(s.animationName||'').split(',').map(v=>v.trim());"
-            + "if(names.includes('progress-bar')&&String(s.animationPlayState||'running')!=='paused')return true;}return false;};"
+            + "const progress=e=>{for(let p=e;p&&p!==body;p=p.parentElement){const s=getComputedStyle(p),names=String(s.animationName||'').split(',').map(v=>v.trim()),states=String(s.animationPlayState||'').split(',').map(v=>v.trim());"
+            + "for(let i=0;i<names.length;i++)if(names[i]==='progress-bar'&&states.length&&states[i%states.length]==='running')return true;}return false;};"
             + "const starts=e=>n(e.textContent).startsWith(q),nodes=[...body.querySelectorAll('*')];"
             + "return nodes.some(e=>starts(e)&&![...e.children].some(starts)&&visible(e)&&progress(e));})()";
     }
@@ -2407,15 +2842,18 @@ internal static class CdpBridge
         // 許可します。候補が複数なら何も押さないことで、近接車両を誤操作しません。
         return "(() => {"
             + "const qs=['ストレージを開く','トランクを開く','荷台を開く'],n=s=>String(s||'').replace(/\\s+/g,' ').trim(),body=document.body;"
-            + "if(!body||getComputedStyle(body).visibility!=='visible')return 'MISSING';"
-            + "const root=document.querySelector('#options-wrapper');if(!root)return 'MISSING';"
-            + "const match=t=>qs.includes(t),matches=[...root.querySelectorAll('*')].filter(e=>{const t=n(e.textContent);"
+            + "const shown=e=>{if(!e||!e.isConnected)return false;for(let p=e;p;p=p.parentElement){const s=getComputedStyle(p);"
+            + "if(s.visibility==='hidden'||s.display==='none'||Number(s.opacity)<=0)return false;}return true;};"
+            + "const visible=e=>{if(!shown(e))return false;const r=e.getBoundingClientRect();return r.width>0&&r.height>0;};"
+            + "const usable=e=>visible(e)&&getComputedStyle(e).pointerEvents!=='none'&&!e.matches(':disabled')&&e.getAttribute('aria-disabled')!=='true';"
+            + "if(!shown(body))return 'MISSING';const root=document.querySelector('#options-wrapper');if(!shown(root))return 'MISSING';"
+            + "const match=t=>qs.includes(t),leaves=[...root.querySelectorAll('*')].filter(e=>{const t=n(e.textContent);"
             + "return match(t)&&![...e.children].some(c=>match(n(c.textContent)));});"
-            + "if(matches.length>1)return 'AMBIGUOUS';if(matches.length!==1)return 'MISSING';const leaf=matches[0],s=getComputedStyle(leaf),r=leaf.getBoundingClientRect();"
-            + "if(s.visibility==='hidden'||s.display==='none'||s.pointerEvents==='none'||Number(s.opacity)<=0||r.width<=0||r.height<=0)return 'MISSING';"
+            + "const seen=new Set(),matches=[];for(const leaf of leaves){const hit=leaf.closest('.option-container,li,button,[role=button]')||leaf.closest('a')||leaf;"
+            + "if(!root.contains(hit)||seen.has(hit)||!usable(leaf)||!usable(hit))continue;seen.add(hit);matches.push(hit);}"
+            + "if(matches.length>1)return 'AMBIGUOUS';if(matches.length!==1)return 'MISSING';const hit=matches[0];"
             + (click
-                ? "let hit=leaf.closest('.option-container,li,button,[role=button]')||leaf.closest('a')||leaf;"
-                    + "const hs=getComputedStyle(hit),hr=hit.getBoundingClientRect();if(!root.contains(hit)||!hit.isConnected||hs.visibility==='hidden'||hs.display==='none'||hs.pointerEvents==='none'||Number(hs.opacity)<=0||hr.width<=0||hr.height<=0||hit.matches(':disabled')||hit.getAttribute('aria-disabled')==='true')return 'MISSING';hit.click();return 'CLICKED';"
+                ? "if(!usable(hit))return 'MISSING';hit.click();return 'CLICKED';"
                 : "return 'PRESENT';")
             + "})()";
     }
@@ -2425,17 +2863,24 @@ internal static class CdpBridge
         return "(() => {"
             + "const q=" + Json.Serialize(targetLabel) + ",exact=" + (exactOnly ? "true" : "false")
             + ",n=s=>String(s||'').replace(/\\s+/g,' ').trim(),body=document.body;"
-            + "if(!body||getComputedStyle(body).visibility!=='visible')return false;"
-            + "const root=document.querySelector('#options-wrapper');if(!root)return false;"
+            + "const shown=e=>{if(!e||!e.isConnected)return false;for(let p=e;p;p=p.parentElement){const s=getComputedStyle(p);"
+            + "if(s.visibility==='hidden'||s.display==='none'||Number(s.opacity)<=0)return false;}return true;};"
+            + "const visible=e=>{if(!shown(e))return false;const r=e.getBoundingClientRect();return r.width>0&&r.height>0;};"
+            + "if(!shown(body))return false;const root=document.querySelector('#options-wrapper');if(!shown(root))return false;"
             + "const match=t=>exact?t===q:(t===q||t.startsWith(q+' ')||t.startsWith(q+'（')||t.startsWith(q+'('));"
             + "const matches=[...root.querySelectorAll('*')].filter(e=>{const t=n(e.textContent);"
-            + "return match(t)&&![...e.children].some(c=>match(n(c.textContent)));});"
+            + "return match(t)&&![...e.children].some(c=>match(n(c.textContent)))&&visible(e);});"
             + "if(matches.length!==1)return false;const leaf=matches[0];"
             + "let hit=leaf.closest('.option-container,li,button,[role=button]')||leaf.closest('a')||leaf;"
-            + "const usable=e=>{if(!e||!e.isConnected)return false;const s=getComputedStyle(e),r=e.getBoundingClientRect();"
-            + "return s.visibility!=='hidden'&&s.display!=='none'&&s.pointerEvents!=='none'&&Number(s.opacity)>0"
-            + "&&r.width>0&&r.height>0&&!e.matches(':disabled')&&e.getAttribute('aria-disabled')!=='true';};"
+            + "const usable=e=>visible(e)&&getComputedStyle(e).pointerEvents!=='none'&&!e.matches(':disabled')&&e.getAttribute('aria-disabled')!=='true';"
             + "if(!root.contains(hit)||!usable(leaf)||!usable(hit))return false;hit.click();return true;})()";
+    }
+
+    private enum WorkAction
+    {
+        Mine,
+        Wash,
+        Gold
     }
 
     private sealed class CdpSession : IDisposable
@@ -2443,17 +2888,30 @@ internal static class CdpBridge
         private readonly ClientWebSocket _socket;
         private readonly CancellationTokenSource _timeout;
         private readonly int _contextId;
+        private readonly string _frameId;
+        private readonly string[] _expectedServerFrames;
 
-        private CdpSession(ClientWebSocket socket, CancellationTokenSource timeout, int contextId)
+        private CdpSession(ClientWebSocket socket, CancellationTokenSource timeout,
+            int contextId, string frameId, string[] expectedServerFrames)
         {
             _socket = socket;
             _timeout = timeout;
             _contextId = contextId;
+            _frameId = frameId;
+            _expectedServerFrames = expectedServerFrames == null ? null
+                : (string[])expectedServerFrames.Clone();
         }
 
         public CancellationToken Token { get { return _timeout.Token; } }
+        public string FrameId { get { return _frameId; } }
 
-        public static async Task<CdpSession> OpenAsync(string framePart, TimeSpan timeoutValue)
+        public static Task<CdpSession> OpenAsync(string framePart, TimeSpan timeoutValue)
+        {
+            return OpenAsync(framePart, timeoutValue, (string[])null);
+        }
+
+        public static async Task<CdpSession> OpenAsync(string framePart,
+            TimeSpan timeoutValue, string[] expectedServerFrames)
         {
             var timeout = new CancellationTokenSource(timeoutValue);
             var socket = new ClientWebSocket();
@@ -2461,11 +2919,24 @@ internal static class CdpBridge
             {
                 await socket.ConnectAsync(new Uri(FindRootSocketUrl()), timeout.Token).ConfigureAwait(false);
                 var response = await CommandAsync(socket, "Page.getFrameTree", null, timeout.Token).ConfigureAwait(false);
-                string frameId = FindFrame(GetObject(GetObject(response, "result"), "frameTree"), framePart);
+                var frameTree = GetObject(GetObject(response, "result"), "frameTree");
+                if (expectedServerFrames != null
+                    && !ServerFrameTreeMatches(frameTree, expectedServerFrames))
+                    throw new InvalidOperationException("SERVER_SESSION_CHANGED");
+                string frameId = FindFrame(frameTree, framePart);
                 if (String.IsNullOrEmpty(frameId))
                     throw new InvalidOperationException("NUI_FRAME_NOT_FOUND");
                 int contextId = await FindDefaultContextAsync(socket, frameId, timeout.Token).ConfigureAwait(false);
-                return new CdpSession(socket, timeout, contextId);
+                if (expectedServerFrames != null)
+                {
+                    response = await CommandAsync(socket, "Page.getFrameTree", null,
+                        timeout.Token).ConfigureAwait(false);
+                    frameTree = GetObject(GetObject(response, "result"), "frameTree");
+                    if (!ServerFrameTreeMatches(frameTree, expectedServerFrames))
+                        throw new InvalidOperationException("SERVER_SESSION_CHANGED");
+                }
+                return new CdpSession(socket, timeout, contextId, frameId,
+                    expectedServerFrames);
             }
             catch
             {
@@ -2474,6 +2945,16 @@ internal static class CdpBridge
                 timeout.Dispose();
                 throw;
             }
+        }
+
+        public async Task<bool> MatchesServerEpochAsync()
+        {
+            if (_expectedServerFrames == null)
+                return false;
+            var response = await CommandAsync(_socket, "Page.getFrameTree", null,
+                _timeout.Token).ConfigureAwait(false);
+            var frameTree = GetObject(GetObject(response, "result"), "frameTree");
+            return ServerFrameTreeMatches(frameTree, _expectedServerFrames);
         }
 
         public async Task<bool> EvaluateBooleanAsync(string expression, bool userGesture)

@@ -240,7 +240,7 @@ $updaterOutput = Join-Path $stageRoot 'AI採掘機_Updater.exe'
 Invoke-CSharpBuild -Source $bridgeSource -Output $bridgeOutput
 Invoke-CSharpBuild -Source $updaterSource -Output $updaterOutput
 & (Join-Path $PSScriptRoot 'Test-WashDomExpressions.ps1') -Bridge $bridgeOutput
-Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'CAPS 10 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HOTBAR INVENTORYKEY HEALTH COMPANION WASHWAIT'
+Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'CAPS 11 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HOTBAR INVENTORYKEY HEALTH COMPANION ACTIONWAIT'
 Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'SELFTEST OK' -Mode 'self-test'
 & (Join-Path $PSScriptRoot 'Test-BackgroundBridge.ps1') -Bridge $bridgeOutput
 Invoke-CapabilitySmokeTest -Executable $updaterOutput -Expected 'UPDATE_CAPS 1 CHECK DOWNLOAD APPLY'

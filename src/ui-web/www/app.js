@@ -15,19 +15,19 @@
   const modeDetails = {
     mining: {
       label: '鉱石を採掘する',
-      subtitle: '石の再出現を確認して採掘します',
+      subtitle: '進捗完了と次の石の準備を検知して続けます',
       primaryMetric: '採掘回数',
       correctionMetric: '食事回数',
     },
     washing: {
       label: '石を洗う',
-      subtitle: '進捗完了後に1度だけ補正し、次の対象をすぐ選びます',
+      subtitle: '進捗完了後に1度だけ補正し、次の対象の準備を検知します',
       primaryMetric: '石洗い回数',
       correctionMetric: '後退補正',
     },
     gold: {
       label: '砂金採りトレイ',
-      subtitle: '砂金採りを続け、必要なときだけ位置を補正します',
+      subtitle: '進捗完了と次の対象の準備を検知して続けます',
       primaryMetric: '砂金採り回数',
       correctionMetric: '位置補正',
     },
@@ -48,7 +48,7 @@
   const fixtureState = {
     ...baseState,
     revision: 1,
-    version: '8.0.5',
+    version: '8.0.6',
     controls: {
       overviewSubtitle: { text: modeDetails.gold.subtitle },
       runStatus: { text: '停止中', tone: 'neutral' },
