@@ -209,6 +209,8 @@ namespace AiMiner.UiHost
                     "nav", new[] { "vehicle" });
                 AssertAction(@"{""type"":""action"",""action"":""nav"",""payload"":{""page"":""stone""}}",
                     "nav", new[] { "stone" });
+                AssertAction(@"{""type"":""action"",""action"":""nav"",""payload"":{""page"":""overview""}}",
+                    "nav", new[] { "overview" });
                 AssertAction(@"{""type"":""action"",""action"":""action.select"",""payload"":{""mode"":""gold""}}",
                     "action.select", new[] { "gold" });
                 AssertAction(@"{""type"":""action"",""action"":""vehicle.toggle"",""payload"":{""enabled"":true}}",

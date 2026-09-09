@@ -50,7 +50,7 @@
   const fixtureState = {
     ...baseState,
     revision: 1,
-    version: '9.0.0',
+    version: '9.0.1',
     controls: {
       overviewSubtitle: { text: modeDetails.gold.subtitle },
       runStatus: { text: '停止中', tone: 'neutral' },
@@ -154,7 +154,7 @@
     'settings-save-label', 'settings-feedback', 'current-version', 'update-status',
     'update-integrity', 'update-check', 'update-check-label', 'update-feedback',
     'update-badge', 'sidebar-connection', 'sidebar-connection-dot', 'action-popover',
-    'action-sheet', 'live-region',
+    'action-sheet', 'live-region', 'stone-return-button', 'stone-meta-root',
   ].map((id) => [toCamel(id), document.getElementById(id)]));
 
   const nav = [...document.querySelectorAll('.sidebar-item[data-page]')];
@@ -194,6 +194,7 @@
 
   createPickerOptions();
   wireEvents();
+  observeStoneLayers();
   applyState(state, { force: true, animate: false });
   requestAnimationFrame(() => {
     updateSelectionIndicator(false);
@@ -732,6 +733,46 @@
     return true;
   }
 
+  function returnFromStone() {
+    if (currentPage !== 'stone') return false;
+    if (stoneTransientLayerIsOpen()) return false;
+    const returned = switchPage('overview', { animate: true, send: true });
+    requestAnimationFrame(() => {
+      nav.find((item) => item.dataset.page === 'overview')?.focus({ preventScroll: true });
+    });
+    return returned;
+  }
+
+  function stoneTransientLayerIsOpen() {
+    if (!elements.stoneMetaRoot) return false;
+    return [
+      '[data-cinematic]:not([hidden])',
+      '[data-modal-layer]:not([hidden])',
+      '[data-debug-panel]:not([hidden])',
+      '[data-onboarding]:not([hidden])',
+      '.meta-progression-event',
+      '.meta-event-toast',
+    ].some((selector) => Boolean(elements.stoneMetaRoot.querySelector(selector)));
+  }
+
+  function syncStoneReturnAvailability() {
+    const blocked = stoneTransientLayerIsOpen();
+    elements.stoneReturnButton.hidden = blocked;
+    elements.stoneReturnButton.setAttribute('aria-hidden', blocked ? 'true' : 'false');
+    elements.stoneReturnButton.tabIndex = blocked ? -1 : 0;
+  }
+
+  function observeStoneLayers() {
+    syncStoneReturnAvailability();
+    const observer = new MutationObserver(syncStoneReturnAvailability);
+    observer.observe(elements.stoneMetaRoot, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['class', 'hidden', 'aria-hidden', 'open'],
+    });
+  }
+
   function updateSelectionIndicator(animate = true) {
     const selected = nav.find((item) => item.dataset.page === currentPage);
     if (!selected || !indicator) return;
@@ -854,6 +895,7 @@
     });
 
     actionButton.addEventListener('click', openActionPicker);
+    elements.stoneReturnButton.addEventListener('click', returnFromStone);
     document.querySelector('[data-close-picker]').addEventListener('click', closeActionPicker);
     elements.runButton.addEventListener('click', () => {
       if (elements.runButton.classList.contains('is-pending')) return;
@@ -980,11 +1022,26 @@
     });
 
     document.addEventListener('keydown', (event) => {
-      if (event.key !== 'Escape') return;
-      if (actionSheet.opened || actionPopover.opened) {
+      const escape = event.key === 'Escape';
+      const altBack = event.key === 'ArrowLeft' && event.altKey
+        && !event.ctrlKey && !event.shiftKey && !event.metaKey;
+      const browserBack = event.key === 'BrowserBack';
+      if (!escape && !altBack && !browserBack) return;
+      if (escape && (actionSheet.opened || actionPopover.opened)) {
         event.preventDefault();
         closeActionPicker();
+        return;
       }
+      if (currentPage !== 'stone' || event.isComposing) return;
+      if (escape && event.target instanceof HTMLElement
+        && event.target.matches('input, textarea, [contenteditable="true"]')) return;
+      if (stoneTransientLayerIsOpen()) {
+        if (altBack || browserBack) event.preventDefault();
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      returnFromStone();
     }, true);
 
     window.addEventListener('resize', () => updateSelectionIndicator(false));
@@ -1016,6 +1073,15 @@
   }
 
   function runSmokeTest(reportToHost = false) {
+    const stoneReturnRect = elements.stoneReturnButton.getBoundingClientRect();
+    const stoneReturnBlocked = stoneTransientLayerIsOpen();
+    const stoneReturnExpected = currentPage === 'stone' && !stoneReturnBlocked;
+    const stoneReturnHit = stoneReturnExpected
+      ? document.elementFromPoint(
+        stoneReturnRect.left + stoneReturnRect.width / 2,
+        stoneReturnRect.top + stoneReturnRect.height / 2,
+      )
+      : null;
     const checks = {
       schema: document.querySelector('meta[name="ai-miner-ui-schema"]')?.content === String(UI_SCHEMA),
       framework: typeof Framework7 === 'function' && app.theme === 'ios',
@@ -1023,6 +1089,23 @@
       screens: [...VALID_PAGES].every((page) => screens.has(page)),
       noNativeSelect: !document.querySelector('select'),
       actionPicker: Boolean(actionSheet && actionPopover && actionButton),
+      stoneReturnControl: Boolean(elements.stoneReturnButton
+        && elements.stoneReturnButton.getAttribute('aria-controls') === 'screen-overview'),
+      stoneReturnAvailability: currentPage !== 'stone'
+        || (stoneReturnBlocked
+          ? (elements.stoneReturnButton.hidden
+            && elements.stoneReturnButton.getAttribute('aria-hidden') === 'true'
+            && elements.stoneReturnButton.tabIndex === -1)
+          : (!elements.stoneReturnButton.hidden
+            && elements.stoneReturnButton.getAttribute('aria-hidden') === 'false'
+            && elements.stoneReturnButton.tabIndex === 0)),
+      stoneReturnVisible: !stoneReturnExpected
+        || (elements.stoneReturnButton.getClientRects().length > 0
+          && elements.stoneReturnButton.getBoundingClientRect().height >= 44),
+      stoneReturnLayout: !stoneReturnExpected
+        || (stoneReturnRect.width >= 44 && stoneReturnRect.width <= 160
+          && (stoneReturnHit === elements.stoneReturnButton
+            || elements.stoneReturnButton.contains(stoneReturnHit))),
       focusVisible: CSS.supports('selector(:focus-visible)'),
       offlineAssets: [...document.scripts, ...document.querySelectorAll('link[rel="stylesheet"]')]
         .every((node) => !/^(?:https?:)?\/\//i.test(
@@ -1043,6 +1126,7 @@
 
   window.aiMinerUI = Object.freeze({
     navigate: (page) => switchPage(page, { animate: true, send: true }),
+    returnFromStone,
     getPage: () => currentPage,
     whenHostReady: () => hostReadyPromise,
     reportVisualSmoke(result) {

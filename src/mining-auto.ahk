@@ -9,7 +9,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "9.0.0"
+global AppVersion := "9.0.1"
 processId := DllCall("GetCurrentProcessId")
 isUiSmokeTest := HasCommandLineArgument("--smoke-test")
 isVisualTest := HasCommandLineArgument("--visual-test")
@@ -83,6 +83,8 @@ global Config := {
     workViewLock: ReadIntegerSetting(settingsPath, "ViewLock", "Enabled", 1, 0, 1),
     workViewDownPulseMs: ReadIntegerSetting(settingsPath, "ViewLock", "DownPulseMs", 450, 100, 1500),
     workViewIntervalMs: ReadIntegerSetting(settingsPath, "ViewLock", "ReapplyIntervalMs", 4000, 1500, 30000),
+    workViewMouseStep: ReadIntegerSetting(settingsPath, "ViewLock", "MouseStep", 24, 4, 80),
+    workViewMouseDirection: ReadViewDirectionSetting(settingsPath),
     washCycleMs: ReadIntegerSetting(settingsPath, "Washing", "CycleMs", 9000, 7000, 20000),
     washReadinessGraceMs: ReadIntegerSetting(settingsPath, "Washing", "ReadinessGraceMs", 7000, 5500, 12000),
     washForwardCorrection: ReadIntegerSetting(settingsPath, "Washing", "ForwardCorrection", 1, 0, 1),
@@ -196,7 +198,11 @@ global State := {
     backgroundHungerUnknownLogged: false,
     backgroundEatFailures: 0,
     lastWorkViewAt: 0,
+    lastWorkViewVerifiedAt: 0,
+    workViewStatus: "UNKNOWN",
     workViewFailures: 0,
+    workViewNoEffectCount: 0,
+    workViewDirection: Config.workViewMouseDirection,
     diagnosticPath: A_ScriptDir "\AI採掘機_診断.log",
     diagnosticLines: 0,
     startHotIf: 0,
@@ -457,13 +463,22 @@ if A_Args.Length && A_Args[1] = "--validate" {
         && FarmAttemptCanFinalize(testFarmAttempt, 9, "mining",
             {revision: 9})
     testDebugOverlayText := RuntimeStatusOverlayDebug("FARMING", 9200,
-        10000, 1000, 5200, 2, "FOUND", "ACTIVE", 61000, 60000)
+        10000, 1000, 5200, 2, "FOUND", "INPUT_SENT", 61000, 60000)
     testDebugOverlayOk := InStr(testDebugOverlayText, "Inventory 92")
         && InStr(testDebugOverlayText, "Reward 4.2s")
         && InStr(testDebugOverlayText, "Storage retry 2")
         && InStr(testDebugOverlayText, "Target FOUND")
-        && InStr(testDebugOverlayText, "Camera ACTIVE")
+        && InStr(testDebugOverlayText, "Camera VERIFY")
         && InStr(testDebugOverlayText, "Watchdog LATE")
+    testCameraOverlayStatesOk :=
+        InStr(RuntimeStatusOverlayDebug("RECOVERY", 0, 0, 0, 1000, 0,
+            "LOST", "WAIT_FG", 0, 60000), "Camera WAIT_FG")
+        && InStr(RuntimeStatusOverlayDebug("RECOVERY", 0, 0, 0, 1000, 0,
+            "LOST", "INPUT_SENT", 0, 60000), "Camera VERIFY")
+        && InStr(RuntimeStatusOverlayDebug("FARMING", 0, 0, 0, 1000, 0,
+            "FOUND", "TARGET_OK", 0, 60000), "Camera TARGET_OK")
+        && InStr(RuntimeStatusOverlayDebug("RECOVERY", 0, 0, 0, 1000, 0,
+            "LOST", "FAILED", 0, 60000), "Camera FAILED")
     testFarmFailureCodesOk :=
         FarmFailureCode("所持品を取得できません", "INVENTORY_CHECK")
             = "INVENTORY_DETECTION_FAILED"
@@ -954,7 +969,6 @@ if A_Args.Length && A_Args[1] = "--validate" {
         : !CapacityNeedsStorage({weight: 1000, maxWeight: 10000,
             used: 20, slots: 20}, &testCapacityReason, &testFreeWeight) ? 56
         : testCapacityReason != "free_slots" ? 57
-        : WorkViewDownRoute(450) != "450:32" ? 69
         : !InventorySlotWasConsumed("0001.food.e30=2", "0001.food.e30=1", 1) ? 70
         : InventorySlotWasConsumed("0001.food.e30=2", "0001.food.e30=2", 1) ? 71
         : !InventorySlotWasConsumed("0001.food.e30=1", "-", 1) ? 72
@@ -1045,7 +1059,8 @@ if A_Args.Length && A_Args[1] = "--validate" {
         : !testEndRetryOk ? 132
         : !testGracefulReplayOk ? 133
         : !testInterleaveOk ? 134
-        : !testResetInterleaveOk ? 135 : 0
+        : !testResetInterleaveOk ? 135
+        : !testCameraOverlayStatesOk ? 136 : 0
     if exitCode = 19
         try FileAppend "UPDATER_CAPS=" updaterCapabilities "`r`n",
             State.diagnosticPath, "UTF-8"
@@ -2690,7 +2705,7 @@ RunUiSmokeTest() {
         Sleep 50
     if State.uiSmokeResult != "OK"
         return 44
-    for pageName in ["overview", "vehicle", "settings", "update"] {
+    for pageName in ["overview", "stone", "vehicle", "settings", "update"] {
         ShowPage(pageName)
         if State.page != pageName
             return 45
@@ -3137,11 +3152,7 @@ UpdateRuntimeStatusOverlay(*) {
         : InStr(State.lastTargetProbeResult, "PRESENT ") = 1 ? "FOUND"
         : InStr(State.lastTargetProbeResult, "MISSING ") = 1 ? "LOST"
         : "UNKNOWN"
-    cameraState := State.workViewFailures > 0
-        || (State.farmState = "RECOVERY"
-            && (InStr(State.recoveryReason, "target")
-                || InStr(State.recoveryReason, "view")))
-        ? "ACTIVE" : "OK"
+    cameraState := State.workViewStatus ? State.workViewStatus : "UNKNOWN"
     debugText := Config.debugOverlay
         ? RuntimeStatusOverlayDebug(State.farmState,
             State.lastInventoryWeight, State.lastInventoryMaxWeight,
@@ -3241,7 +3252,10 @@ RuntimeStatusOverlayDebug(farmState, inventoryWeight, inventoryMaxWeight,
         : "--"
     targetText := targetState = "FOUND" || targetState = "LOST"
         ? targetState : "UNKNOWN"
-    cameraText := cameraState = "ACTIVE" ? "ACTIVE" : "OK"
+    cameraText := cameraState = "TARGET_OK" ? "TARGET_OK"
+        : cameraState = "INPUT_SENT" ? "VERIFY"
+        : cameraState = "WAIT_FG" ? "WAIT_FG"
+        : cameraState = "FAILED" ? "FAILED" : "UNKNOWN"
     watchdogText := watchdogLimit > 0 && watchdogAge >= watchdogLimit
         ? "LATE" : "OK"
     return "FSM " farmState " | Inventory " inventoryText
@@ -3540,6 +3554,8 @@ SaveAllSettingsAtomically() {
         IniWrite Config.workViewLock, temporarySettingsPath, "ViewLock", "Enabled"
         IniWrite Config.workViewDownPulseMs, temporarySettingsPath, "ViewLock", "DownPulseMs"
         IniWrite Config.workViewIntervalMs, temporarySettingsPath, "ViewLock", "ReapplyIntervalMs"
+        IniWrite Config.workViewMouseStep, temporarySettingsPath, "ViewLock", "MouseStep"
+        IniWrite Config.workViewMouseDirection, temporarySettingsPath, "ViewLock", "MouseDirection"
         IniWrite Config.vehicleStorageEnabled, temporarySettingsPath, "VehicleStorage", "Enabled"
         IniWrite Config.vehicleRegistered, temporarySettingsPath, "VehicleStorage", "Registered"
         IniWrite Config.vehicleName, temporarySettingsPath, "VehicleStorage", "DisplayName"
@@ -4571,7 +4587,14 @@ ProbeWorkTarget(actionMode, expectedGeneration := 0) {
         : actionMode = "gold" ? "probe-gold" : "probe-mining"
     expected := actionMode = "washing" ? "PRESENT WASH"
         : actionMode = "gold" ? "PRESENT GOLD" : "PRESENT MINE"
-    return ProbeTargetOption(probeMode, expected, expectedGeneration)
+    present := ProbeTargetOption(probeMode, expected, expectedGeneration)
+    ; A completed helper can be interrupted by F9 before this caller resumes.
+    ; Never let an observation from the stopped generation restore TARGET_OK.
+    if expectedGeneration && !IsCurrentRun(expectedGeneration)
+        return false
+    if !present
+        return false
+    return ConfirmWorkViewTarget(actionMode, "probe", expectedGeneration)
 }
 
 ProbeTargetOption(probeMode, expectedResult, expectedGeneration := 0) {
@@ -5336,7 +5359,11 @@ StartMining(*) {
     State.backgroundHungerUnknownLogged := false
     State.backgroundEatFailures := 0
     State.lastWorkViewAt := 0
+    State.lastWorkViewVerifiedAt := 0
+    State.workViewStatus := "UNKNOWN"
     State.workViewFailures := 0
+    State.workViewNoEffectCount := 0
+    State.workViewDirection := Config.workViewMouseDirection
     State.waitingForStone := false
     State.stoneGoneObserved := false
     State.stoneAbsentVotes := 0
@@ -5570,7 +5597,11 @@ StopMining(*) {
     State.backgroundHungerUnknownLogged := false
     State.backgroundEatFailures := 0
     State.lastWorkViewAt := 0
+    State.lastWorkViewVerifiedAt := 0
+    State.workViewStatus := "UNKNOWN"
     State.workViewFailures := 0
+    State.workViewNoEffectCount := 0
+    State.workViewDirection := Config.workViewMouseDirection
     State.targetPid := 0
     HideRuntimeStatusOverlay()
 
@@ -5896,7 +5927,7 @@ MaybeHandleVehicleCapacity(expectedGeneration) {
             }
             if !State.storageRecoveryAttempted {
                 State.storageRecoveryAttempted := true
-                workTargetPresent := RecoverLocalWorkTarget(expectedGeneration)
+                workTargetPresent := RecoverLocalWorkTarget(expectedGeneration, true)
                 if !IsCurrentRun(expectedGeneration)
                     return true
                 if !workTargetPresent && State.lastTargetProbeFatal {
@@ -6087,11 +6118,21 @@ DiscardPendingFarmAttempt(reason := "discarded") {
 
 MarkPendingFarmAttemptClicked(expectedGeneration, actionMode) {
     global State
-    if !FarmAttemptHasBaseline(State.pendingFarmAttempt,
-        expectedGeneration, actionMode)
+    Critical "On"
+    if !IsCurrentRun(expectedGeneration) {
+        Critical "Off"
         return false
+    }
+    if !FarmAttemptHasBaseline(State.pendingFarmAttempt,
+        expectedGeneration, actionMode) {
+        Critical "Off"
+        return false
+    }
     State.pendingFarmAttempt.clicked := true
-    return true
+    Critical "Off"
+    ; try-* がクリックを返した時点で、対象NUIが実在したことは確認済みです。
+    ; SendInputを受理しただけではなく、この観測を視点復旧の成功条件にします。
+    return ConfirmWorkViewTarget(actionMode, "action_click", expectedGeneration)
 }
 
 FarmAttemptHasBaseline(attempt, expectedGeneration, actionMode) {
@@ -6856,16 +6897,19 @@ RestoreLocalSearchPose(expectedGeneration, movementHistory, matchedViewRoute) {
         if !inverseMovement || !PlayLocalRoute(expectedGeneration, inverseMovement)
             return false
     }
-    ; 作業は真下向きで安定するため、相対復元後に下限へ寄せて誤差を消します。
-    if IsCurrentRun(expectedGeneration) {
-        if !PlayLocalRoute(expectedGeneration, "900:32")
-            return false
-    }
+    ; DevConのlook文字列は実カメラ移動を証明できません。位置だけを戻し、
+    ; 続くRecoverLocalWorkTargetが前面ガード付き相対入力と再検出を担当します。
+    if IsCurrentRun(expectedGeneration)
+        WriteDiagnostic("CAMERA_RETURN_PENDING adapter=sendinput-relative")
     return true
 }
 
-RecoverLocalWorkTarget(expectedGeneration) {
+RecoverLocalWorkTarget(expectedGeneration, cameraAlreadySent := false) {
     global State, Config
+    if Config.workViewLock && !cameraAlreadySent {
+        if !MaintainBackgroundWorkView(expectedGeneration, true)
+            return false
+    }
     workTargetPresent := ProbeWorkTarget(State.runMode, expectedGeneration)
     if !IsCurrentRun(expectedGeneration)
         return false
@@ -6886,14 +6930,6 @@ RecoverLocalWorkTarget(expectedGeneration) {
         if !movementOk {
             State.lastTargetProbeFatal := true
             State.lastTargetProbeResult := "ERROR RECOVERY_ROUTE"
-            return false
-        }
-        viewOk := PlayLocalRoute(expectedGeneration, "650:32")
-        if !IsCurrentRun(expectedGeneration)
-            return false
-        if !viewOk {
-            State.lastTargetProbeFatal := true
-            State.lastTargetProbeResult := "ERROR RECOVERY_VIEW"
             return false
         }
         workTargetPresent := ProbeWorkTarget(State.runMode, expectedGeneration)
@@ -7230,9 +7266,24 @@ HandleFarmTargetMissing(expectedGeneration, actionMode) {
     now := MonotonicMs()
     if !State.targetLostSince
         State.targetLostSince := now
+    MarkWorkViewNoEffect(actionMode, "action_missing", expectedGeneration)
     lostFor := now - State.targetLostSince
     WriteDiagnostic("FARM_TARGET_MISSING mode=" actionMode
         " lostMs=" lostFor " state=" State.farmState)
+
+    ; 最初のMISSING直後に実相対入力を試します。従来の15秒待ちと
+    ; DevCon疑似成功を挟まず、FiveMが前面なら次cycleで即再検出します。
+    if Config.workViewLock
+        && (State.workViewStatus = "WAIT_FG"
+            || State.workViewStatus = "FAILED"
+            || !State.lastWorkViewAt
+            || now - State.lastWorkViewAt >= 500) {
+        State.statusLabel.Text := "●  作業対象へ視点を自動復旧中"
+        if !MaintainBackgroundWorkView(expectedGeneration, true)
+            return true
+        ScheduleNext(expectedGeneration, 100)
+        return true
+    }
     if lostFor >= Config.targetLostRecoveryMs {
         returnState := State.farmState = "RESUMING_FARM"
             ? "RESUMING_FARM" : "FARMING"
@@ -7256,13 +7307,7 @@ RunFarmRecoveryCycle(expectedGeneration, expectedTaskId) {
     if rewardReconciliation {
         State.statusLabel.Text := "●  遅延した実報酬を再照合中"
     } else {
-        if State.targetRecoveryAttempts >= 3 {
-            StopAutomationWithFault("自動復旧を3回試しましたが作業対象を確認できません")
-            return
-        }
-        State.targetRecoveryAttempts += 1
-        State.statusLabel.Text := "●  入力・画面・視点を自動復旧中（"
-            State.targetRecoveryAttempts "/3）"
+        State.statusLabel.Text := "●  入力と画面を復旧準備中"
     }
     ReleaseAllInputs()
     if !ReleaseBackgroundTarget(true) {
@@ -7347,12 +7392,38 @@ RunFarmRecoveryCycle(expectedGeneration, expectedTaskId) {
             return
         }
     }
-    if !MaintainBackgroundWorkView(expectedGeneration, true)
+    if State.targetRecoveryAttempts >= 3 {
+        StopAutomationWithFault("実際の視点入力後も作業対象を3回確認できないため停止しました")
         return
-    targetReady := RecoverLocalWorkTarget(expectedGeneration)
+    }
+    cameraDispatched := Config.workViewLock
+    if cameraDispatched && !MaintainBackgroundWorkView(expectedGeneration, true)
+        return
+    Critical "On"
+    if !IsCurrentFarmTask(expectedGeneration, expectedTaskId, "RECOVERY") {
+        Critical "Off"
+        return
+    }
+    State.targetRecoveryAttempts += 1
+    recoveryAttempt := State.targetRecoveryAttempts
+    if cameraDispatched {
+        State.statusLabel.Text := "●  視点入力後の作業対象を確認中（"
+            recoveryAttempt "/3）"
+    } else {
+        State.statusLabel.Text := "●  作業対象を自動復旧中（"
+            recoveryAttempt "/3）"
+    }
+    Critical "Off"
+    ; 最初の2回は視点だけを検証します。3回目だけ境界付き位置補正へ進み、
+    ; 1回の表示で複数のカメラpulseを重ねません。
+    targetReady := cameraDispatched && recoveryAttempt < 3
+        ? ProbeWorkTarget(State.runMode, expectedGeneration)
+        : RecoverLocalWorkTarget(expectedGeneration, cameraDispatched)
     if !IsCurrentFarmTask(expectedGeneration, expectedTaskId, "RECOVERY")
         return
     if !targetReady {
+        MarkWorkViewNoEffect(State.runMode, "recovery_probe",
+            expectedGeneration)
         ScheduleNext(expectedGeneration, 650)
         return
     }
@@ -7366,61 +7437,211 @@ RunFarmRecoveryCycle(expectedGeneration, expectedTaskId) {
     ScheduleNext(expectedGeneration, 100)
 }
 
-WorkViewDownRoute(pulseMs) {
-    pulse := Round(pulseMs)
-    return pulse >= 100 && pulse <= 1500 ? pulse ":32" : ""
-}
-
 MaintainBackgroundWorkView(expectedGeneration, force := false) {
     global State, Config
-    if !Config.backgroundMode || !Config.workViewLock
+    if !Config.workViewLock
         return true
     now := MonotonicMs()
-    if !force && State.lastWorkViewAt
+    if !force && State.workViewStatus != "WAIT_FG"
+        && State.workViewStatus != "FAILED" && State.lastWorkViewAt
         && now - State.lastWorkViewAt < Config.workViewIntervalMs
         return true
-    route := WorkViewDownRoute(Config.workViewDownPulseMs)
-    portReady := route ? EnsureDevConPort(false) : false
+
     if !IsCurrentRun(expectedGeneration)
         return false
-    if !route || !portReady {
+
+    ; FiveM/GTAのカメラは相対マウス軸です。DevConへ +look_down の文字列を
+    ; 書けたことはカメラ移動の証明にならないため、視点には使用しません。
+    ; 別アプリが前面のときにSendInputするとそのアプリを操作してしまうので、
+    ; FiveMが前面へ戻るまで保留し、force時だけcycleを待機させます。
+    if !State.targetHwnd || !WinExist("ahk_id " State.targetHwnd) {
+        State.workViewStatus := "FAILED"
         State.workViewFailures += 1
-        WriteDiagnostic("WORK_VIEW_PORT_ERROR failures=" State.workViewFailures)
+        WriteDiagnostic("CAMERA_TARGET_WINDOW_MISSING failures="
+            State.workViewFailures)
         if State.workViewFailures >= 3 {
             StopAutomationWithFault(
                 "作業視点を確認できないため3回失敗後に安全停止しました")
             return false
         }
-        State.statusLabel.Text := "●  作業視点を再接続中"
+        State.statusLabel.Text := "●  FiveM画面を再確認中"
         ScheduleNext(expectedGeneration, Config.notFoundRetryMs)
         return false
     }
+
+    if !WinActive("ahk_id " State.targetHwnd) {
+        State.workViewStatus := "WAIT_FG"
+        WriteDiagnostic("CAMERA_WAIT_FOREGROUND force=" (force ? 1 : 0))
+        if force || State.targetLostSince {
+            State.statusLabel.Text := "●  FiveMを前面にすると視点を自動復旧します"
+            ScheduleNext(expectedGeneration, 300)
+            return false
+        }
+        return true
+    }
+
+    ; ox_targetのカーソル状態が残ったままでは同じマウス入力がUIカーソルへ
+    ; 消費されるため、所有中のtargetだけを先に解放します。
+    released := ReleaseBackgroundTarget(false)
     if !IsCurrentRun(expectedGeneration)
         return false
-    port := State.lastDevConPort
-    viewResult := RunBackgroundBridgeCancelable(expectedGeneration,
-        "play-route-health", port, route, State.serverEpoch)
-    if !IsCurrentRun(expectedGeneration)
-        return false
-    if viewResult != "ROUTE " port " " Config.workViewDownPulseMs {
+    if !released {
+        State.workViewStatus := "FAILED"
         State.workViewFailures += 1
-        State.lastDevConPort := 0
-        WriteDiagnostic("WORK_VIEW_ERROR result=" viewResult
-            " failures=" State.workViewFailures)
+        WriteDiagnostic("CAMERA_TARGET_RELEASE_ERROR failures="
+            State.workViewFailures)
         if State.workViewFailures >= 3 {
             StopAutomationWithFault(
-                "作業視点を固定できないため3回失敗後に安全停止しました")
+                "作業視点の入力を解放できないため3回失敗後に安全停止しました")
+            return false
+        }
+        State.statusLabel.Text := "●  視点入力を再準備中"
+        ScheduleNext(expectedGeneration, Config.notFoundRetryMs)
+        return false
+    }
+
+    if !WaitWhileReady(70, expectedGeneration) {
+        if !IsCurrentRun(expectedGeneration)
+            return false
+        State.workViewStatus := "WAIT_FG"
+        State.statusLabel.Text := "●  FiveMを前面にすると視点を自動復旧します"
+        WriteDiagnostic("CAMERA_WAIT_FOREGROUND source=settle")
+        ScheduleNext(expectedGeneration, 300)
+        return false
+    }
+    direction := State.workViewDirection < 0 ? -1 : 1
+    sent := SendForegroundCameraDown(expectedGeneration,
+        Config.workViewDownPulseMs, Config.workViewMouseStep, direction)
+    if !sent {
+        if !IsCurrentRun(expectedGeneration)
+            return false
+        if State.targetHwnd && WinExist("ahk_id " State.targetHwnd)
+            && !WinActive("ahk_id " State.targetHwnd) {
+            State.workViewStatus := "WAIT_FG"
+            State.statusLabel.Text := "●  FiveMを前面にすると視点を自動復旧します"
+            WriteDiagnostic("CAMERA_WAIT_FOREGROUND source=pulse")
+            ScheduleNext(expectedGeneration, 300)
+            return false
+        }
+        State.workViewStatus := "FAILED"
+        State.workViewFailures += 1
+        WriteDiagnostic("CAMERA_INPUT_ERROR failures=" State.workViewFailures)
+        if State.workViewFailures >= 3 {
+            StopAutomationWithFault(
+                "作業視点を動かせないため3回失敗後に安全停止しました")
             return false
         }
         State.statusLabel.Text := "●  作業視点を再調整中"
         ScheduleNext(expectedGeneration, Config.notFoundRetryMs)
         return false
     }
+    ; F9 can interrupt immediately after the pulse. Commit its unverified state
+    ; atomically with the generation check so a stopped/new run is never overwritten.
+    Critical "On"
+    if !IsCurrentRun(expectedGeneration) {
+        Critical "Off"
+        return false
+    }
     State.lastWorkViewAt := MonotonicMs()
-    State.workViewFailures := 0
-    WriteDiagnostic("WORK_VIEW_DOWN pulse=" Config.workViewDownPulseMs
-        " mode=" State.runMode)
+    State.workViewStatus := "INPUT_SENT"
+    runMode := State.runMode
+    Critical "Off"
+    WriteDiagnostic("CAMERA_INPUT_SENT adapter=sendinput-relative dy="
+        (Config.workViewMouseStep * direction)
+        " duration=" Config.workViewDownPulseMs
+        " verified=0 mode=" runMode)
     return true
+}
+
+SendForegroundCameraDown(expectedGeneration, durationMs, stepPixels, direction := -1) {
+    global State
+    duration := Max(100, Min(1500, Round(durationMs)))
+    step := Max(4, Min(80, Round(stepPixels)))
+    direction := direction < 0 ? -1 : 1
+    deadline := MonotonicMs() + duration
+    sentCount := 0
+
+    while MonotonicMs() < deadline {
+        ; Keep the final identity/foreground check and the physical input in one
+        ; uninterruptible commit. F9 is serviced as soon as the input call returns.
+        Critical "On"
+        if !IsTargetForeground(expectedGeneration) {
+            Critical "Off"
+            return false
+        }
+        ; 初期方向は実機検証済みの負Yです。対象が戻らないときは方向を
+        ; 反転して再試行するため、ゲーム側のマウス反転設定にも追従します。
+        sent := SendRelativeMouseDelta(0, step * direction)
+        Critical "Off"
+        if !sent
+            return false
+        sentCount += 1
+        if !WaitWhileReady(16, expectedGeneration)
+            return false
+    }
+    return sentCount > 0 && IsTargetForeground(expectedGeneration)
+}
+
+SendRelativeMouseDelta(deltaX, deltaY) {
+    ; INPUT union is aligned to pointer size: MOUSEINPUT begins at 8 bytes on
+    ; 64-bit and 4 bytes on 32-bit AutoHotkey.
+    inputSize := A_PtrSize = 8 ? 40 : 28
+    mouseOffset := A_PtrSize = 8 ? 8 : 4
+    input := Buffer(inputSize, 0)
+    NumPut "UInt", 0, input, 0
+    NumPut "Int", Round(deltaX), input, mouseOffset
+    NumPut "Int", Round(deltaY), input, mouseOffset + 4
+    NumPut "UInt", 0x0001, input, mouseOffset + 12
+    return DllCall("user32\SendInput", "UInt", 1, "Ptr", input.Ptr,
+        "Int", inputSize, "UInt") = 1
+}
+
+ConfirmWorkViewTarget(actionMode, source := "target", expectedGeneration := 0) {
+    global State
+    ; TARGET_OK is an observed NUI result. Guard its state commit so a late probe or
+    ; click from the generation stopped by F9 cannot resurrect a successful status.
+    Critical "On"
+    if expectedGeneration && !IsCurrentRun(expectedGeneration) {
+        Critical "Off"
+        return false
+    }
+    State.workViewStatus := "TARGET_OK"
+    State.lastWorkViewVerifiedAt := MonotonicMs()
+    State.workViewFailures := 0
+    State.workViewNoEffectCount := 0
+    State.targetLostSince := 0
+    dispatchAge := State.lastWorkViewAt
+        ? Max(0, MonotonicMs() - State.lastWorkViewAt) : -1
+    Critical "Off"
+    WriteDiagnostic("CAMERA_TARGET_CONFIRMED source=" DiagnosticToken(source)
+        " mode=" DiagnosticToken(actionMode)
+        " dispatchAge=" dispatchAge)
+    return true
+}
+
+MarkWorkViewNoEffect(actionMode, source := "target_missing",
+    expectedGeneration := 0) {
+    global State
+    Critical "On"
+    if expectedGeneration && !IsCurrentRun(expectedGeneration) {
+        Critical "Off"
+        return false
+    }
+    if State.workViewStatus = "INPUT_SENT" {
+        State.workViewStatus := "FAILED"
+        State.workViewNoEffectCount += 1
+        State.workViewDirection *= -1
+        noEffectCount := State.workViewNoEffectCount
+        nextDirection := State.workViewDirection
+        Critical "Off"
+        WriteDiagnostic("CAMERA_NO_EFFECT source=" DiagnosticToken(source)
+            " mode=" DiagnosticToken(actionMode)
+            " count=" noEffectCount
+            " nextDirection=" nextDirection)
+        return true
+    }
+    Critical "Off"
+    return false
 }
 
 MaybeHandleBackgroundEating(expectedGeneration) {
@@ -9579,12 +9800,21 @@ TestCursorMovementApis() {
     readOk := GetSystemCursorPos(&actualX, &actualY)
     movedOk := readOk && Abs(actualX - testX) <= 2 && Abs(actualY - testY) <= 2
 
+    relativeSent := SendRelativeMouseDelta(6, 0)
+    Sleep 60
+    relativeX := 0
+    relativeY := 0
+    relativeRead := GetSystemCursorPos(&relativeX, &relativeY)
+    relativeMoved := relativeRead && relativeX > actualX
+
     WriteDiagnostic("API_TEST start=" startX "," startY
         " target=" testX "," testY " actual=" actualX "," actualY
-        " set=" setOk " read=" readOk " moved=" movedOk)
+        " set=" setOk " read=" readOk " moved=" movedOk
+        " relativeSent=" relativeSent " relativeActual=" relativeX ","
+        relativeY " relativeMoved=" relativeMoved)
 
     DllCall "user32\SetCursorPos", "Int", startX, "Int", startY
-    return setOk && movedOk
+    return setOk && movedOk && relativeSent && relativeMoved
 }
 
 ReadTiming(settingsFile, keyName, defaultValue, minimum, maximum) {
@@ -9598,6 +9828,13 @@ ReadIntegerSetting(settingsFile, sectionName, keyName, defaultValue, minimum, ma
         return defaultValue
 
     return Min(maximum, Max(minimum, value))
+}
+
+ReadViewDirectionSetting(settingsFile) {
+    try value := Integer(IniRead(settingsFile, "ViewLock", "MouseDirection", -1))
+    catch
+        return -1
+    return value > 0 ? 1 : -1
 }
 
 ReadTextSetting(settingsFile, sectionName, keyName, defaultValue) {

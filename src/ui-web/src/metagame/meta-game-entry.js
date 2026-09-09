@@ -33,7 +33,7 @@ async function initialize() {
 
     metaGame = new StoneMetaGameUI(root, adapter, {
       templateUrl: './metagame/meta-game-template.html',
-      onReturnToFarm: () => window.aiMinerUI?.navigate?.('overview'),
+      onReturnToFarm: returnToMain,
     });
     presentationBoundary = new MetaGamePresentationBoundary(
       metaGame, adapter, window.aiMinerUI?.getPage?.() === 'stone',
@@ -64,7 +64,7 @@ function renderFailure(error) {
   button.className = 'meta-integration-return';
   button.type = 'button';
   button.textContent = '自動操作へ戻る';
-  button.addEventListener('click', () => window.aiMinerUI?.navigate?.('overview'));
+  button.addEventListener('click', returnToMain);
 
   const panel = document.createElement('section');
   panel.className = 'meta-integration-error';
@@ -73,6 +73,12 @@ function renderFailure(error) {
   heading.textContent = 'STONE META GAME';
   panel.append(heading, detail, button);
   root.replaceChildren(panel);
+}
+
+function returnToMain() {
+  return window.aiMinerUI?.returnFromStone?.()
+    ?? window.aiMinerUI?.navigate?.('overview')
+    ?? false;
 }
 
 function safeError(error) {

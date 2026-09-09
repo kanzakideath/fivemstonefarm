@@ -298,6 +298,7 @@ $bridgeOutput = Join-Path $stageRoot 'AI採掘機_Background.exe'
 $updaterOutput = Join-Path $stageRoot 'AI採掘機_Updater.exe'
 Invoke-CSharpBuild -Source $bridgeSource -Output $bridgeOutput
 Invoke-CSharpBuild -Source $updaterSource -Output $updaterOutput
+& (Join-Path $PSScriptRoot 'Test-CameraRecoveryContract.ps1') -SourcePath $mainSource
 & (Join-Path $PSScriptRoot 'Test-WashDomExpressions.ps1') -Bridge $bridgeOutput
 Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'CAPS 11 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HOTBAR INVENTORYKEY HEALTH COMPANION ACTIONWAIT'
 Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'SELFTEST OK' -Mode 'self-test'

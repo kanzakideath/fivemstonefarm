@@ -41,6 +41,19 @@ assert.ok(
   'scoped metagame CSS must load after the main application CSS',
 );
 assert.match(html, /<script type="module" src="metagame\/meta-game-entry\.js"><\/script>/);
+assert.match(html, /id="stone-return-button"[^>]+aria-controls="screen-overview"/);
+assert.match(html, /aria-keyshortcuts="Escape Alt\+ArrowLeft"/);
+assert.match(css, /\.stone-return-button\s*\{[\s\S]*?min-height:\s*44px/);
+assert.match(css, /\.stone-return-button\s*\{[\s\S]*?width:\s*142px/);
+assert.match(css, /\.stone-return-button\[hidden\]\s*\{[\s\S]*?display:\s*none/);
+assert.match(css, /\.screen-stone \.stone-meta \.meta-topbar\s*\{[\s\S]*?padding-left:\s*166px/);
+assert.match(js, /function returnFromStone\(\)/);
+assert.match(js, /event\.key === 'ArrowLeft' && event\.altKey/);
+assert.match(js, /stoneTransientLayerIsOpen\(\)/);
+assert.match(js, /new MutationObserver\(syncStoneReturnAvailability\)/);
+assert.match(js, /stoneReturnAvailability:/);
+assert.match(js, /stoneReturnLayout:/);
+assert.match(metaEntry, /onReturnToFarm:\s*returnToMain/);
 assert.match(metaTemplate, /data-meta-app/);
 assert.match(metaCss, /^\/\* STONE META GAME/m);
 assert.doesNotMatch(`${metaTemplate}\n${metaCss}\n${metaJs}`, /https?:\/\//i, 'metagame assets must remain offline');
