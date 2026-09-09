@@ -1,11 +1,12 @@
 {
   "name": "ai-miner-web-ui",
-  "version": "8.0.6",
+  "version": "9.0.0",
   "private": true,
+  "type": "module",
   "description": "Offline Framework7 UI for AI Miner",
   "scripts": {
     "build": "node build.mjs",
-    "check": "node --check src/app.js && node --check build.mjs && node --check test.mjs && node test.mjs"
+    "check": "node --check src/app.js && node --check src/metagame/meta-game.js && node --check src/metagame/meta-game-adapter.js && node --check src/metagame/meta-game-entry.js && node --check src/metagame/demo-adapter.js && node --check build.mjs && node --check test.mjs && node --check meta-game-adapter.test.mjs && node test.mjs && node meta-game-adapter.test.mjs"
   },
   "dependencies": {
     "framework7": "9.1.3"

@@ -13,7 +13,7 @@ namespace AiMiner.UiHost
 {
     internal static class Program
     {
-        internal const string Capabilities = "UI_CAPS 1 WEBVIEW2 WM_COPYDATA LOCAL_ASSETS FIXTURE";
+        internal const string Capabilities = "UI_CAPS 1 WEBVIEW2 WM_COPYDATA LOCAL_ASSETS FIXTURE METAGAME1";
         private static readonly Regex SafeSessionPattern =
             new Regex(@"\A[A-Za-z0-9_-]{8,128}\z", RegexOptions.CultureInvariant);
 
@@ -40,7 +40,11 @@ namespace AiMiner.UiHost
                 string validationError;
                 bool valid = AssetValidator.TryValidate(options.AssetsPath, out validationError)
                     && HostOptions.RunSelfTests(options.AssetsPath, out validationError)
-                    && Protocol.RunSelfTests(out validationError);
+                    && Protocol.RunSelfTests(out validationError)
+                    && MetaGameBridge.RunSelfTests(options.AssetsPath, out validationError)
+                    && MetaGameRuntime.RunSelfTests(options.AssetsPath, out validationError)
+                    && MainForm.RunTrustedTransportSelfTest(options.AssetsPath,
+                        out validationError);
                 string result = valid ? "SELFTEST OK" : "SELFTEST ERROR " + Protocol.SanitizeDiagnostic(validationError);
                 if (!WriteResult(options.SelfTestResultPath, result))
                     return 3;
@@ -126,7 +130,9 @@ namespace AiMiner.UiHost
                 new Regex(@"\Aai-miner-webview-test-[a-f0-9]{32}\z", RegexOptions.CultureInvariant);
             private static readonly HashSet<string> VisualFixtures = new HashSet<string>(StringComparer.Ordinal)
             {
-                "overview", "action-sheet", "settings", "narrow"
+                "overview", "action-sheet", "settings", "narrow",
+                "stone-home", "stone-gacha", "stone-collection", "stone-achievements",
+                "stone-profile", "stone-narrow", "stone-host"
             };
 
             internal IntPtr BackendWindow;
@@ -141,6 +147,29 @@ namespace AiMiner.UiHost
             internal string VisualTestUserDataFolder;
             internal string CapabilitiesResultPath;
             internal string SelfTestResultPath;
+
+            internal bool IsHostBackedStoneFixture
+            {
+                get { return VisualTest && String.Equals(VisualFixture, "stone-host", StringComparison.Ordinal); }
+            }
+
+            internal bool IsStoneFixture
+            {
+                get { return VisualTest && VisualFixture != null
+                    && VisualFixture.StartsWith("stone-", StringComparison.Ordinal); }
+            }
+
+            internal string ExpectedMetaRoute
+            {
+                get
+                {
+                    if (VisualFixture == "stone-gacha") return "gacha";
+                    if (VisualFixture == "stone-collection") return "collection";
+                    if (VisualFixture == "stone-achievements") return "achievements";
+                    if (VisualFixture == "stone-profile") return "profile";
+                    return "home";
+                }
+            }
 
             internal string GetInitialAppUri()
             {
@@ -160,6 +189,20 @@ namespace AiMiner.UiHost
                     case "narrow":
                     case "overview":
                         return "https://app.local/index.html?fixture=1&page=overview";
+                    case "stone-home":
+                        return "https://app.local/index.html?fixture=1&page=stone&metaRoute=home";
+                    case "stone-gacha":
+                        return "https://app.local/index.html?fixture=1&page=stone&metaRoute=gacha";
+                    case "stone-collection":
+                        return "https://app.local/index.html?fixture=1&page=stone&metaRoute=collection";
+                    case "stone-achievements":
+                        return "https://app.local/index.html?fixture=1&page=stone&metaRoute=achievements";
+                    case "stone-profile":
+                        return "https://app.local/index.html?fixture=1&page=stone&metaRoute=profile";
+                    case "stone-narrow":
+                        return "https://app.local/index.html?fixture=1&page=stone&metaRoute=home";
+                    case "stone-host":
+                        return "https://app.local/index.html?fixture=host&page=stone&metaRoute=home";
                     default:
                         throw new InvalidOperationException("ビジュアルテストのシーンが正しくありません。");
                 }
@@ -362,7 +405,9 @@ namespace AiMiner.UiHost
                 }
                 if (!VisualFixtures.Contains(fixture))
                 {
-                    error = "--fixture は overview、action-sheet、settings、narrow のいずれかです。";
+                    error = "--fixture は overview、action-sheet、settings、narrow、stone-home、"
+                        + "stone-gacha、stone-collection、stone-achievements、stone-profile、"
+                        + "stone-narrow、stone-host のいずれかです。";
                     return false;
                 }
 
@@ -458,23 +503,44 @@ namespace AiMiner.UiHost
 
                     HostOptions parsed;
                     string parseError;
-                    string[] scenes = { "overview", "action-sheet", "settings", "narrow" };
+                    string[] scenes =
+                    {
+                        "overview", "action-sheet", "settings", "narrow",
+                        "stone-home", "stone-gacha", "stone-collection", "stone-achievements",
+                        "stone-profile", "stone-narrow", "stone-host"
+                    };
                     foreach (string scene in scenes)
                     {
+                        int sceneWidth = scene == "narrow" ? 520
+                            : scene == "stone-narrow" ? 600
+                            : scene.StartsWith("stone-", StringComparison.Ordinal) ? 1180 : 820;
                         string[] visualArgs =
                         {
                             "--visual-test", "--assets", assetsPath, "--fixture", scene,
-                            "--window-width", scene == "narrow" ? "520" : "820", "--window-height", "640"
+                            "--window-width", sceneWidth.ToString(CultureInfo.InvariantCulture),
+                            "--window-height", "640"
                         };
                         string expectedUri = scene == "action-sheet"
                             ? "https://app.local/index.html?fixture=1&page=overview&picker=1"
                             : scene == "settings"
                                 ? "https://app.local/index.html?fixture=1&page=settings"
-                                : "https://app.local/index.html?fixture=1&page=overview";
+                                : scene == "stone-gacha"
+                                    ? "https://app.local/index.html?fixture=1&page=stone&metaRoute=gacha"
+                                    : scene == "stone-collection"
+                                        ? "https://app.local/index.html?fixture=1&page=stone&metaRoute=collection"
+                                    : scene == "stone-achievements"
+                                        ? "https://app.local/index.html?fixture=1&page=stone&metaRoute=achievements"
+                                    : scene == "stone-profile"
+                                        ? "https://app.local/index.html?fixture=1&page=stone&metaRoute=profile"
+                                        : scene == "stone-home" || scene == "stone-narrow"
+                                            ? "https://app.local/index.html?fixture=1&page=stone&metaRoute=home"
+                                            : scene == "stone-host"
+                                                ? "https://app.local/index.html?fixture=host&page=stone&metaRoute=home"
+                                            : "https://app.local/index.html?fixture=1&page=overview";
                         if (!TryParse(visualArgs, out parsed, out parseError)
                             || !parsed.VisualTest || !parsed.Fixture
                             || parsed.VisualFixture != scene
-                            || parsed.WindowWidth != (scene == "narrow" ? 520 : 820)
+                            || parsed.WindowWidth != sceneWidth
                             || parsed.WindowHeight != 640
                             || parsed.GetInitialAppUri() != expectedUri
                             || !String.Equals(parsed.VisualTestUserDataFolder, temporary,

@@ -5,10 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light">
   <meta name="ai-miner-ui-schema" content="1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>AI採掘機</title>
   <link rel="stylesheet" href="vendor/framework7-bundle.min.css">
   <link rel="stylesheet" href="app.css">
+  <link rel="stylesheet" href="metagame/meta-game.css">
 </head>
 <body>
   <svg class="icon-definitions" aria-hidden="true" focusable="false">
@@ -33,6 +34,10 @@
     <symbol id="icon-update" viewBox="0 0 24 24">
       <path d="M19 8a8 8 0 1 0 1 6"></path>
       <path d="M19 4v4h-4"></path>
+    </symbol>
+    <symbol id="icon-stone" viewBox="0 0 24 24">
+      <path d="m6.1 6.8 5.3-3.2 5.8 2.2 3.1 5.2-2.1 6.8-6.5 2.6-6.4-3.1-1.6-6.1 2.4-4.4Z"></path>
+      <path d="m6.1 6.8 5.4 2.1 5.7-3.1M11.5 8.9l.2 11.5M3.7 11.2l7.8-2.3 6.7 8.9"></path>
     </symbol>
     <symbol id="icon-chevron" viewBox="0 0 24 24">
       <path d="m9 5 7 7-7 7"></path>
@@ -80,6 +85,9 @@
               <span class="sidebar-selection" aria-hidden="true"></span>
               <button id="tab-overview" class="sidebar-item is-selected" type="button" role="tab" aria-selected="true" aria-controls="screen-overview" data-page="overview">
                 <svg aria-hidden="true"><use href="#icon-overview"></use></svg><span>概要</span>
+              </button>
+              <button id="tab-stone" class="sidebar-item" type="button" role="tab" aria-selected="false" aria-controls="screen-stone" data-page="stone">
+                <svg aria-hidden="true"><use href="#icon-stone"></use></svg><span>STONE</span>
               </button>
               <button id="tab-vehicle" class="sidebar-item" type="button" role="tab" aria-selected="false" aria-controls="screen-vehicle" data-page="vehicle">
                 <svg aria-hidden="true"><use href="#icon-vehicle"></use></svg><span>車両</span>
@@ -163,6 +171,10 @@
                 </section>
                 <p id="shortcut-hint" class="shortcut-hint">開始 F8 · 停止 F9</p>
               </div>
+            </section>
+
+            <section id="screen-stone" class="screen screen-stone" data-page="stone" role="tabpanel" aria-labelledby="tab-stone" aria-hidden="true">
+              <div id="stone-meta-root" class="stone-meta-host" aria-busy="true"></div>
             </section>
 
             <section id="screen-vehicle" class="screen" data-page="vehicle" role="tabpanel" aria-labelledby="tab-vehicle" aria-hidden="true">
@@ -273,12 +285,47 @@
                       <span class="row-label">起動時にアップデートを確認</span>
                       <span class="toggle color-green"><input id="setting-auto-update" type="checkbox"><span class="toggle-icon"></span></span>
                     </label>
+                  </div>
+                  <p class="group-footnote">食料は指定したホットバースロットから使い、個数が減ったときだけ成功として記録します。</p>
+                </section>
+
+                <section class="section-block" aria-labelledby="recovery-heading">
+                  <h2 id="recovery-heading" class="section-label">自動収納と復旧</h2>
+                  <div class="grouped-list">
                     <label class="setting-row input-row" for="minimum-free-weight">
                       <span class="row-label">収納を始める残り重量</span>
                       <span class="unit-input"><input id="minimum-free-weight" class="inline-input" type="number" min="250" max="20000" step="250" inputmode="numeric" value="2000"><span>g</span></span>
                     </label>
+                    <label class="setting-row input-row" for="storage-trigger-percent">
+                      <span class="row-label">使用率の収納しきい値</span>
+                      <span class="unit-input"><input id="storage-trigger-percent" class="inline-input" type="number" min="50" max="99" step="1" inputmode="numeric" value="92"><span>%</span></span>
+                    </label>
+                    <label class="setting-row input-row" for="estimated-reward-weight">
+                      <span class="row-label">1回分の予想重量</span>
+                      <span class="unit-input"><input id="estimated-reward-weight" class="inline-input" type="number" min="250" max="20000" step="250" inputmode="numeric" value="2000"><span>g</span></span>
+                    </label>
+                    <label class="setting-row input-row" for="minimum-free-slots">
+                      <span class="row-label">確保する空きスロット</span>
+                      <span class="unit-input"><input id="minimum-free-slots" class="inline-input" type="number" min="0" max="10" step="1" inputmode="numeric" value="1"><span>枠</span></span>
+                    </label>
+                    <label class="setting-row input-row" for="storage-max-retries">
+                      <span class="row-label">収納の最大再試行</span>
+                      <span class="unit-input"><input id="storage-max-retries" class="inline-input" type="number" min="1" max="8" step="1" inputmode="numeric" value="5"><span>回</span></span>
+                    </label>
+                    <label class="setting-row input-row" for="farm-watchdog-seconds">
+                      <span class="row-label">成果なしの復旧時間</span>
+                      <span class="unit-input"><input id="farm-watchdog-seconds" class="inline-input" type="number" min="15" max="180" step="5" inputmode="numeric" value="60"><span>秒</span></span>
+                    </label>
+                    <label class="setting-row input-row" for="target-lost-recovery-seconds">
+                      <span class="row-label">対象再探索の待機時間</span>
+                      <span class="unit-input"><input id="target-lost-recovery-seconds" class="inline-input" type="number" min="5" max="60" step="1" inputmode="numeric" value="15"><span>秒</span></span>
+                    </label>
+                    <label class="setting-row switch-row" for="setting-debug-overlay">
+                      <span class="row-label">診断オーバーレイ</span>
+                      <span class="toggle color-green"><input id="setting-debug-overlay" type="checkbox"><span class="toggle-icon"></span></span>
+                    </label>
                   </div>
-                  <p class="group-footnote">食料は指定したホットバースロットから使い、個数が減ったときだけ成功として記録します。</p>
+                  <p class="group-footnote">次の1回で容量を超える可能性も含めて収納し、結果確認に失敗した場合は設定回数まで自動復旧します。</p>
                 </section>
 
                 <button id="settings-save" class="primary-action pressable" type="button">
@@ -360,5 +407,6 @@
 
   <script src="vendor/framework7-bundle.min.js"></script>
   <script src="app.js"></script>
+  <script type="module" src="metagame/meta-game-entry.js"></script>
 </body>
 </html>

@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "assets": [
+    { "id": "banner-eternal", "type": "banner", "uri": "procedural://banner/eternal", "fallbackUri": "procedural://banner/default" },
+    { "id": "banner-golden", "type": "banner", "uri": "procedural://banner/golden", "fallbackUri": "procedural://banner/default" },
+    { "id": "banner-archive", "type": "banner", "uri": "procedural://banner/archive", "fallbackUri": "procedural://banner/default" },
+    { "id": "achievement-mining", "type": "icon", "uri": "procedural://icon/pickaxe", "fallbackUri": "procedural://icon/stone" },
+    { "id": "achievement-gacha", "type": "icon", "uri": "procedural://icon/case", "fallbackUri": "procedural://icon/stone" },
+    { "id": "achievement-collection", "type": "icon", "uri": "procedural://icon/grid", "fallbackUri": "procedural://icon/stone" },
+    { "id": "achievement-relationship", "type": "icon", "uri": "procedural://icon/heart", "fallbackUri": "procedural://icon/stone" },
+    { "id": "achievement-profile", "type": "icon", "uri": "procedural://icon/person", "fallbackUri": "procedural://icon/stone" },
+    { "id": "achievement-secret", "type": "icon", "uri": "procedural://icon/secret", "fallbackUri": "procedural://icon/stone" },
+    { "id": "missing-stone", "type": "fallback", "uri": "procedural://stone/missing", "fallbackUri": "procedural://stone/ordinary" }
+  ]
+}

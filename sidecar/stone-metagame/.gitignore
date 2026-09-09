@@ -1,0 +1,7 @@
+backend/bin/
+backend/obj/
+backend.tests/bin/
+backend.tests/obj/
+preview-artifacts/
+.chrome-profile-*/
+.edge-profile-*/

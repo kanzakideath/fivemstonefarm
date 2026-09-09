@@ -3,7 +3,7 @@
   "baseArguments": [
     "--visual-test"
   ],
-  "windowTitlePattern": "^AI\u63a1\u6398\u6a5f(?:\\s.*)?$",
+  "windowTitlePattern": "^AI\u63a1\u6398\u6a5f READY$",
   "scenarios": [
     {
       "name": "overview",
@@ -20,6 +20,34 @@
     {
       "name": "narrow",
       "arguments": ["--fixture", "overview", "--window-width", "520", "--window-height", "640"]
+    },
+    {
+      "name": "stone-home",
+      "arguments": ["--fixture", "stone-home", "--window-width", "1180", "--window-height", "850"]
+    },
+    {
+      "name": "stone-gacha",
+      "arguments": ["--fixture", "stone-gacha", "--window-width", "1180", "--window-height", "850"]
+    },
+    {
+      "name": "stone-collection",
+      "arguments": ["--fixture", "stone-collection", "--window-width", "1180", "--window-height", "850"]
+    },
+    {
+      "name": "stone-achievements",
+      "arguments": ["--fixture", "stone-achievements", "--window-width", "1180", "--window-height", "850"]
+    },
+    {
+      "name": "stone-profile",
+      "arguments": ["--fixture", "stone-profile", "--window-width", "1180", "--window-height", "850"]
+    },
+    {
+      "name": "stone-narrow",
+      "arguments": ["--fixture", "stone-narrow", "--window-width", "600", "--window-height", "1000"]
+    },
+    {
+      "name": "stone-host",
+      "arguments": ["--fixture", "stone-host", "--window-width", "1180", "--window-height", "850"]
     }
   ]
 }

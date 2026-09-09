@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 2,
+  "economy": {
+    "miningPointsPerSuccess": 1,
+    "pointsPerDraw": 100,
+    "ticketEveryMines": 1000,
+    "ticketsPerMilestone": 1,
+    "historyLimit": 2000,
+    "processedEventLimit": 2048,
+    "duplicateFragments": {
+      "NORMAL": 1,
+      "RARE": 3,
+      "SUPER_RARE": 10,
+      "SSR": 50,
+      "UR": 200,
+      "LEGENDARY": 1000
+    }
+  },
+  "progression": {
+    "xpPerMining": 1,
+    "levelBaseXp": 25,
+    "levelExponent": 1.48,
+    "maximumLevel": 999
+  },
+  "rarities": [
+    { "id": "NORMAL", "label": "NORMAL", "basisPoints": 6500, "order": 0, "color": "#A8ADB8" },
+    { "id": "RARE", "label": "RARE", "basisPoints": 2200, "order": 1, "color": "#56A8FF" },
+    { "id": "SUPER_RARE", "label": "SUPER RARE", "basisPoints": 900, "order": 2, "color": "#9D72FF" },
+    { "id": "SSR", "label": "SSR", "basisPoints": 300, "order": 3, "color": "#FFBF3F" },
+    { "id": "UR", "label": "UR", "basisPoints": 90, "order": 4, "color": "#FF66C8" },
+    { "id": "LEGENDARY", "label": "LEGENDARY", "basisPoints": 10, "order": 5, "color": "#FFF2A8" }
+  ],
+  "presentation": {
+    "fakeoutBasisPoints": {
+      "SUPER_RARE": 900,
+      "SSR": 2200,
+      "UR": 4200,
+      "LEGENDARY": 10000
+    },
+    "singleReelCards": 56,
+    "singleTargetIndex": 49,
+    "historyPreviewLimit": 120,
+    "highRarityVariants": {
+      "SSR": ["gold-ascension", "reverse-stop", "card-crack"],
+      "UR": ["rainbow-blackout", "silent-reversal", "prismatic-rift"],
+      "LEGENDARY": ["system-error", "world-fracture", "zero-signal"]
+    },
+    "preCueBasisPoints": {
+      "SSR": 4800,
+      "UR": 6800,
+      "LEGENDARY": 8500
+    },
+    "speedMultipliers": {
+      "normal": 1.0,
+      "fast": 0.42,
+      "skip": 0.08
+    }
+  }
+}

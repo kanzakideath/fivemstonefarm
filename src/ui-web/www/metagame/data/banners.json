@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "banners": [
+    {
+      "id": "eternal-stone",
+      "name": "ETERNAL STONE",
+      "description": "採掘の果てで、石は輝く。すべての恒常石が排出される標準バナー。",
+      "bannerAssetId": "banner-eternal",
+      "startAtUtc": "",
+      "endAtUtc": "",
+      "isDefault": true,
+      "cost": 100,
+      "tenPullCost": 1000,
+      "pool": { "itemIds": [], "categories": [], "includeSecret": true },
+      "pickups": [
+        { "itemId": "stone-pro-max", "shareBasisPoints": 3500 },
+        { "itemId": "origin-stone", "shareBasisPoints": 4000 },
+        { "itemId": "civilization-stone", "shareBasisPoints": 5000 }
+      ],
+      "rates": { "NORMAL": 6500, "RARE": 2200, "SUPER_RARE": 900, "SSR": 300, "UR": 90, "LEGENDARY": 10 },
+      "pityTracks": [
+        { "id": "ssr-pity", "label": "SSR PITY", "threshold": 50, "minimumRarity": "SSR", "resetAtOrAbove": "SSR" },
+        { "id": "ur-pity", "label": "UR PITY", "threshold": 300, "minimumRarity": "UR", "resetAtOrAbove": "UR" },
+        { "id": "legendary-spark", "label": "LEGENDARY SPARK", "threshold": 1000, "minimumRarity": "LEGENDARY", "resetAtOrAbove": "LEGENDARY" }
+      ],
+      "tenPullMinimumRarity": "SUPER_RARE"
+    },
+    {
+      "id": "golden-mining-pickup",
+      "name": "GOLDEN MINING PICKUP",
+      "description": "プロフィールを金色に染める石・アイコン・フレームを重点収録。",
+      "bannerAssetId": "banner-golden",
+      "startAtUtc": "",
+      "endAtUtc": "",
+      "isDefault": false,
+      "cost": 100,
+      "tenPullCost": 1000,
+      "pool": { "itemIds": [], "categories": [], "includeSecret": true },
+      "pickups": [
+        { "itemId": "golden-frame", "shareBasisPoints": 4500 },
+        { "itemId": "stone-avatar-royal", "shareBasisPoints": 3500 },
+        { "itemId": "legendary-frame", "shareBasisPoints": 5000 }
+      ],
+      "rates": { "NORMAL": 6500, "RARE": 2200, "SUPER_RARE": 900, "SSR": 300, "UR": 90, "LEGENDARY": 10 },
+      "pityTracks": [
+        { "id": "ssr-pity", "label": "SSR PITY", "threshold": 50, "minimumRarity": "SSR", "resetAtOrAbove": "SSR" },
+        { "id": "ur-pity", "label": "UR PITY", "threshold": 300, "minimumRarity": "UR", "resetAtOrAbove": "UR" },
+        { "id": "legendary-spark", "label": "LEGENDARY SPARK", "threshold": 1000, "minimumRarity": "LEGENDARY", "resetAtOrAbove": "LEGENDARY" }
+      ],
+      "tenPullMinimumRarity": "SUPER_RARE"
+    },
+    {
+      "id": "ancient-stone-archive",
+      "name": "ANCIENT STONE ARCHIVE",
+      "description": "原初・文明・終焉。石の時間軸に触れるアーカイブバナー。",
+      "bannerAssetId": "banner-archive",
+      "startAtUtc": "",
+      "endAtUtc": "",
+      "isDefault": false,
+      "cost": 100,
+      "tenPullCost": 1000,
+      "pool": { "itemIds": [], "categories": [], "includeSecret": true },
+      "pickups": [
+        { "itemId": "origin-stone", "shareBasisPoints": 5000 },
+        { "itemId": "civilization-stone", "shareBasisPoints": 6500 }
+      ],
+      "rates": { "NORMAL": 6500, "RARE": 2200, "SUPER_RARE": 900, "SSR": 300, "UR": 90, "LEGENDARY": 10 },
+      "pityTracks": [
+        { "id": "ssr-pity", "label": "SSR PITY", "threshold": 50, "minimumRarity": "SSR", "resetAtOrAbove": "SSR" },
+        { "id": "ur-pity", "label": "UR PITY", "threshold": 300, "minimumRarity": "UR", "resetAtOrAbove": "UR" },
+        { "id": "legendary-spark", "label": "LEGENDARY SPARK", "threshold": 1000, "minimumRarity": "LEGENDARY", "resetAtOrAbove": "LEGENDARY" }
+      ],
+      "tenPullMinimumRarity": "SUPER_RARE"
+    }
+  ]
+}

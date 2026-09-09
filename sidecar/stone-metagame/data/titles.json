@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "titles": [
+    { "id": "rookie-miner", "name": "駆け出し石掘り", "tier": "COMMON" },
+    { "id": "stone-friend", "name": "石と話せる者", "tier": "RARE" },
+    { "id": "stone-seer", "name": "石を見る者", "tier": "EPIC" },
+    { "id": "mining-master", "name": "採掘王", "tier": "EPIC" },
+    { "id": "collector", "name": "石図鑑司書", "tier": "RARE" },
+    { "id": "golden-luck", "name": "金色を引いた者", "tier": "EPIC" },
+    { "id": "stone-beloved", "name": "石を愛し、石に愛された者", "tier": "LEGENDARY" },
+    { "id": "century-stone", "name": "百錬成石", "tier": "LEGENDARY" },
+    { "id": "just-stone", "name": "石", "tier": "SECRET" }
+  ]
+}

@@ -1,17 +1,24 @@
-# ソース配置 v8.0.6
+# ソース配置 v9.0.0
 
 - `mining-auto.ahk`: 状態管理、設定、ホットキー、採掘処理、ローカル車両登録・探索・収納、更新制御を担当するバックエンドです。
-- `ui-web/`: Framework7のiOSテーマを明示した完全オフラインUIです。`npm ci` と `npm run build` で `www/` を生成します。
-- `ui-host/`: .NET Framework WinForms上のWebView2ホストです。ローカル資産だけを表示し、PID・HWND・セッションを照合したWM_COPYDATAでAHKと通信します。
+- `ui-web/`: Framework7のiOSテーマを明示した完全オフラインUIです。概要・車両・STONE・設定・アップデートを提供し、`npm ci` と `npm run build` で `www/` を生成します。
+- `ui-host/`: .NET Framework WinForms上のWebView2ホストです。ローカル資産だけを表示し、PID・HWND・セッションを照合したWM_COPYDATAでAHKと通信します。Stone Metagameの公開APIを直列ワーカーへ分離し、Farm処理を待たせずに処理します。
 - `background-bridge/CdpBridge.cs`: FiveMのox_target・ox_inventory NUIを構造的に検出し、対象操作、容量取得、ストレージ照合、差分収納、境界付き移動・視点操作を行います。
 - `updater/Updater.cs`: 固定GitHub Releaseの署名・サイズ・SHA-256を検証して自己更新します。
 - `assets/`: AHKへ埋め込む検出用アセットです。
+- `../sidecar/stone-metagame/`: 統合元の検証済みStone Metagameです。ドメイン、抽選、Profile、状態schemaを本体側で再実装せず、backendをリンクし、UIとカタログを一致検証して取り込みます。
 
 ## 作業完了の検知
 
 採掘・石洗い・砂金採りは、対象選択から進捗UIの開始・安定した終了までを同じbridgeプロセスで監視し、次の作業対象が使用可能になった時点で再実行します。完了時の3フレーム照合と短い視点補正は同一CDP接続を使い回します。サーバー側の作業時間自体は短縮せず、完了後の余分な固定待機だけを避けます。
 
 石洗いは完了ごとに前進補正を1度だけ実行します。同じ `石を洗う` ボタンが同時に複数表示された場合は、選択状態、照準との距離、DOM順で使用可能な候補を1つに決定します。
+
+## Stone Metagame連携
+
+採掘開始前後の確定インベントリを比較し、石の重量または個数が実際に増えた時点だけで、一意なmining event IDをMetagame公開APIへ送ります。同じIDは冪等に処理されるため、再送されても二重計上しません。採掘のクリック・進捗開始・失敗・石洗い・砂金採り・収納・Farm再開はイベント源にしません。
+
+Metagame側は `totalStoneMined`、XP、Level、Affinity、Achievement、Points、Rewardsを所有し、Farm Controllerはそれらを計算しません。状態は `%LOCALAPPDATA%\AI採掘機\metagame\state.json` と `state.json.bak` にFarm設定とは分けて保存し、state schema v2と原子的置換の保証を維持します。UIはHOME、GACHA、COLLECTION、ACHIEVEMENTS、PROFILEをsidecarの部品・カタログと同じ内容で表示します。
 
 ## ローカル車両登録
 
@@ -21,7 +28,11 @@
 
 ## 所持品保護
 
-容量はプレイヤー側の最新 `items[].weight` 合計と `maxWeight` を主条件、全スロット使用を補助条件にします。インベントリを閉じた後に残る初期weight値は判定へ使いません。開始時の各品をスロット・名前・正規化メタデータ・数量で基準化し、その基準分は移しません。収納ごとに登録ストレージID、荷台容量、プレイヤー側減少、荷台側増加を検証します。
+容量はプレイヤー側の最新 `items[].weight` 合計と `maxWeight` による使用率、次の報酬予測を含む残り重量、空きスロット数を判定条件にします。インベントリを閉じた後に残る初期weight値は判定へ使いません。開始時の各品をスロット・名前・正規化メタデータ・数量で基準化し、その基準分は移しません。収納ごとに登録ストレージID、プレイヤー所持品の実減少、収納後に次回報酬を受け取れる容量を検証します。
+
+開始時点ですでにしきい値を超えている場合、開始後の正の差分が存在しないため自動収納は実行しません。既存品の全搬出を防ぐ `UNTRUSTED_STORAGE_BASELINE` として安全停止し、空きを作ってからの再開を案内します。
+
+Farm Controllerは `IDLE`、`FARMING`、`INVENTORY_CHECK`、`INVENTORY_FULL`、`STOPPING_FARM`、`OPENING_STORAGE`、`STORING`、`VERIFY_STORAGE`、`RETURNING_TO_FARM`、`RESUMING_FARM`、`RECOVERY`、`ERROR` を唯一の権威状態として扱います。世代・task IDに一致しない遅延結果は破棄し、全入力解放後のRecoveryは最新所持品を観測して、容量不足なら収納へ、収納済みなら復帰へ分岐します。`RESUMING_FARM` は最初の確認済み報酬が届くまで完了しません。
 
 稼働HUDはAHK内のクリック透過・非アクティブな軽量ウィンドウです。FiveMのクライアント矩形へ追従し、FiveMが前面の間だけ表示します。WebView2を追加起動せず、別アプリの入力やフォーカスを奪いません。
 
@@ -29,6 +40,10 @@
 
 バックグラウンド作業では、採掘・石洗い・砂金採りの実行前に一定間隔で下向き入力を再適用します。物理マウスは動かさず、作業ボタンの再検出を閉ループ確認として使います。食事はFiveMが前面なら空腹ゲージを複数フレーム確認し、裏画面でゲージを安全に読めない間だけ時間上限のフォールバックを使います。設定画面のスロットはox_inventory標準の1～5に限定し、使用前後の同スロット品の個数減少を確認できた場合だけ成功として記録します。3回連続で確認できない場合は安全停止します。
 
+作業対象の未検出が設定時間を超えると視点・対象Recoveryを開始します。確認済み報酬のない状態がWatchdog時間を超えた場合も同様に復旧し、上限後は安全停止します。詳細デバッグ表示は単一状態、task ID、再試行、容量判定理由をHUDへ追加します。
+
 ## ビルド
 
 `scripts/Build.ps1` は固定依存からオフラインUIとWebView2ホストを作り、必要ファイルだけをAHKの単一EXEへ埋め込みます。UIホストは外部ナビゲーション、ダウンロード、新規ウィンドウを拒否します。完成EXEのvalidate/smokeと専用ウィンドウの視覚テストを通してから配布します。
+
+Stone Metagame統合ではsidecarのNode/C#テスト、取り込みファイルのSHA-256一致、公開APIの重複排除・再起動復元テストもビルド条件です。実際のFiveMサーバー固有NUI、車両配置、通信遅延を含む実地試験は別途必要です。

@@ -28,6 +28,13 @@ $uiHostProject = Join-Path $sourceRoot 'ui-host\AI.Miner.UiHost.csproj'
 $uiHostLock = Join-Path $sourceRoot 'ui-host\packages.lock.json'
 $uiHostOutput = Join-Path $buildRoot 'ui-host'
 $nugetPackageRoot = Join-Path $buildRoot 'nuget-packages'
+$stoneSidecarRoot = Join-Path $repoRoot 'sidecar\stone-metagame'
+$stoneSidecarPackage = Join-Path $stoneSidecarRoot 'package.json'
+$stoneSidecarBackendProject = Join-Path $stoneSidecarRoot 'backend\StoneMetaGame.csproj'
+$stoneSidecarTestsProject = Join-Path $stoneSidecarRoot 'backend.tests\StoneMetaGame.Tests.csproj'
+$stoneSidecarUiRoot = Join-Path $stoneSidecarRoot 'ui'
+$stoneSidecarDataRoot = Join-Path $stoneSidecarRoot 'data'
+$integratedMetaRoot = Join-Path $uiWebRoot 'src\metagame'
 $rootReadme = Join-Path $repoRoot 'README.md'
 $sourceReadme = Join-Path $sourceRoot 'README.md'
 $usageGuide = Join-Path $repoRoot 'docs\AI採掘機_使い方.txt'
@@ -44,10 +51,62 @@ if (-not $SkipToolBootstrap) {
 
 foreach ($requiredFile in @($mainSource, $bridgeSource, $updaterSource, $rootReadme,
         $sourceReadme, $usageGuide, $configTemplate, $autoHotkey,
-        $ahk2Exe, $uiWebPackage, $uiWebLock, $uiHostProject, $uiHostLock)) {
+        $ahk2Exe, $uiWebPackage, $uiWebLock, $uiHostProject, $uiHostLock,
+        $stoneSidecarPackage, $stoneSidecarBackendProject, $stoneSidecarTestsProject,
+        (Join-Path $stoneSidecarUiRoot 'meta-game.js'),
+        (Join-Path $stoneSidecarUiRoot 'meta-game.css'),
+        (Join-Path $stoneSidecarUiRoot 'meta-game-template.html'),
+        (Join-Path $stoneSidecarRoot 'demo\demo-adapter.js'),
+        (Join-Path $integratedMetaRoot 'meta-game-adapter.js'),
+        (Join-Path $integratedMetaRoot 'meta-game-entry.js'))) {
     if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
         throw "Required build input is missing: $requiredFile"
     }
+}
+
+$stoneCatalogNames = @(
+    'achievements.json',
+    'affinity.json',
+    'assets.json',
+    'banners.json',
+    'gacha.json',
+    'items.json',
+    'level-rewards.json',
+    'messages.json',
+    'titles.json'
+)
+foreach ($catalogName in $stoneCatalogNames) {
+    foreach ($catalogPath in @(
+            (Join-Path $stoneSidecarDataRoot $catalogName),
+            (Join-Path $integratedMetaRoot (Join-Path 'data' $catalogName)))) {
+        if (-not (Test-Path -LiteralPath $catalogPath -PathType Leaf)) {
+            throw "Required Stone Metagame catalog is missing: $catalogPath"
+        }
+    }
+}
+
+function Assert-SameFileHash {
+    param(
+        [Parameter(Mandatory)] [string]$ReferencePath,
+        [Parameter(Mandatory)] [string]$IntegratedPath
+    )
+
+    $referenceHash = (Get-FileHash -LiteralPath $ReferencePath -Algorithm SHA256).Hash
+    $integratedHash = (Get-FileHash -LiteralPath $IntegratedPath -Algorithm SHA256).Hash
+    if ($referenceHash -cne $integratedHash) {
+        throw "Integrated Stone Metagame asset differs from its validated sidecar source: $IntegratedPath"
+    }
+}
+
+foreach ($uiName in @('meta-game.js', 'meta-game.css', 'meta-game-template.html')) {
+    Assert-SameFileHash -ReferencePath (Join-Path $stoneSidecarUiRoot $uiName) `
+        -IntegratedPath (Join-Path $integratedMetaRoot $uiName)
+}
+Assert-SameFileHash -ReferencePath (Join-Path $stoneSidecarRoot 'demo\demo-adapter.js') `
+    -IntegratedPath (Join-Path $integratedMetaRoot 'demo-adapter.js')
+foreach ($catalogName in $stoneCatalogNames) {
+    Assert-SameFileHash -ReferencePath (Join-Path $stoneSidecarDataRoot $catalogName) `
+        -IntegratedPath (Join-Path $integratedMetaRoot (Join-Path 'data' $catalogName))
 }
 
 $mainText = Get-Content -LiteralPath $mainSource -Raw
@@ -128,7 +187,7 @@ if ($LASTEXITCODE -ne 0) {
 [xml]$uiHostProjectXml = Get-Content -LiteralPath $uiHostProject -Raw
 $uiHostProperties = $uiHostProjectXml.Project.PropertyGroup |
     Where-Object { $_.TargetFramework } | Select-Object -First 1
-$webViewReference = $uiHostProjectXml.Project.ItemGroup.PackageReference |
+$webViewReference = $uiHostProjectXml.SelectNodes('/Project/ItemGroup/PackageReference') |
     Where-Object { $_.Include -eq 'Microsoft.Web.WebView2' } | Select-Object -First 1
 if ($uiHostProperties.TargetFramework -cne 'net48' -or
     $uiHostProperties.PlatformTarget -cne 'x64' -or
@@ -246,6 +305,22 @@ Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'SELFTEST OK' -Mo
 Invoke-CapabilitySmokeTest -Executable $updaterOutput -Expected 'UPDATE_CAPS 1 CHECK DOWNLOAD APPLY'
 
 $npm = Get-Command npm.cmd -ErrorAction Stop
+Push-Location $stoneSidecarRoot
+try {
+    & $npm.Source test
+    if ($LASTEXITCODE -ne 0) { throw 'Validated Stone Metagame Node tests failed.' }
+    foreach ($scriptPath in @(
+            (Join-Path $stoneSidecarUiRoot 'meta-game.js'),
+            (Join-Path $stoneSidecarRoot 'demo\demo-adapter.js'),
+            (Join-Path $stoneSidecarRoot 'scripts\serve.mjs'))) {
+        & $node.Source --check $scriptPath
+        if ($LASTEXITCODE -ne 0) { throw "Stone Metagame JavaScript check failed: $scriptPath" }
+    }
+}
+finally {
+    Pop-Location
+}
+
 Push-Location $uiWebRoot
 try {
     & $npm.Source ci --ignore-scripts --no-audit --no-fund
@@ -261,6 +336,10 @@ finally {
 
 $dotnet = Get-Command dotnet.exe -ErrorAction Stop
 New-Item -ItemType Directory -Path $nugetPackageRoot -Force | Out-Null
+& $dotnet.Source restore $stoneSidecarTestsProject --packages $nugetPackageRoot
+if ($LASTEXITCODE -ne 0) { throw 'Stone Metagame backend test restore failed.' }
+& $dotnet.Source run --project $stoneSidecarTestsProject --configuration Release --no-restore
+if ($LASTEXITCODE -ne 0) { throw 'Validated Stone Metagame backend tests failed.' }
 & $dotnet.Source restore $uiHostProject --locked-mode --packages $nugetPackageRoot
 if ($LASTEXITCODE -ne 0) { throw 'Locked UI host restore failed.' }
 & $dotnet.Source build $uiHostProject --configuration Release --no-restore `
@@ -279,7 +358,12 @@ foreach ($uiFile in @($uiHostExecutable, $uiHostConfig, $uiCore, $uiWinForms, $u
         (Join-Path $uiWebOutput 'index.html'), (Join-Path $uiWebOutput 'app.css'),
         (Join-Path $uiWebOutput 'app.js'), (Join-Path $uiWebOutput 'build-info.json'),
         (Join-Path $uiWebOutput 'vendor\framework7-bundle.min.css'),
-        (Join-Path $uiWebOutput 'vendor\framework7-bundle.min.js'))) {
+        (Join-Path $uiWebOutput 'vendor\framework7-bundle.min.js'),
+        (Join-Path $uiWebOutput 'metagame\meta-game.js'),
+        (Join-Path $uiWebOutput 'metagame\meta-game.css'),
+        (Join-Path $uiWebOutput 'metagame\meta-game-template.html'),
+        (Join-Path $uiWebOutput 'metagame\meta-game-adapter.js'),
+        (Join-Path $uiWebOutput 'metagame\meta-game-entry.js'))) {
     if (-not (Test-Path -LiteralPath $uiFile -PathType Leaf)) {
         throw "Required UI build output is missing: $uiFile"
     }
@@ -290,6 +374,21 @@ $expectedUiFiles = @(
     'app.js',
     'build-info.json',
     'index.html',
+    'metagame/data/achievements.json',
+    'metagame/data/affinity.json',
+    'metagame/data/assets.json',
+    'metagame/data/banners.json',
+    'metagame/data/gacha.json',
+    'metagame/data/items.json',
+    'metagame/data/level-rewards.json',
+    'metagame/data/messages.json',
+    'metagame/data/titles.json',
+    'metagame/demo-adapter.js',
+    'metagame/meta-game-adapter.js',
+    'metagame/meta-game-entry.js',
+    'metagame/meta-game-template.html',
+    'metagame/meta-game.css',
+    'metagame/meta-game.js',
     'vendor/framework7-bundle.min.css',
     'vendor/framework7-bundle.min.js'
 )
@@ -308,7 +407,9 @@ $uiBuildInfo = Get-Content -LiteralPath (Join-Path $uiWebOutput 'build-info.json
     ConvertFrom-Json
 if ([int]$uiBuildInfo.schema -ne 1 -or $uiBuildInfo.version -ne $Version -or
     $uiBuildInfo.framework -cne 'Framework7' -or
-    $uiBuildInfo.frameworkVersion -cne '9.1.3' -or $uiBuildInfo.offline -ne $true) {
+    $uiBuildInfo.frameworkVersion -cne '9.1.3' -or $uiBuildInfo.offline -ne $true -or
+    [int]$uiBuildInfo.metagame.schemaVersion -ne 2 -or
+    [int]$uiBuildInfo.metagame.catalogFiles -ne 9) {
     throw 'Offline UI build metadata is inconsistent with this release.'
 }
 

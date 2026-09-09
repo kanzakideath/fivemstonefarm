@@ -60,7 +60,7 @@ namespace AiMiner.UiHost
 
                     case "nav":
                         EnsureOnlyKeys(payload, "page");
-                        values.Add(GetEnum(payload, "page", "overview", "vehicle", "settings", "update"));
+                        values.Add(GetEnum(payload, "page", "overview", "stone", "vehicle", "settings", "update"));
                         break;
 
                     case "action.select":
@@ -76,7 +76,9 @@ namespace AiMiner.UiHost
                     case "settings.save":
                         EnsureOnlyKeys(payload, "startHotkey", "stopHotkey", "backgroundMode",
                             "hideWhileRunning", "correctionEnabled", "autoEat", "foodKey",
-                            "autoCheckUpdates", "minimumFreeWeight");
+                            "autoCheckUpdates", "minimumFreeWeight", "storageTriggerPercent",
+                            "estimatedRewardWeight", "minimumFreeSlots", "storageMaxRetries",
+                            "farmWatchdogMs", "targetLostRecoveryMs", "debugOverlay");
                         values.Add(GetSafeString(payload, "startHotkey", 64));
                         values.Add(GetSafeString(payload, "stopHotkey", 64));
                         values.Add(GetBoolean(payload, "backgroundMode") ? "1" : "0");
@@ -88,6 +90,19 @@ namespace AiMiner.UiHost
                         values.Add(GetBoolean(payload, "autoCheckUpdates") ? "1" : "0");
                         values.Add(GetInteger(payload, "minimumFreeWeight", 250, 20000)
                             .ToString(CultureInfo.InvariantCulture));
+                        values.Add(GetInteger(payload, "storageTriggerPercent", 50, 99)
+                            .ToString(CultureInfo.InvariantCulture));
+                        values.Add(GetInteger(payload, "estimatedRewardWeight", 250, 20000)
+                            .ToString(CultureInfo.InvariantCulture));
+                        values.Add(GetInteger(payload, "minimumFreeSlots", 0, 10)
+                            .ToString(CultureInfo.InvariantCulture));
+                        values.Add(GetInteger(payload, "storageMaxRetries", 1, 8)
+                            .ToString(CultureInfo.InvariantCulture));
+                        values.Add(GetInteger(payload, "farmWatchdogMs", 15000, 180000)
+                            .ToString(CultureInfo.InvariantCulture));
+                        values.Add(GetInteger(payload, "targetLostRecoveryMs", 5000, 60000)
+                            .ToString(CultureInfo.InvariantCulture));
+                        values.Add(GetBoolean(payload, "debugOverlay") ? "1" : "0");
                         break;
 
                     case "smoke.result":
@@ -192,18 +207,37 @@ namespace AiMiner.UiHost
                     "hello", new[] { "1", "Framework7", "9.1.3", "0" });
                 AssertAction(@"{""type"":""action"",""action"":""nav"",""payload"":{""page"":""vehicle""}}",
                     "nav", new[] { "vehicle" });
+                AssertAction(@"{""type"":""action"",""action"":""nav"",""payload"":{""page"":""stone""}}",
+                    "nav", new[] { "stone" });
                 AssertAction(@"{""type"":""action"",""action"":""action.select"",""payload"":{""mode"":""gold""}}",
                     "action.select", new[] { "gold" });
                 AssertAction(@"{""type"":""action"",""action"":""vehicle.toggle"",""payload"":{""enabled"":true}}",
                     "vehicle.toggle", new[] { "1" });
                 AssertAction(@"{""type"":""action"",""action"":""vehicle.register"",""payload"":{}}",
                     "vehicle.register", new string[0]);
-                AssertAction(@"{""type"":""action"",""action"":""settings.save"",""payload"":{""startHotkey"":""F8"",""stopHotkey"":""F9"",""backgroundMode"":true,""hideWhileRunning"":false,""correctionEnabled"":true,""autoEat"":true,""foodKey"":1,""autoCheckUpdates"":true,""minimumFreeWeight"":2000}}",
-                    "settings.save", new[] { "F8", "F9", "1", "0", "1", "1", "1", "1", "2000" });
+                const string settingsFixture = @"{""type"":""action"",""action"":""settings.save"",""payload"":{""startHotkey"":""F8"",""stopHotkey"":""F9"",""backgroundMode"":true,""hideWhileRunning"":false,""correctionEnabled"":true,""autoEat"":true,""foodKey"":1,""autoCheckUpdates"":true,""minimumFreeWeight"":2000,""storageTriggerPercent"":90,""estimatedRewardWeight"":2000,""minimumFreeSlots"":1,""storageMaxRetries"":3,""farmWatchdogMs"":45000,""targetLostRecoveryMs"":12000,""debugOverlay"":false}}";
+                AssertAction(settingsFixture,
+                    "settings.save", new[] { "F8", "F9", "1", "0", "1", "1", "1", "1", "2000",
+                        "90", "2000", "1", "3", "45000", "12000", "0" });
                 AssertRejected(@"{""type"":""action"",""action"":""unknown"",""payload"":{}}");
                 AssertRejected(@"{""type"":""action"",""action"":""nav"",""payload"":{""page"":""external""}}");
-                AssertRejected(@"{""type"":""action"",""action"":""settings.save"",""payload"":{""startHotkey"":""F8\tBAD"",""stopHotkey"":""F9"",""backgroundMode"":true,""hideWhileRunning"":false,""correctionEnabled"":true,""autoEat"":true,""foodKey"":1,""autoCheckUpdates"":true,""minimumFreeWeight"":2000}}");
-                AssertRejected(@"{""type"":""action"",""action"":""settings.save"",""payload"":{""startHotkey"":""F8"",""stopHotkey"":""F9"",""backgroundMode"":true,""hideWhileRunning"":false,""correctionEnabled"":true,""autoEat"":true,""foodKey"":6,""autoCheckUpdates"":true,""minimumFreeWeight"":2000}}");
+                AssertRejected(settingsFixture.Replace(@"""startHotkey"":""F8""",
+                    @"""startHotkey"":""F8\tBAD"""));
+                AssertRejected(settingsFixture.Replace(@"""foodKey"":1", @"""foodKey"":6"));
+                AssertRejected(settingsFixture.Replace(@"""storageTriggerPercent"":90",
+                    @"""storageTriggerPercent"":49"));
+                AssertRejected(settingsFixture.Replace(@"""estimatedRewardWeight"":2000",
+                    @"""estimatedRewardWeight"":249"));
+                AssertRejected(settingsFixture.Replace(@"""minimumFreeSlots"":1",
+                    @"""minimumFreeSlots"":11"));
+                AssertRejected(settingsFixture.Replace(@"""storageMaxRetries"":3",
+                    @"""storageMaxRetries"":9"));
+                AssertRejected(settingsFixture.Replace(@"""farmWatchdogMs"":45000",
+                    @"""farmWatchdogMs"":14999"));
+                AssertRejected(settingsFixture.Replace(@"""targetLostRecoveryMs"":12000",
+                    @"""targetLostRecoveryMs"":60001"));
+                AssertRejected(settingsFixture.Replace(@"""debugOverlay"":false",
+                    @"""debugOverlay"":0"));
 
                 string session = "0123456789abcdef";
                 BackendMessage parsed;
@@ -220,6 +254,15 @@ namespace AiMiner.UiHost
                 if (TryParseBackendMessage("AIUISTATE1\t" + session
                     + "\t{\"type\":\"state\",\"revision\":1.5}", session, out parsed))
                     throw new InvalidOperationException("Fractional revision fixture was accepted.");
+                string resetToken = "0123456789abcdef0123456789abcdef:7";
+                string reset = BuildActionLine(session, "meta.reset", new[] { resetToken });
+                if (reset != "AIUI1\t" + session + "\tmeta.reset\t" + resetToken)
+                    throw new InvalidOperationException("Metagame recovery reset fixture failed.");
+                string metaAck = BuildActionLine(session, "meta.ack",
+                    new[] { "MINING_SUCCESS", "mine:00000001" });
+                if (metaAck != "AIUI1\t" + session
+                    + "\tmeta.ack\tMINING_SUCCESS\tmine:00000001")
+                    throw new InvalidOperationException("Metagame typed ACK fixture failed.");
                 return true;
             }
             catch (Exception ex)

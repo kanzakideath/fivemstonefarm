@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -13,6 +13,8 @@ await mkdir(vendor, { recursive: true });
 for (const file of ['index.html', 'app.css', 'app.js']) {
   await copyFile(join(source, file), join(output, file));
 }
+
+await cp(join(source, 'metagame'), join(output, 'metagame'), { recursive: true });
 
 for (const file of ['framework7-bundle.min.css', 'framework7-bundle.min.js']) {
   await copyFile(join(root, 'node_modules', 'framework7', file), join(vendor, file));
@@ -32,6 +34,10 @@ const buildInfo = {
   framework: 'Framework7',
   frameworkVersion: frameworkPackage.version,
   offline: true,
+  metagame: {
+    schemaVersion: 2,
+    catalogFiles: 9,
+  },
 };
 await writeFile(join(output, 'build-info.json'), `${JSON.stringify(buildInfo, null, 2)}\n`);
 

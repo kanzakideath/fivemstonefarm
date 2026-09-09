@@ -9,7 +9,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "8.0.6"
+global AppVersion := "9.0.0"
 processId := DllCall("GetCurrentProcessId")
 isUiSmokeTest := HasCommandLineArgument("--smoke-test")
 isVisualTest := HasCommandLineArgument("--visual-test")
@@ -106,10 +106,19 @@ global Config := {
     vehicleReturnRoute: ReadTextSetting(settingsPath, "VehicleStorage", "ReturnRoute", ""),
     capacityCheckIntervalMs: ReadIntegerSetting(settingsPath, "VehicleStorage", "CapacityCheckIntervalMs", 3000, 1500, 15000),
     minimumFreeWeight: ReadIntegerSetting(settingsPath, "VehicleStorage", "MinimumFreeWeight", 2000, 250, 20000),
+    storageTriggerPercent: ReadIntegerSetting(settingsPath, "VehicleStorage", "StorageTriggerPercent", 92, 50, 99),
+    estimatedRewardWeight: ReadIntegerSetting(settingsPath, "VehicleStorage", "EstimatedRewardWeight", 2000, 250, 20000),
+    minimumFreeSlots: ReadIntegerSetting(settingsPath, "VehicleStorage", "MinimumFreeSlots", 1, 0, 10),
+    storageMaxRetries: ReadIntegerSetting(settingsPath, "VehicleStorage", "MaxRetries", 5, 1, 8),
+    storageVerifyTimeoutMs: ReadIntegerSetting(settingsPath, "VehicleStorage", "VerifyTimeoutMs", 5000, 1000, 15000),
     routeIdleFinishMs: ReadIntegerSetting(settingsPath, "VehicleStorage", "RouteIdleFinishMs", 1200, 700, 3000),
     routeSettleMs: ReadIntegerSetting(settingsPath, "VehicleStorage", "RouteSettleMs", 700, 200, 3000),
     vehicleSearchPulseMs: ReadIntegerSetting(settingsPath, "VehicleStorage", "SearchPulseMs", 180, 120, 350),
-    serverHealthIntervalMs: ReadIntegerSetting(settingsPath, "Safety", "ServerHealthIntervalMs", 3500, 1500, 10000)
+    serverHealthIntervalMs: ReadIntegerSetting(settingsPath, "Safety", "ServerHealthIntervalMs", 3500, 1500, 10000),
+    farmWatchdogMs: ReadIntegerSetting(settingsPath, "Safety", "FarmWatchdogMs", 60000, 15000, 180000),
+    targetLostRecoveryMs: ReadIntegerSetting(settingsPath, "Safety", "TargetLostRecoveryMs", 15000, 5000, 60000),
+    rewardConfirmTimeoutMs: ReadIntegerSetting(settingsPath, "Safety", "RewardConfirmTimeoutMs", 5000, 1000, 10000),
+    debugOverlay: ReadIntegerSetting(settingsPath, "Safety", "DebugOverlay", 0, 0, 1)
 }
 
 if StrLen(Config.vehicleName) > 40
@@ -126,6 +135,7 @@ if needsUpdateSettingsMigration && !(A_Args.Length && A_Args[1] = "--smoke-test"
 
 global State := {
     running: false,
+    stopInProgress: false,
     runMode: "mining",
     generation: 0,
     timerFn: 0,
@@ -203,10 +213,54 @@ global State := {
     activeBridgeOperationToken: "",
     lastBridgeError: "",
     automationPhase: "stopped",
+    farmState: "IDLE",
+    farmStateReason: "起動待ち",
+    farmStateEnteredAt: 0,
+    farmStateTaskId: 0,
+    farmStateRetry: 0,
+    farmStateLastError: "",
+    farmWatchdogAt: 0,
+    lastVerifiedRewardAt: 0,
+    watchdogRecoveryCount: 0,
+    targetLostSince: 0,
+    targetRecoveryAttempts: 0,
+    recoveryReturnState: "FARMING",
+    recoveryReason: "",
+    inventorySnapshotRevision: 0,
+    confirmedInventory: 0,
+    pendingFarmAttempt: 0,
+    miningAttemptId: 0,
+    resumeVerificationPending: false,
+    rewardReconcileAttempts: 0,
+    storagePreSnapshot: 0,
+    storageRetryCount: 0,
+    storageMovementHistory: [],
+    storageMatchedViewRoute: "",
+    recoveryAtStorage: false,
+    farmSessionId: "",
+    farmSessionStartedAt: 0,
+    farmSessionEndedAt: 0,
+    metagameSessionResetCount: 0,
+    lastMetaResetToken: "",
+    farmSessionBeginQueued: false,
+    farmSessionBeginSent: false,
+    farmSessionEndQueued: false,
+    farmSessionEndSent: false,
+    lastMiningEventId: "",
+    metagameOutbox: [],
+    metagameOutboxDirty: false,
+    metagameReplayNormalized: false,
+    metagameJournalReady: false,
+    metagameJournalOps: 0,
+    metagameFlushActive: false,
+    metagameOutboxPath: isUiTestRun || HasCommandLineArgument("--validate")
+        ? A_Temp "\ai-miner-meta-outbox-test-" processId ".tsv"
+        : EnvGet("LOCALAPPDATA") "\AI採掘機\metagame-outbox.tsv",
     inventoryBaseline: "",
     nextCapacityCheckAt: 0,
     nextActionAt: 0,
     storagePending: false,
+    storageStartPending: false,
     storageRecoveryAttempted: false,
     capacityProbeFailures: 0,
     workpointProbeFailures: 0,
@@ -265,6 +319,13 @@ global State := {
     uiHostError: ""
 }
 
+; Mining events are persisted independently from the farm INI. A Host crash or an
+; app restart therefore cannot turn an already verified ore reward into a lost
+; metagame event. Invalid/corrupt rows are ignored fail-closed while valid rows
+; retain FIFO order.
+State.metagameOutbox := LoadMetagameOutbox(State.metagameOutboxPath)
+State.metagameReplayNormalized := NormalizeStoppedMetagameOutboxAtStartup()
+
 ; コンパイル前後の構文・埋め込み画像チェック用です。
 if A_Args.Length && A_Args[1] = "--validate" {
     updaterCapabilities := RunUpdaterCapabilities()
@@ -300,6 +361,529 @@ if A_Args.Length && A_Args[1] = "--validate" {
         vehicleOutboundRoute: "", vehicleReturnRoute: ""
     }
     testOverlayBounds := RuntimeStatusOverlayBounds(100, 200, 1280, 720)
+    testOutboxPath := A_Temp "\ai-miner-outbox-selftest-" processId ".tsv"
+    try FileDelete testOutboxPath
+    testOutbox := []
+    testOutboxSessionId := "run_11_1_946684800000"
+    testOutboxFirstId := "mine_run_11_1_1000_1_1"
+    testOutboxSecondId := "mine_run_11_1_1000_2_2"
+    testOutboxEnqueueOk := MetagameOutboxEnqueue(&testOutbox,
+        testOutboxSessionId, 946684800000, "SESSION_BEGIN")
+        && MetagameOutboxEnqueue(&testOutbox,
+            testOutboxFirstId, 946684801000)
+    ; Three failed deliveries must not poison or replace the first event while a
+    ; second verified mining reward arrives.
+    if testOutboxEnqueueOk
+        testOutbox[2].retries := 3
+    testOutboxEnqueueOk := testOutboxEnqueueOk
+        && MetagameOutboxEnqueue(&testOutbox,
+            testOutboxSecondId, 946684802000)
+        && MetagameOutboxEnqueue(&testOutbox,
+            testOutboxSessionId, 946684803000, "SESSION_END")
+        && !MetagameOutboxEnqueue(&testOutbox,
+            testOutboxFirstId, 946684804000)
+        && PersistMetagameOutbox(testOutbox, testOutboxPath)
+    testRestartOutbox := LoadMetagameOutbox(testOutboxPath)
+    testLostAckRetained := testRestartOutbox.Length = 4
+        && testRestartOutbox[1].command = "SESSION_BEGIN"
+        && testRestartOutbox[1].id = testOutboxSessionId
+        && testRestartOutbox[1].at = 946684800000
+        && testRestartOutbox[2].command = "MINING_SUCCESS"
+        && testRestartOutbox[2].id = testOutboxFirstId
+        && testRestartOutbox[2].at = 946684801000
+        && testRestartOutbox[3].id = testOutboxSecondId
+        && testRestartOutbox[4].command = "SESSION_END"
+        && testRestartOutbox[4].id = testOutboxSessionId
+        && testRestartOutbox[4].at = 946684803000
+    testResetOutbox := LoadMetagameOutbox(testOutboxPath)
+    testRebaseSessionId := "run_22_2_1893456000000_r1"
+    testSessionRebaseOk := RebaseMetagameOutboxForSession(&testResetOutbox,
+        testRebaseSessionId, 1893456000000)
+        && testResetOutbox.Length = 3
+        && testResetOutbox[1].command = "SESSION_BEGIN"
+        && testResetOutbox[1].id = testRebaseSessionId
+        && testResetOutbox[2].id = testOutboxFirstId
+        && testResetOutbox[2].at = 946684801000
+        && testResetOutbox[3].id = testOutboxSecondId
+        && testResetOutbox[3].at = 946684802000
+    testAckOriginal := LoadMetagameOutbox(testOutboxPath)
+    testAckCopyOnWriteOk := BuildMetagameOutboxAfterAck(testAckOriginal,
+        "SESSION_BEGIN", testOutboxSessionId, &testAckCandidate)
+        && testAckOriginal.Length = 4 && testAckCandidate.Length = 3
+        && testAckOriginal[1].command = "SESSION_BEGIN"
+        && testAckCandidate[1].command = "MINING_SUCCESS"
+    testIdleReplayOutbox := LoadMetagameOutbox(testOutboxPath)
+    testIdleReplaySession := "run_33_3_1893456001000_r2"
+    testIdleReplayOk := RebaseMetagameOutboxForSession(
+        &testIdleReplayOutbox, testIdleReplaySession, 1893456001000,
+        true, 1893456001001)
+        && testIdleReplayOutbox.Length = 4
+        && testIdleReplayOutbox[1].command = "SESSION_BEGIN"
+        && testIdleReplayOutbox[2].at = 946684801000
+        && testIdleReplayOutbox[3].at = 946684802000
+        && testIdleReplayOutbox[4].command = "SESSION_END"
+    ; A delayed duplicate BEGIN ACK cannot delete the END with the same ID.
+    testOutboxAckOk := MetagameOutboxAcknowledge(&testRestartOutbox,
+        "SESSION_BEGIN", testOutboxSessionId)
+        && MetagameOutboxAcknowledge(&testRestartOutbox,
+            "MINING_SUCCESS", testOutboxFirstId)
+        && testRestartOutbox.Length = 2
+        && testRestartOutbox[1].id = testOutboxSecondId
+        && MetagameOutboxAcknowledge(&testRestartOutbox,
+            "MINING_SUCCESS", testOutboxSecondId)
+        && !MetagameOutboxAcknowledge(&testRestartOutbox,
+            "SESSION_BEGIN", testOutboxSessionId)
+        && MetagameOutboxAcknowledge(&testRestartOutbox,
+            "SESSION_END", testOutboxSessionId)
+        && !MetagameOutboxAcknowledge(&testRestartOutbox,
+            "SESSION_END", testOutboxSessionId)
+        && testRestartOutbox.Length = 0
+    testFarmAttempt := {
+        generation: 9, actionMode: "mining", attemptId: 4,
+        before: {weight: 1000, items: "0001.ore.e30=1"},
+        beforeRevision: 8, clicked: true, completed: false
+    }
+    testFarmAttemptWithoutBaseline := {
+        generation: 9, actionMode: "mining", attemptId: 5,
+        before: 0, beforeRevision: 0, clicked: false, completed: false
+    }
+    testFarmBaselineGuardOk := FarmAttemptHasBaseline(testFarmAttempt, 9,
+        "mining") && !FarmAttemptHasBaseline(testFarmAttemptWithoutBaseline,
+        9, "mining")
+    testFarmClickOnlyNotSuccess := !FarmAttemptCanFinalize(testFarmAttempt, 9,
+        "mining", {revision: 9})
+    testFarmAttempt.completed := true
+    testFarmFinalizeGuardOk := testFarmClickOnlyNotSuccess
+        && FarmAttemptCanFinalize(testFarmAttempt, 9, "mining",
+            {revision: 9})
+    testDebugOverlayText := RuntimeStatusOverlayDebug("FARMING", 9200,
+        10000, 1000, 5200, 2, "FOUND", "ACTIVE", 61000, 60000)
+    testDebugOverlayOk := InStr(testDebugOverlayText, "Inventory 92")
+        && InStr(testDebugOverlayText, "Reward 4.2s")
+        && InStr(testDebugOverlayText, "Storage retry 2")
+        && InStr(testDebugOverlayText, "Target FOUND")
+        && InStr(testDebugOverlayText, "Camera ACTIVE")
+        && InStr(testDebugOverlayText, "Watchdog LATE")
+    testFarmFailureCodesOk :=
+        FarmFailureCode("所持品を取得できません", "INVENTORY_CHECK")
+            = "INVENTORY_DETECTION_FAILED"
+        && FarmFailureCode("登録車両の探索に失敗", "OPENING_STORAGE")
+            = "STORAGE_UI_NOT_FOUND"
+        && FarmFailureCode("車両ストレージへ収納できません", "STORING")
+            = "STORAGE_ACTION_FAILED"
+        && FarmFailureCode("収納後の減少を確認できません", "VERIFY_STORAGE")
+            = "STORAGE_VERIFY_FAILED"
+        && FarmFailureCode("作業対象を確認できません", "FARMING")
+            = "FARM_TARGET_LOST"
+        && FarmFailureCode("作業位置へ安全に戻れません", "RESUMING_FARM")
+            = "FARM_RESUME_FAILED"
+        && FarmFailureCode("ERROR INPUT_RELEASE", "FARMING")
+            = "INPUT_STUCK"
+        && FarmFailureCode("実際の作業報酬を3回確認できません", "FARMING")
+            = "WATCHDOG_TIMEOUT"
+        && FarmFailureCode("dispatcher_unhandled_BROKEN", "BROKEN")
+            = "UNKNOWN_STATE"
+        && FarmFailureCode("サーバー再起動を検知", "FARMING")
+            = "SERVER_SESSION_CHANGED"
+        && FarmFailureCode("開始後の差分を特定できません", "INVENTORY_FULL",
+            "", "UNTRUSTED_STORAGE_BASELINE")
+            = "UNTRUSTED_STORAGE_BASELINE"
+    ; This is the exact reservation/counting guard used immediately before the
+    ; production deposit-delta call. Food/tool baseline units stay reserved while
+    ; only the two newly mined ore units are eligible for vehicle storage.
+    testProtectedInventoryBaseline :=
+        "0001.food.e30=2,0002.tool.e30=1,0003.ore.e30=1"
+    testInventoryAfterMining :=
+        "0001.food.e30=2,0002.tool.e30=1,0003.ore.e30=3"
+    testStorageDeltaSelectionOk := InventorySpecDeltaUnitCount(
+        testInventoryAfterMining, testProtectedInventoryBaseline) = 2
+        && StorageDeltaBaselineIsSafe(testProtectedInventoryBaseline,
+            testInventoryAfterMining)
+        && !StorageDeltaBaselineIsSafe("-", testInventoryAfterMining)
+        && !StorageDeltaBaselineIsSafe(testProtectedInventoryBaseline,
+            testProtectedInventoryBaseline)
+    testStopResetSource := []
+    testStopResetOldId := "run_44_4_1893456002000"
+    testStopResetMiningId := "mine_run_44_4_1893456002000_4_8"
+    testStopResetEnqueueOk := MetagameOutboxEnqueue(&testStopResetSource,
+        testStopResetOldId, 1893456002000, "SESSION_BEGIN")
+        && MetagameOutboxEnqueue(&testStopResetSource,
+            testStopResetMiningId, 1893456002500)
+    testStopResetIncludeEnd := MetagameResetRequiresEnd(true, true,
+        testStopResetSource, testStopResetOldId)
+    testActiveResetStaysOpen := !MetagameResetRequiresEnd(true, false,
+        testStopResetSource, testStopResetOldId)
+    testStopResetRebased := testStopResetSource
+    testStopResetNewId := "run_55_5_1893456003000_r1"
+    testStopResetOk := testStopResetEnqueueOk && testStopResetIncludeEnd
+        && testActiveResetStaysOpen
+        && RebaseMetagameOutboxForSession(&testStopResetRebased,
+            testStopResetNewId, 1893456003000, testStopResetIncludeEnd,
+            1893456003001)
+        && testStopResetRebased.Length = 3
+        && testStopResetRebased[1].command = "SESSION_BEGIN"
+        && testStopResetRebased[1].id = testStopResetNewId
+        && testStopResetRebased[2].command = "MINING_SUCCESS"
+        && testStopResetRebased[2].id = testStopResetMiningId
+        && testStopResetRebased[3].command = "SESSION_END"
+        && testStopResetRebased[3].id = testStopResetNewId
+    testEndPendingSource := testStopResetSource
+    testStopResetOk := testStopResetOk
+        && MetagameOutboxEnqueue(&testEndPendingSource,
+            testStopResetOldId, 1893456002600, "SESSION_END")
+        && MetagameResetRequiresEnd(true, false, testEndPendingSource,
+            testStopResetOldId)
+    testGracefulTailOk := MetagameOutboxEndsWithSessionEnd(testEndPendingSource)
+    testHardKillTail := []
+    MetagameOutboxEnqueue(&testHardKillTail, testStopResetOldId,
+        1893456002000, "SESSION_BEGIN")
+    MetagameOutboxEnqueue(&testHardKillTail, testStopResetMiningId,
+        1893456002500)
+    testGracefulTailOk := testGracefulTailOk
+        && !MetagameOutboxEndsWithSessionEnd(testHardKillTail)
+    testCapacityDispatcherOk := FarmStateRequiresCapacityDispatch(
+        "INVENTORY_CHECK", false)
+        && FarmStateRequiresCapacityDispatch("STOPPING_FARM", true)
+        && !FarmStateRequiresCapacityDispatch("STOPPING_FARM", false)
+        && !FarmStateRequiresCapacityDispatch("FARMING", true)
+    testLargeOutboxPath := A_Temp "\ai-miner-large-outbox-selftest-"
+        . processId ".tsv"
+    try FileDelete testLargeOutboxPath
+    testLongIdSuffix := ""
+    Loop 90
+        testLongIdSuffix .= "x"
+    testLargeOutbox := []
+    Loop 4096 {
+        testLargeOutbox.Push({command: "MINING_SUCCESS",
+            id: "mine_backlog_" Format("{:04}", A_Index) "_"
+                . testLongIdSuffix,
+            at: 946684800000 + A_Index, retries: 0, nextAt: 0,
+            windows: 0, enqueued: false})
+    }
+    testLargeOutboxOk := MetagameOutboxEnqueue(&testLargeOutbox,
+        "mine_backlog_tail_" testLongIdSuffix, 946684900000)
+        && testLargeOutbox.Length = 4097
+        && PersistMetagameOutbox(testLargeOutbox, testLargeOutboxPath)
+        && FileGetSize(testLargeOutboxPath) > 262144
+    testLargeReload := testLargeOutboxOk
+        ? LoadMetagameOutbox(testLargeOutboxPath) : []
+    testLargeOutboxOk := testLargeOutboxOk
+        && testLargeReload.Length = 4097
+        && testLargeReload[4097].id = "mine_backlog_tail_" testLongIdSuffix
+    try FileDelete testLargeOutboxPath
+    testJournalPath := A_Temp "\ai-miner-journal-selftest-" processId ".tsv"
+    try FileDelete testJournalPath
+    savedMetaOutbox := State.metagameOutbox
+    savedMetaPath := State.metagameOutboxPath
+    savedMetaDirty := State.metagameOutboxDirty
+    savedJournalReady := State.metagameJournalReady
+    savedJournalOps := State.metagameJournalOps
+    savedReplayNormalized := State.metagameReplayNormalized
+    savedFarmSessionId := State.farmSessionId
+    savedFarmSessionStartedAt := State.farmSessionStartedAt
+    savedFarmSessionEndedAt := State.farmSessionEndedAt
+    savedFarmSessionBeginQueued := State.farmSessionBeginQueued
+    savedFarmSessionBeginSent := State.farmSessionBeginSent
+    savedFarmSessionEndQueued := State.farmSessionEndQueued
+    savedFarmSessionEndSent := State.farmSessionEndSent
+    savedRunning := State.running
+    State.metagameOutbox := []
+    State.metagameOutboxPath := testJournalPath
+    State.metagameOutboxDirty := false
+    State.metagameJournalReady := false
+    State.metagameJournalOps := 0
+    testJournalSession := "run_66_6_1893456004000"
+    testJournalFirst := "mine_run_66_6_1893456004000_1_1"
+    testJournalSecond := "mine_run_66_6_1893456004000_2_2"
+    testJournalOk := DurablyEnqueueMetagameEvent("SESSION_BEGIN",
+        testJournalSession, 1893456004000)
+        && DurablyEnqueueMetagameEvent("MINING_SUCCESS",
+            testJournalFirst, 946684801000)
+        && DurablyEnqueueMetagameEvent("MINING_SUCCESS",
+            testJournalSecond, 946684802000)
+        && AcknowledgeMetagameEvent("SESSION_BEGIN", testJournalSession)
+    SetTimer FlushMetagameOutboxReplay, 0
+    testJournalReload := testJournalOk
+        ? LoadMetagameOutbox(testJournalPath) : []
+    testJournalCrashReloadOk := testJournalOk && testJournalReload.Length = 2
+        && testJournalReload[1].id = testJournalFirst
+        && testJournalReload[1].at = 946684801000
+        && testJournalReload[2].id = testJournalSecond
+    testJournalLastId := ""
+    Loop 252 {
+        testJournalLastId := "mine_journal_compact_"
+            . Format("{:04}", A_Index) "_stable"
+        if !DurablyEnqueueMetagameEvent("MINING_SUCCESS",
+            testJournalLastId, 946684802000 + A_Index) {
+            testJournalOk := false
+            break
+        }
+    }
+    testJournalOk := testJournalOk && AcknowledgeMetagameEvent(
+        "MINING_SUCCESS", testJournalFirst)
+    SetTimer FlushMetagameOutboxReplay, 0
+    testJournalCompacted := testJournalOk
+        ? LoadMetagameOutbox(testJournalPath) : []
+    testJournalOk := testJournalOk && testJournalCrashReloadOk
+        && State.metagameJournalOps = 0
+        && testJournalCompacted.Length = 253
+        && testJournalCompacted[1].id = testJournalSecond
+        && testJournalCompacted[1].at = 946684802000
+        && testJournalCompacted[253].id = testJournalLastId
+    SetTimer FlushMetagameOutboxReplay, 0
+
+    ; Force the exact historical race: an ACK/compact timer becomes due after E
+    ; was flushed but before the enqueue's memory Push. It must run only after the
+    ; transaction commits, observe both entries, and compact the new mining row.
+    testInterleavePath := A_Temp "\ai-miner-interleave-selftest-"
+        . processId ".tsv"
+    try FileDelete testInterleavePath
+    State.metagameOutbox := []
+    State.metagameOutboxPath := testInterleavePath
+    State.metagameOutboxDirty := false
+    State.metagameJournalReady := false
+    State.metagameJournalOps := 0
+    testInterleaveSession := "run_99_9_1893456006000"
+    testInterleaveMining := "mine_run_99_9_1893456006000_1_1"
+    MetagameInterleaveAckCommand := "SESSION_BEGIN"
+    MetagameInterleaveAckId := testInterleaveSession
+    MetagameInterleaveAckOk := false
+    MetagameInterleaveAckSawCount := 0
+    MetagameInterleaveTimerRan := false
+    MetagameInterleaveTimerRanInside := false
+    testInterleaveOk := DurablyEnqueueMetagameEvent("SESSION_BEGIN",
+        testInterleaveSession, 1893456006000)
+    ; The deferred ACK must cross the compaction threshold when it finally runs.
+    State.metagameJournalOps := 255
+    testInterleaveOk := testInterleaveOk
+        && DurablyEnqueueMetagameEvent("MINING_SUCCESS",
+            testInterleaveMining, 1893456006500,
+            ScheduleMetagameInterleaveSelfTestAck)
+    Sleep 80
+    SetTimer RunMetagameInterleaveSelfTestAck, 0
+    SetTimer FlushMetagameOutboxReplay, 0
+    testInterleaveReload := testInterleaveOk
+        ? LoadMetagameOutbox(testInterleavePath) : []
+    testInterleaveOk := testInterleaveOk
+        && !MetagameInterleaveTimerRanInside
+        && MetagameInterleaveTimerRan
+        && MetagameInterleaveAckOk
+        && MetagameInterleaveAckSawCount = 2
+        && State.metagameOutbox.Length = 1
+        && State.metagameOutbox[1].id = testInterleaveMining
+        && State.metagameJournalOps = 0
+        && testInterleaveReload.Length = 1
+        && testInterleaveReload[1].id = testInterleaveMining
+    try FileDelete testInterleavePath
+
+    ; The same exclusion must cover reset's stale-copy boundary. A mining enqueue
+    ; timer due after rebase but before persist may run only after reset installs
+    ; the new FIFO/session, so both the retained and new rewards remain durable.
+    testResetInterleavePath := A_Temp
+        . "\ai-miner-reset-interleave-selftest-" processId ".tsv"
+    try FileDelete testResetInterleavePath
+    State.metagameOutbox := []
+    State.metagameOutboxPath := testResetInterleavePath
+    State.metagameOutboxDirty := false
+    State.metagameJournalReady := false
+    State.metagameJournalOps := 0
+    State.metagameReplayNormalized := true
+    State.running := true
+    State.stopInProgress := false
+    State.farmSessionId := "run_101_10_1893456007000"
+    State.farmSessionStartedAt := 1893456007000
+    State.farmSessionEndedAt := 0
+    State.farmSessionBeginQueued := true
+    State.farmSessionBeginSent := false
+    State.farmSessionEndQueued := false
+    State.farmSessionEndSent := false
+    State.metagameSessionResetCount := 0
+    testResetRetainedMining := "mine_run_101_10_1893456007000_1_1"
+    MetagameResetInterleaveMiningId :=
+        "mine_run_101_10_1893456007000_2_2"
+    MetagameResetCriticalObserved := false
+    MetagameResetTimerRan := false
+    MetagameResetTimerRanInside := false
+    MetagameResetInterleaveEnqueueOk := false
+    MetagameResetInterleaveSawSession := ""
+    testResetInterleaveOk := DurablyEnqueueMetagameEvent("SESSION_BEGIN",
+        State.farmSessionId, State.farmSessionStartedAt)
+        && DurablyEnqueueMetagameEvent("MINING_SUCCESS",
+            testResetRetainedMining, 1893456007250)
+        && ResetFarmMetagameSession("selftest_interleave",
+            ProbeMetagameResetCriticalSelfTest)
+    Sleep 80
+    SetTimer RunMetagameResetInterleaveSelfTestEnqueue, 0
+    SetTimer FlushMetagameOutboxReplay, 0
+    testResetInterleaveReload := testResetInterleaveOk
+        ? LoadMetagameOutbox(testResetInterleavePath) : []
+    testResetInterleaveOk := testResetInterleaveOk
+        && MetagameResetCriticalObserved
+        && !MetagameResetTimerRanInside
+        && MetagameResetTimerRan
+        && MetagameResetInterleaveEnqueueOk
+        && MetagameResetInterleaveSawSession = State.farmSessionId
+        && State.farmSessionId != "run_101_10_1893456007000"
+        && State.metagameOutbox.Length = 3
+        && State.metagameOutbox[1].command = "SESSION_BEGIN"
+        && State.metagameOutbox[1].id = State.farmSessionId
+        && State.metagameOutbox[2].id = testResetRetainedMining
+        && State.metagameOutbox[3].id = MetagameResetInterleaveMiningId
+        && testResetInterleaveReload.Length = 3
+        && testResetInterleaveReload[2].id = testResetRetainedMining
+        && testResetInterleaveReload[3].id = MetagameResetInterleaveMiningId
+    State.running := false
+    State.stopInProgress := false
+    try FileDelete testResetInterleavePath
+
+    testAppendFailureOutbox := []
+    TryParseMetagameOutboxFields("MINING_SUCCESS",
+        "mine_append_failure_stable", 946684803000,
+        &testAppendFailureEntry)
+    testAppendFailureOk := !CommitDurableMetagameEntry(
+        testAppendFailureOutbox, testAppendFailureEntry, false)
+        && testAppendFailureOutbox.Length = 0
+        && !FlushMetagameFileHandle(0)
+    testTornPath := A_Temp "\ai-miner-torn-journal-selftest-"
+        . processId ".tsv"
+    try FileDelete testTornPath
+    State.metagameOutbox := []
+    State.metagameOutboxPath := testTornPath
+    State.metagameOutboxDirty := false
+    State.metagameJournalReady := false
+    State.metagameJournalOps := 0
+    testTornOk := PersistMetagameOutboxWithRetry()
+    tornFile := FileOpen(testTornPath, "a", "UTF-8-RAW")
+    tornFile.Write("E`tMINING_SUCCESS`tmine_torn_partial")
+    FlushMetagameFileHandle(tornFile.Handle)
+    tornFile.Close()
+    testTornId := "mine_after_torn_tail_stable"
+    testTornOk := testTornOk && DurablyEnqueueMetagameEvent(
+        "MINING_SUCCESS", testTornId, 946684804000)
+    testTornReload := testTornOk ? LoadMetagameOutbox(testTornPath) : []
+    testTornOk := testTornOk && testTornReload.Length = 1
+        && testTornReload[1].id = testTornId
+        && testTornReload[1].at = 946684804000
+
+    ; Simulate a disk failure after BEGIN was already ACKed by the Host. END must
+    ; retain one immutable timestamp, block the next start, then append exactly
+    ; once when the idle retry gets a writable journal.
+    testEndBlockerPath := A_Temp "\ai-miner-end-blocker-selftest-" processId
+    testEndRetryPath := A_Temp "\ai-miner-end-retry-selftest-" processId ".tsv"
+    try FileDelete testEndRetryPath
+    try FileDelete testEndBlockerPath
+    blockerFile := FileOpen(testEndBlockerPath, "w", "UTF-8-RAW")
+    blockerFile.Write("not-a-directory")
+    blockerFile.Close()
+    State.metagameOutbox := []
+    State.metagameOutboxPath := testEndBlockerPath "\outbox.tsv"
+    State.metagameOutboxDirty := false
+    State.metagameJournalReady := false
+    State.metagameJournalOps := 0
+    State.metagameReplayNormalized := true
+    State.running := false
+    State.farmSessionId := "run_77_7_1893456005000"
+    State.farmSessionStartedAt := 1893456005000
+    State.farmSessionEndedAt := 0
+    State.farmSessionBeginQueued := true
+    State.farmSessionBeginSent := true
+    State.farmSessionEndQueued := false
+    State.farmSessionEndSent := false
+    testInitialEndFailure := !EndFarmMetagameSession(false)
+    testCapturedEndedAt := State.farmSessionEndedAt
+    SetTimer FlushMetagameOutboxReplay, 0
+    testEndRetryOk := testInitialEndFailure
+        && !PrepareMetagameForNewFarmStart()
+        && FarmMetagameClosurePending()
+        && State.metagameOutbox.Length = 0
+        && State.farmSessionId = "run_77_7_1893456005000"
+        && testCapturedEndedAt >= State.farmSessionStartedAt
+        && State.farmSessionEndedAt = testCapturedEndedAt
+    SetTimer FlushMetagameOutboxReplay, 0
+    State.metagameOutboxPath := testEndRetryPath
+    State.metagameJournalReady := false
+    testEndRetryOk := testEndRetryOk && PrepareMetagameForNewFarmStart()
+        && !FarmMetagameClosurePending()
+        && State.metagameOutbox.Length = 1
+        && State.metagameOutbox[1].command = "SESSION_END"
+        && State.metagameOutbox[1].id = "run_77_7_1893456005000"
+        && State.metagameOutbox[1].at = testCapturedEndedAt
+    testEndRetryReload := testEndRetryOk
+        ? LoadMetagameOutbox(testEndRetryPath) : []
+    testEndRetryOk := testEndRetryOk && testEndRetryReload.Length = 1
+        && testEndRetryReload[1].command = "SESSION_END"
+        && testEndRetryReload[1].at = testCapturedEndedAt
+    SetTimer FlushMetagameOutboxReplay, 0
+    try FileDelete testEndRetryPath
+    try FileDelete testEndBlockerPath
+
+    ; A graceful offline FIFO keeps its original session duration. In contrast,
+    ; a hard-kill FIFO whose tail lacks END is the only shape normalized later.
+    testGracefulReplayPath := A_Temp
+        . "\ai-miner-graceful-replay-selftest-" processId ".tsv"
+    try FileDelete testGracefulReplayPath
+    testGracefulOutbox := []
+    State.metagameOutboxPath := testGracefulReplayPath
+    State.metagameOutboxDirty := false
+    State.metagameJournalReady := false
+    MetagameOutboxEnqueue(&testGracefulOutbox,
+        "run_88_8_946684800000", 946684800000, "SESSION_BEGIN")
+    MetagameOutboxEnqueue(&testGracefulOutbox,
+        "mine_run_88_8_946684800000_1_1", 946684801000)
+    MetagameOutboxEnqueue(&testGracefulOutbox,
+        "run_88_8_946684800000", 946684809000, "SESSION_END")
+    State.metagameOutbox := testGracefulOutbox
+    testGracefulReplayOk := PersistMetagameOutboxWithRetry()
+        && NormalizeStoppedMetagameOutboxAtStartup()
+        && State.metagameOutbox.Length = 3
+        && State.metagameOutbox[1].at = 946684800000
+        && State.metagameOutbox[2].at = 946684801000
+        && State.metagameOutbox[3].at = 946684809000
+        && State.metagameOutbox[3].command = "SESSION_END"
+    testGracefulReplayReload := testGracefulReplayOk
+        ? LoadMetagameOutbox(testGracefulReplayPath) : []
+    testGracefulReplayOk := testGracefulReplayOk
+        && testGracefulReplayReload.Length = 3
+        && testGracefulReplayReload[1].id = "run_88_8_946684800000"
+        && testGracefulReplayReload[3].at = 946684809000
+    try FileDelete testGracefulReplayPath
+
+    State.metagameOutbox := savedMetaOutbox
+    State.metagameOutboxPath := savedMetaPath
+    State.metagameOutboxDirty := savedMetaDirty
+    State.metagameJournalReady := savedJournalReady
+    State.metagameJournalOps := savedJournalOps
+    State.metagameReplayNormalized := savedReplayNormalized
+    State.farmSessionId := savedFarmSessionId
+    State.farmSessionStartedAt := savedFarmSessionStartedAt
+    State.farmSessionEndedAt := savedFarmSessionEndedAt
+    State.farmSessionBeginQueued := savedFarmSessionBeginQueued
+    State.farmSessionBeginSent := savedFarmSessionBeginSent
+    State.farmSessionEndQueued := savedFarmSessionEndQueued
+    State.farmSessionEndSent := savedFarmSessionEndSent
+    State.running := savedRunning
+    try FileDelete testJournalPath
+    try FileDelete testTornPath
+    testLegacyOutboxPath := A_Temp "\ai-miner-v2-outbox-selftest-"
+        . processId ".tsv"
+    try FileDelete testLegacyOutboxPath
+    legacyFile := FileOpen(testLegacyOutboxPath, "w", "UTF-8-RAW")
+    legacyFile.Write("AIUIMETAOUTBOX2`nMINING_SUCCESS`t"
+        testOutboxFirstId "`t946684801000`n")
+    legacyFile.Close()
+    testLegacyOutbox := LoadMetagameOutbox(testLegacyOutboxPath)
+    testLegacyMigrationOk := testLegacyOutbox.Length = 1
+        && testLegacyOutbox[1].id = testOutboxFirstId
+        && testLegacyOutbox[1].at = 946684801000
+        && PersistMetagameOutbox(testLegacyOutbox, testLegacyOutboxPath)
+    testMigratedOutbox := testLegacyMigrationOk
+        ? LoadMetagameOutbox(testLegacyOutboxPath) : []
+    testLegacyMigrationOk := testLegacyMigrationOk
+        && testMigratedOutbox.Length = 1
+        && testMigratedOutbox[1].id = testOutboxFirstId
+        && testMigratedOutbox[1].at = 946684801000
+    try FileDelete testLegacyOutboxPath
+    try FileDelete testOutboxPath
     exitCode := !FileExist(State.buttonTemplates[1].path) ? 11
         : !FileExist(State.buttonTemplates[2].path) ? 12
         : !FileExist(State.hungerTemplatePath) ? 13
@@ -364,12 +948,12 @@ if A_Args.Length && A_Args[1] = "--validate" {
         : !testLegacyCompanionRejected ? 67
         : !CapacityNeedsStorage({weight: 8000, maxWeight: 10000,
             used: 2, slots: 20}, &testCapacityReason, &testFreeWeight) ? 53
-        : testCapacityReason != "weight" || testFreeWeight != 2000 ? 54
+        : testCapacityReason != "next_reward_weight" || testFreeWeight != 2000 ? 54
         : CapacityNeedsStorage({weight: 7999, maxWeight: 10000,
             used: 2, slots: 20}, &testCapacityReason, &testFreeWeight) ? 55
         : !CapacityNeedsStorage({weight: 1000, maxWeight: 10000,
             used: 20, slots: 20}, &testCapacityReason, &testFreeWeight) ? 56
-        : testCapacityReason != "slots" ? 57
+        : testCapacityReason != "free_slots" ? 57
         : WorkViewDownRoute(450) != "450:32" ? 69
         : !InventorySlotWasConsumed("0001.food.e30=2", "0001.food.e30=1", 1) ? 70
         : InventorySlotWasConsumed("0001.food.e30=2", "0001.food.e30=2", 1) ? 71
@@ -378,7 +962,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
         : RuntimeStatusOverlayCompactStatus("●  FiveM内部UIへ再接続中")
             != "FiveM内部UIへ再接続中" ? 74
         : RuntimeStatusOverlayMeta(3, true, 2500, 2)
-            != "操作 3 | 空き 2.5 kg | 収納 2" ? 75
+            != "実成功 3 | 空き 2.5 kg | 収納 2" ? 75
         : RuntimeStatusOverlayTitle("washing", "●  所持品確認中", "")
             != "石洗い | 所持品確認中" ? 76
         : testOverlayBounds.x != 480 ? 77
@@ -388,7 +972,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
         : WorkCooldownWakeDelay(1500) != 1500 ? 80
         : !CapacityNeedsStorage({weight: 149995, maxWeight: 150000,
             used: 8, slots: 50}, &testCapacityReason, &testFreeWeight) ? 81
-        : testCapacityReason != "weight" || testFreeWeight != 5 ? 82
+        : testCapacityReason != "weight_percent" || testFreeWeight != 5 ? 82
         : !ParseActionCompletionResult("ACTION_COMPLETED WASH 9123",
             "washing", &testActionElapsed) ? 83
         : testActionElapsed != 9123 ? 84
@@ -409,7 +993,59 @@ if A_Args.Length && A_Args[1] = "--validate" {
         : !IsActionCompletionBridgeResult("ERROR MINE_NOT_STARTED", "mining") ? 94
         : IsActionCompletionBridgeResult("ERROR WASH_NOT_STARTED", "mining") ? 95
         : !IsActionCompletionBridgeResult("ACTION_COMPLETED GOLD 6100", "gold") ? 96
-        : IsActionCompletionBridgeResult("ERROR GOLD_UNKNOWN", "gold") ? 97 : 0
+        : IsActionCompletionBridgeResult("ERROR GOLD_UNKNOWN", "gold") ? 97
+        : !InventorySnapshotHasReward(
+            {weight: 1200, items: "0001.ore.e30=2"},
+            {weight: 1000, items: "0001.ore.e30=1"}) ? 98
+        : InventorySnapshotHasReward(
+            {weight: 1000, items: "0001.ore.e30=1"},
+            {weight: 1000, items: "0001.ore.e30=1"}) ? 99
+        : !InventorySnapshotWasReduced(
+            {weight: 800, items: "0001.ore.e30=1"},
+            {weight: 1000, items: "0001.ore.e30=2"}) ? 100
+        : FarmStateTransitionAllowed("STORING", "RETURNING_TO_FARM") ? 101
+        : !FarmStateTransitionAllowed("VERIFY_STORAGE", "RETURNING_TO_FARM") ? 102
+        : !RunFarmStateMachineMockTest(100) ? 103
+        : RuntimeStatusOverlayBounds(0, 0, 1920, 1080, true).h != 94 ? 104
+        : MetagameRetryBackoffMs(1) != 4000
+            || MetagameRetryBackoffMs(9) != 30000 ? 105
+        : BuildMiningEventId(BuildFarmSessionId(12, 3, 1000), 7, 9)
+            = BuildMiningEventId(BuildFarmSessionId(12, 3, 1001), 7, 9) ? 106
+        : !RegExMatch(BuildMiningEventId(
+            BuildFarmSessionId(1234, 99, 1893456000000), 999, 888),
+            "^[A-Za-z0-9._:-]{8,128}$") ? 107
+        : State.successes != 0 || IsObject(State.pendingFarmAttempt) ? 108
+        : RewardReconcileDecision(false, true, 100, 200) != "WAIT" ? 109
+        : RewardReconcileDecision(true, true, 100, 200) != "CONFIRMED" ? 110
+        : RewardReconcileDecision(false, false, 100, 200)
+            != "SESSION_CHANGED" ? 111
+        : RewardReconcileDecision(false, true, 200, 200) != "TIMEOUT" ? 112
+        : !testOutboxEnqueueOk || !testLostAckRetained ? 113
+        : !testOutboxAckOk ? 114
+        : !testSessionRebaseOk ? 115
+        : !testAckCopyOnWriteOk ? 116
+        : !testIdleReplayOk ? 117
+        : (!IsValidMetaResetToken("9db26bb47a1845efa9905f8cb47d25d3:4")
+            || IsValidMetaResetToken("9db26bb4-7a18-45ef-a990-5f8cb47d25d3:4")
+            || IsValidMetaResetToken("9db26bb47a1845efa9905f8cb47d25d3:0")
+            || IsValidMetaResetToken("reset 4")) ? 118
+        : !testFarmBaselineGuardOk ? 119
+        : !testFarmFinalizeGuardOk ? 120
+        : !testDebugOverlayOk ? 121
+        : !testFarmFailureCodesOk ? 122
+        : !testStopResetOk ? 123
+        : !testCapacityDispatcherOk ? 124
+        : !testLargeOutboxOk ? 125
+        : !testJournalOk ? 126
+        : !testLegacyMigrationOk ? 127
+        : !testTornOk ? 128
+        : !testAppendFailureOk ? 129
+        : !testStorageDeltaSelectionOk ? 130
+        : !testGracefulTailOk ? 131
+        : !testEndRetryOk ? 132
+        : !testGracefulReplayOk ? 133
+        : !testInterleaveOk ? 134
+        : !testResetInterleaveOk ? 135 : 0
     if exitCode = 19
         try FileAppend "UPDATER_CAPS=" updaterCapabilities "`r`n",
             State.diagnosticPath, "UTF-8"
@@ -593,7 +1229,8 @@ BuildWebGui() {
     State.uiBackendGui := Gui("+ToolWindow -Caption", "AI採掘機 Backend " State.uiSession)
     State.uiBackendGui.Show("Hide w1 h1")
     State.gui := WebUiWindow(State.uiBackendGui.Hwnd)
-    State.pages := Map("overview", true, "vehicle", true, "settings", true, "update", true)
+    State.pages := Map("overview", true, "vehicle", true, "settings", true,
+        "stone", true, "update", true)
     State.ui := {
         deleteArmed: false,
         capacitySurface: true
@@ -640,6 +1277,20 @@ BuildWebGui() {
     State.autoUpdateControl := WebUiControl("autoUpdateControl", "", Config.autoCheckUpdates)
     State.minimumFreeWeightControl := WebUiControl("minimumFreeWeightControl", "",
         Config.minimumFreeWeight)
+    State.storageTriggerPercentControl := WebUiControl("storageTriggerPercent", "",
+        Config.storageTriggerPercent)
+    State.estimatedRewardWeightControl := WebUiControl("estimatedRewardWeight", "",
+        Config.estimatedRewardWeight)
+    State.minimumFreeSlotsControl := WebUiControl("minimumFreeSlots", "",
+        Config.minimumFreeSlots)
+    State.storageMaxRetriesControl := WebUiControl("storageMaxRetries", "",
+        Config.storageMaxRetries)
+    State.farmWatchdogMsControl := WebUiControl("farmWatchdogMs", "",
+        Config.farmWatchdogMs)
+    State.targetLostRecoveryMsControl := WebUiControl("targetLostRecoveryMs", "",
+        Config.targetLostRecoveryMs)
+    State.debugOverlayControl := WebUiControl("debugOverlay", "",
+        Config.debugOverlay)
     State.settingsButton := WebUiControl("settingsButton", "設定を保存")
     State.settingsErrorLabel := WebUiControl("settingsErrorLabel", "")
 
@@ -672,6 +1323,7 @@ PrepareWebUiRuntime() {
         State.uiAssetsPath := State.uiRuntimeRoot "\web"
         DirCreate State.uiRuntimeRoot
         DirCreate State.uiAssetsPath "\vendor"
+        DirCreate State.uiAssetsPath "\metagame\data"
         FileInstall "ui-runtime\host\AiMiner.UiHost.exe", State.uiHostPath, true
         FileInstall "ui-runtime\host\AiMiner.UiHost.exe.config",
             State.uiHostPath ".config", true
@@ -690,6 +1342,36 @@ PrepareWebUiRuntime() {
             State.uiAssetsPath "\vendor\framework7-bundle.min.css", true
         FileInstall "ui-runtime\web\vendor\framework7-bundle.min.js",
             State.uiAssetsPath "\vendor\framework7-bundle.min.js", true
+        FileInstall "ui-runtime\web\metagame\meta-game.css",
+            State.uiAssetsPath "\metagame\meta-game.css", true
+        FileInstall "ui-runtime\web\metagame\meta-game.js",
+            State.uiAssetsPath "\metagame\meta-game.js", true
+        FileInstall "ui-runtime\web\metagame\meta-game-adapter.js",
+            State.uiAssetsPath "\metagame\meta-game-adapter.js", true
+        FileInstall "ui-runtime\web\metagame\meta-game-entry.js",
+            State.uiAssetsPath "\metagame\meta-game-entry.js", true
+        FileInstall "ui-runtime\web\metagame\meta-game-template.html",
+            State.uiAssetsPath "\metagame\meta-game-template.html", true
+        FileInstall "ui-runtime\web\metagame\demo-adapter.js",
+            State.uiAssetsPath "\metagame\demo-adapter.js", true
+        FileInstall "ui-runtime\web\metagame\data\achievements.json",
+            State.uiAssetsPath "\metagame\data\achievements.json", true
+        FileInstall "ui-runtime\web\metagame\data\affinity.json",
+            State.uiAssetsPath "\metagame\data\affinity.json", true
+        FileInstall "ui-runtime\web\metagame\data\assets.json",
+            State.uiAssetsPath "\metagame\data\assets.json", true
+        FileInstall "ui-runtime\web\metagame\data\banners.json",
+            State.uiAssetsPath "\metagame\data\banners.json", true
+        FileInstall "ui-runtime\web\metagame\data\gacha.json",
+            State.uiAssetsPath "\metagame\data\gacha.json", true
+        FileInstall "ui-runtime\web\metagame\data\items.json",
+            State.uiAssetsPath "\metagame\data\items.json", true
+        FileInstall "ui-runtime\web\metagame\data\level-rewards.json",
+            State.uiAssetsPath "\metagame\data\level-rewards.json", true
+        FileInstall "ui-runtime\web\metagame\data\messages.json",
+            State.uiAssetsPath "\metagame\data\messages.json", true
+        FileInstall "ui-runtime\web\metagame\data\titles.json",
+            State.uiAssetsPath "\metagame\data\titles.json", true
     } else {
         repositoryRoot := RegExReplace(A_ScriptDir, "\\src$")
         State.uiRuntimeRoot := repositoryRoot "\build\ui-host"
@@ -704,7 +1386,22 @@ PrepareWebUiRuntime() {
         State.uiAssetsPath "\app.css", State.uiAssetsPath "\app.js",
         State.uiAssetsPath "\build-info.json",
         State.uiAssetsPath "\vendor\framework7-bundle.min.css",
-        State.uiAssetsPath "\vendor\framework7-bundle.min.js"]
+        State.uiAssetsPath "\vendor\framework7-bundle.min.js",
+        State.uiAssetsPath "\metagame\meta-game.css",
+        State.uiAssetsPath "\metagame\meta-game.js",
+        State.uiAssetsPath "\metagame\meta-game-adapter.js",
+        State.uiAssetsPath "\metagame\meta-game-entry.js",
+        State.uiAssetsPath "\metagame\meta-game-template.html",
+        State.uiAssetsPath "\metagame\demo-adapter.js",
+        State.uiAssetsPath "\metagame\data\achievements.json",
+        State.uiAssetsPath "\metagame\data\affinity.json",
+        State.uiAssetsPath "\metagame\data\assets.json",
+        State.uiAssetsPath "\metagame\data\banners.json",
+        State.uiAssetsPath "\metagame\data\gacha.json",
+        State.uiAssetsPath "\metagame\data\items.json",
+        State.uiAssetsPath "\metagame\data\level-rewards.json",
+        State.uiAssetsPath "\metagame\data\messages.json",
+        State.uiAssetsPath "\metagame\data\titles.json"]
     for path in required {
         if !FileExist(path)
             throw Error("UI runtime file is missing: " path)
@@ -744,6 +1441,8 @@ MonitorWebUiHost(*) {
     State.uiHwnd := 0
     State.uiReady := false
     SetTimer MonitorWebUiHost, 0
+    if State.running
+        ResetFarmMetagameSession("ui_host_process_ended")
 }
 
 ReceiveWebUiCopyData(wParam, lParam, *) {
@@ -772,11 +1471,18 @@ ReceiveWebUiCopyData(wParam, lParam, *) {
             State.uiReady := true
             SendWebUiCommand(State.uiWindowVisible ? "SHOW" : "HIDE")
             QueueWebUiFlush(true)
+            ; Give a freshly loaded Host a brief chance to emit meta.reset first,
+            ; then replay any durable FIFO even while Farm itself is stopped.
+            ScheduleMetagameOutboxReplay(150)
             return true
         }
         if !State.uiReady || wParam != State.uiHwnd
             return false
 
+        if parts[3] = "meta.ack" && parts.Length = 5
+            return AcknowledgeMetagameEvent(parts[4], parts[5])
+        if parts[3] = "meta.reset" && parts.Length = 4
+            return HandleMetagameReset(parts[4])
         if parts[3] = "smoke.result" {
             State.uiSmokeResult := parts.Length >= 4 ? parts[4] : "ERROR"
             return true
@@ -832,11 +1538,12 @@ ProcessWebUiActions(*) {
                     State.vehicleDeleteButton.Enabled := false
                 } else
                     DeleteVehicleRegistration()
-            } else if action = "settings.save" && parts.Length = 12 {
+            } else if action = "settings.save"
+                && (parts.Length = 12 || parts.Length = 19) {
                 ApplyWebUiSettings(parts)
             } else if action = "update.check" && parts.Length = 3 {
                 if State.visualTest {
-                    State.updatePageStatus.Text := "新しいバージョン v8.1.0 があります"
+                    State.updatePageStatus.Text := "新しいバージョン v9.1.0 があります"
                     State.updateButton.Text := "ダウンロードして更新"
                     State.ui.navUpdate.Text := "アップデート •"
                 } else
@@ -870,6 +1577,15 @@ ApplyWebUiSettings(parts) {
     State.foodKeyControl.Value := parts[10]
     State.autoUpdateControl.Value := parts[11] = "1"
     State.minimumFreeWeightControl.Value := parts[12]
+    if parts.Length >= 19 {
+        State.storageTriggerPercentControl.Value := parts[13]
+        State.estimatedRewardWeightControl.Value := parts[14]
+        State.minimumFreeSlotsControl.Value := parts[15]
+        State.storageMaxRetriesControl.Value := parts[16]
+        State.farmWatchdogMsControl.Value := parts[17]
+        State.targetLostRecoveryMsControl.Value := parts[18]
+        State.debugOverlayControl.Value := parts[19] = "1"
+    }
     if !State.visualTest {
         SaveInlineSettings()
         return
@@ -885,6 +1601,15 @@ ApplyWebUiSettings(parts) {
     try Config.foodKey := Integer(parts[10])
     Config.autoCheckUpdates := parts[11] = "1"
     try Config.minimumFreeWeight := Integer(parts[12])
+    if parts.Length >= 19 {
+        try Config.storageTriggerPercent := Integer(parts[13])
+        try Config.estimatedRewardWeight := Integer(parts[14])
+        try Config.minimumFreeSlots := Integer(parts[15])
+        try Config.storageMaxRetries := Integer(parts[16])
+        try Config.farmWatchdogMs := Integer(parts[17])
+        try Config.targetLostRecoveryMs := Integer(parts[18])
+        Config.debugOverlay := parts[19] = "1"
+    }
     State.footerLabel.Text := "開始 " Config.startHotkey "　停止 " Config.stopHotkey
     State.settingsErrorLabel.Opt("c248A3D")
     State.settingsErrorLabel.Text := "設定を保存しました。"
@@ -970,6 +1695,11 @@ BuildWebUiStateJson() {
         . ',"running":' (State.running ? "true" : "false")
         . ',"registrationActive":' (State.registrationActive ? "true" : "false")
         . ',"actionMode":' JsonQuote(actionMode)
+        . ',"farmState":' JsonQuote(State.farmState)
+        . ',"farmStateReason":' JsonQuote(State.farmStateReason)
+        . ',"farmStateTaskId":' State.farmStateTaskId
+        . ',"inventorySnapshotRevision":' State.inventorySnapshotRevision
+        . ',"farmRetry":' State.farmStateRetry
         . ',"windowVisible":' (State.uiWindowVisible ? "true" : "false")
         . ',"visualTest":' (State.visualTest ? "true" : "false")
         . ',"controls":{' controlsJson '}}'
@@ -1002,6 +1732,902 @@ SendWebUiCommand(command) {
         "AIUICMD1`t" State.uiSession "`t" command)
 }
 
+UnixTimeMilliseconds() {
+    fileTime := Buffer(8, 0)
+    DllCall("kernel32\GetSystemTimeAsFileTime", "Ptr", fileTime.Ptr)
+    windowsTicks := NumGet(fileTime, 0, "Int64")
+    return Floor((windowsTicks - 116444736000000000) / 10000)
+}
+
+SendMetagameCommand(command, identifier, eventAtUnixMs) {
+    global State
+    if command != "SESSION_BEGIN" && command != "MINING_SUCCESS"
+        && command != "SESSION_END"
+        return false
+    if !RegExMatch(identifier, "^[A-Za-z0-9._:-]{8,128}$")
+        return false
+    try eventAtUnixMs := Integer(eventAtUnixMs)
+    catch
+        return false
+    if eventAtUnixMs < 1 || !State.uiSession
+        return false
+    if !State.uiReady || !State.uiHwnd
+        EnsureWebUiHost()
+    sent := State.uiReady && State.uiHwnd
+        && SendWebUiCopyData(State.uiHwnd, "AIUIMETA1`t" State.uiSession
+            "`t" command "`t" identifier "`t" eventAtUnixMs)
+    WriteDiagnostic("METAGAME command=" command " id=" identifier
+        " sent=" (sent ? 1 : 0))
+    return sent
+}
+
+BeginFarmMetagameSession(expectedGeneration) {
+    global State
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        if !IsCurrentRun(expectedGeneration)
+            return false
+        if !State.metagameReplayNormalized
+            && !NormalizeStoppedMetagameOutboxAtStartup()
+            return false
+        State.metagameReplayNormalized := true
+        if !State.farmSessionId {
+            startedAt := UnixTimeMilliseconds()
+            State.farmSessionId := BuildFarmSessionId(
+                DllCall("GetCurrentProcessId"), expectedGeneration, startedAt)
+            State.farmSessionStartedAt := startedAt
+            State.farmSessionEndedAt := 0
+            State.farmSessionBeginQueued := false
+            State.farmSessionBeginSent := false
+            State.farmSessionEndQueued := false
+            State.farmSessionEndSent := false
+        }
+        if !EnsureFarmMetagameSessionBeginQueued()
+            return false
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+    FlushPendingMetagameMiningEvent(expectedGeneration)
+    ; Durable FIFO membership, rather than WM_COPYDATA queue acceptance, is the
+    ; condition required before a mining event may be appended behind SESSION_BEGIN.
+    return State.farmSessionBeginQueued
+}
+
+EnsureFarmMetagameSessionBeginQueued() {
+    global State
+    if !State.farmSessionId || State.farmSessionStartedAt < 1
+        return false
+    if State.farmSessionBeginQueued
+        return true
+    if MetagameOutboxContainsCommand(State.metagameOutbox,
+        "SESSION_BEGIN", State.farmSessionId) {
+        if State.metagameOutboxDirty && !PersistMetagameOutboxWithRetry()
+            return false
+        State.farmSessionBeginQueued := true
+        return true
+    }
+    if !DurablyEnqueueMetagameEvent("SESSION_BEGIN", State.farmSessionId,
+        State.farmSessionStartedAt)
+        return false
+    State.farmSessionBeginQueued := true
+    return true
+}
+
+BuildFarmSessionId(processId, generation, startedAtUnixMs, resetOrdinal := 0) {
+    suffix := resetOrdinal > 0 ? "_r" resetOrdinal : ""
+    return "run_" processId "_" generation "_" startedAtUnixMs suffix
+}
+
+BuildMiningEventId(farmSessionId, attemptId, snapshotRevision) {
+    return "mine_" farmSessionId "_" attemptId "_" snapshotRevision
+}
+
+MetagameRetryBackoffMs(retryWindow) {
+    return Min(30000, 2000 * (2 ** Min(Max(1, retryWindow), 4)))
+}
+
+EnterMetagameOutboxCritical() {
+    ; AHK timers and WM_COPYDATA callbacks are otherwise allowed to interrupt after
+    ; every line (`Thread "Interrupt", 0`). Preserve an enclosing Critical section
+    ; while making the outermost outbox transaction non-interruptible.
+    criticalWasOn := A_IsCritical
+    if !criticalWasOn
+        Critical "On"
+    return criticalWasOn
+}
+
+LeaveMetagameOutboxCritical(criticalWasOn) {
+    if !criticalWasOn
+        Critical "Off"
+}
+
+TryGetMetagameOutboxHead(&entry) {
+    global State
+    entry := 0
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        if !State.metagameOutbox.Length
+            return false
+        entry := State.metagameOutbox[1]
+        return true
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+}
+
+ScheduleMetagameInterleaveSelfTestAck(*) {
+    global MetagameInterleaveTimerRan, MetagameInterleaveTimerRanInside
+    SetTimer RunMetagameInterleaveSelfTestAck, -1
+    ; The timer becomes due while DurablyEnqueueMetagameEvent is between its
+    ; flushed E record and memory Push. Critical must defer it past the Push.
+    Sleep 35
+    MetagameInterleaveTimerRanInside := MetagameInterleaveTimerRan
+}
+
+RunMetagameInterleaveSelfTestAck(*) {
+    global State, MetagameInterleaveAckCommand, MetagameInterleaveAckId
+    global MetagameInterleaveAckOk, MetagameInterleaveAckSawCount
+    global MetagameInterleaveTimerRan
+    MetagameInterleaveAckSawCount := State.metagameOutbox.Length
+    MetagameInterleaveAckOk := AcknowledgeMetagameEvent(
+        MetagameInterleaveAckCommand, MetagameInterleaveAckId)
+    MetagameInterleaveTimerRan := true
+    SetTimer FlushMetagameOutboxReplay, 0
+}
+
+ProbeMetagameResetCriticalSelfTest(*) {
+    global MetagameResetCriticalObserved, MetagameResetTimerRan
+    global MetagameResetTimerRanInside
+    ; Called after reset copied/rebased the FIFO but before it replaces disk/state.
+    ; Any Farm timer at this boundary must still be deferred.
+    MetagameResetCriticalObserved := A_IsCritical != 0
+    SetTimer RunMetagameResetInterleaveSelfTestEnqueue, -1
+    Sleep 35
+    MetagameResetTimerRanInside := MetagameResetTimerRan
+}
+
+RunMetagameResetInterleaveSelfTestEnqueue(*) {
+    global State, MetagameResetInterleaveMiningId
+    global MetagameResetInterleaveEnqueueOk, MetagameResetInterleaveSawSession
+    global MetagameResetTimerRan
+    MetagameResetInterleaveSawSession := State.farmSessionId
+    MetagameResetInterleaveEnqueueOk := DurablyEnqueueMetagameEvent(
+        "MINING_SUCCESS", MetagameResetInterleaveMiningId, 1893456007500)
+    MetagameResetTimerRan := true
+    SetTimer FlushMetagameOutboxReplay, 0
+}
+
+LoadMetagameOutbox(path) {
+    outbox := []
+    if !path || !FileExist(path)
+        return outbox
+    try content := FileRead(path, "UTF-8")
+    catch
+        return outbox
+    lines := StrSplit(StrReplace(content, "`r", ""), "`n")
+    if !lines.Length
+        return outbox
+    header := lines[1]
+    if header = "AIUIMETAOUTBOX3" {
+        journal := []
+        headIndex := 1
+        seen := Map()
+        Loop lines.Length - 1 {
+            line := lines[A_Index + 1]
+            if !line
+                continue
+            fields := StrSplit(line, "`t")
+            if fields[1] = "E" && fields.Length = 4 {
+                if !TryParseMetagameOutboxFields(fields[2], fields[3],
+                    fields[4], &entry)
+                    continue
+                key := entry.command "|" entry.id
+                if seen.Has(key)
+                    continue
+                seen[key] := true
+                journal.Push(entry)
+            } else if fields[1] = "A" && fields.Length = 3 {
+                ; ACK records are accepted only in FIFO order. A torn or corrupt
+                ; tail therefore cannot delete an unrelated event.
+                if headIndex <= journal.Length
+                    && journal[headIndex].command = fields[2]
+                    && journal[headIndex].id = fields[3]
+                    headIndex += 1
+            }
+        }
+        if headIndex <= journal.Length {
+            Loop journal.Length - headIndex + 1
+                outbox.Push(journal[headIndex + A_Index - 1])
+        }
+        return outbox
+    }
+    if header != "AIUIMETAOUTBOX1" && header != "AIUIMETAOUTBOX2"
+        return outbox
+    legacyFormat := header = "AIUIMETAOUTBOX1"
+    seen := Map()
+    Loop lines.Length - 1 {
+        line := lines[A_Index + 1]
+        if !line
+            continue
+        fields := StrSplit(line, "`t")
+        if (legacyFormat && fields.Length != 2)
+            || (!legacyFormat && fields.Length != 3)
+            continue
+        command := legacyFormat ? "MINING_SUCCESS" : fields[1]
+        eventId := legacyFormat ? fields[1] : fields[2]
+        timestampField := legacyFormat ? fields[2] : fields[3]
+        if !TryParseMetagameOutboxFields(command, eventId,
+            timestampField, &entry)
+            continue
+        key := entry.command "|" entry.id
+        if seen.Has(key)
+            continue
+        seen[key] := true
+        outbox.Push(entry)
+    }
+    return outbox
+}
+
+TryParseMetagameOutboxFields(command, eventId, timestampField, &entry) {
+    entry := 0
+    if command != "SESSION_BEGIN" && command != "MINING_SUCCESS"
+        && command != "SESSION_END"
+        return false
+    if !RegExMatch(eventId, "^[A-Za-z0-9._:-]{8,128}$")
+        return false
+    try eventAt := Integer(timestampField)
+    catch
+        return false
+    if eventAt < 1 || eventAt > 9999999999999
+        return false
+    entry := {command: command, id: eventId, at: eventAt, retries: 0,
+        nextAt: 0, windows: 0, enqueued: false}
+    return true
+}
+
+MetagameOutboxEntryValid(entry) {
+    if !IsObject(entry)
+        || !entry.HasOwnProp("command") || !entry.HasOwnProp("id")
+        || !entry.HasOwnProp("at")
+        || (entry.command != "SESSION_BEGIN"
+            && entry.command != "MINING_SUCCESS"
+            && entry.command != "SESSION_END")
+        || !RegExMatch(entry.id, "^[A-Za-z0-9._:-]{8,128}$")
+        return false
+    try eventAt := Integer(entry.at)
+    catch
+        return false
+    return eventAt >= 1 && eventAt <= 9999999999999
+}
+
+PersistMetagameOutbox(outbox, path) {
+    if !path
+        return false
+    SplitPath path, , &directory
+    try DirCreate directory
+    catch
+        return false
+    tempPath := path "." DllCall("GetCurrentProcessId") ".tmp"
+    try {
+        try FileDelete tempPath
+        outboxFile := FileOpen(tempPath, "w", "UTF-8-RAW")
+        if !IsObject(outboxFile)
+            return false
+        outboxFile.Write("AIUIMETAOUTBOX3`n")
+        for entry in outbox {
+            if !MetagameOutboxEntryValid(entry) {
+                outboxFile.Close()
+                try FileDelete tempPath
+                return false
+            }
+            outboxFile.Write("E`t" entry.command "`t" entry.id "`t"
+                Integer(entry.at) "`n")
+        }
+        flushed := FlushMetagameFileHandle(outboxFile.Handle)
+        outboxFile.Close()
+        if !flushed {
+            try FileDelete tempPath
+            return false
+        }
+        ; Same-volume replace with write-through keeps either the previous complete
+        ; file or the new complete file after a crash; a partial FIFO is never read.
+        moved := DllCall("kernel32\MoveFileExW", "Str", tempPath, "Str", path,
+            "UInt", 0x00000009, "Int")
+        if !moved {
+            try FileDelete tempPath
+            return false
+        }
+        return true
+    } catch {
+        try FileDelete tempPath
+        return false
+    }
+}
+
+FlushMetagameFileHandle(fileHandle) {
+    return fileHandle
+        && DllCall("kernel32\FlushFileBuffers", "Ptr", fileHandle, "Int") != 0
+}
+
+EnsureMetagameJournalReady() {
+    global State
+    if State.metagameJournalReady
+        return true
+    isJournal := false
+    if FileExist(State.metagameOutboxPath) {
+        try {
+            journalFile := FileOpen(State.metagameOutboxPath, "r", "UTF-8")
+            if IsObject(journalFile) {
+                isJournal := RTrim(journalFile.ReadLine(), "`r`n")
+                    = "AIUIMETAOUTBOX3"
+                journalFile.Close()
+            }
+        }
+    }
+    if !isJournal && !PersistMetagameOutboxWithRetry()
+        return false
+    State.metagameJournalReady := true
+    State.metagameJournalOps := 0
+    return true
+}
+
+AppendMetagameJournalRecord(recordLine) {
+    global State
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        if !EnsureMetagameJournalReady()
+            return false
+        try {
+            journalFile := FileOpen(State.metagameOutboxPath, "a", "UTF-8-RAW")
+            if !IsObject(journalFile)
+                return false
+            ; A leading newline is intentional. If the previous process died halfway
+            ; through a record, this terminates that malformed tail before the next E/A
+            ; record, so one torn write cannot consume a later verified reward.
+            journalFile.Write("`n" recordLine "`n")
+            flushed := FlushMetagameFileHandle(journalFile.Handle)
+            journalFile.Close()
+            if !flushed
+                return false
+            State.metagameJournalOps += 1
+            return true
+        } catch {
+            try journalFile.Close()
+            return false
+        }
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+}
+
+MaybeCompactMetagameJournal() {
+    global State
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        try journalBytes := FileGetSize(State.metagameOutboxPath)
+        catch {
+            journalBytes := 0
+        }
+        if State.metagameJournalOps < 256 && journalBytes < 1048576
+            return true
+        if !PersistMetagameOutboxWithRetry()
+            return false
+        State.metagameJournalReady := true
+        State.metagameJournalOps := 0
+        return true
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+}
+
+PersistMetagameOutboxWithRetry() {
+    global State
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        persisted := PersistMetagameOutboxArrayWithRetry(State.metagameOutbox)
+        if persisted {
+            State.metagameOutboxDirty := false
+            State.metagameJournalReady := true
+            State.metagameJournalOps := 0
+        }
+        return persisted
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+}
+
+PersistMetagameOutboxArrayWithRetry(outbox) {
+    global State
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        Loop 3 {
+            if PersistMetagameOutbox(outbox, State.metagameOutboxPath)
+                return true
+            if A_Index < 3
+                Sleep 20
+        }
+        WriteDiagnostic("METAGAME_OUTBOX_PERSIST_ERROR count="
+            outbox.Length)
+        return false
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+}
+
+MetagameOutboxContains(outbox, eventId) {
+    for entry in outbox {
+        if entry.id = eventId
+            return true
+    }
+    return false
+}
+
+MetagameOutboxContainsCommand(outbox, command, eventId) {
+    for entry in outbox {
+        if entry.command = command && entry.id = eventId
+            return true
+    }
+    return false
+}
+
+RebaseMetagameOutboxForSession(&outbox, sessionId, startedAtUnixMs,
+    includeEnd := false, endedAtUnixMs := 0) {
+    if !RegExMatch(sessionId, "^[A-Za-z0-9._:-]{8,128}$")
+        return false
+    retainedMining := []
+    for entry in outbox {
+        if entry.command = "MINING_SUCCESS"
+            retainedMining.Push(entry)
+    }
+    replacement := []
+    if !MetagameOutboxEnqueue(&replacement, sessionId, startedAtUnixMs,
+        "SESSION_BEGIN")
+        return false
+    for entry in retainedMining
+        replacement.Push(entry)
+    if includeEnd {
+        if endedAtUnixMs < startedAtUnixMs
+            return false
+        if !MetagameOutboxEnqueue(&replacement, sessionId, endedAtUnixMs,
+            "SESSION_END")
+            return false
+    }
+    outbox := replacement
+    return true
+}
+
+MetagameResetRequiresEnd(running, stopInProgress, outbox, sessionId) {
+    if !running || stopInProgress
+        return true
+    return sessionId
+        && MetagameOutboxContainsCommand(outbox, "SESSION_END", sessionId)
+}
+
+NormalizeStoppedMetagameOutboxAtStartup() {
+    global State
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        if !State.metagameOutbox.Length
+            return true
+        ; A graceful stop already has the authoritative END and its real duration.
+        ; Preserve that FIFO byte-for-byte; only a hard-kill tail without END is folded
+        ; into a fresh closed recovery session. A prefix may already have been ACKed,
+        ; so MINING...END and END-only tails are valid graceful replays too.
+        if MetagameOutboxEndsWithSessionEnd(State.metagameOutbox) {
+            WriteDiagnostic("METAGAME_STARTUP_GRACEFUL_REPLAY pending="
+                State.metagameOutbox.Length " preserved=1")
+            return true
+        }
+        ; A hard kill can leave BEGIN + verified mining rows without END. Replaying
+        ; that historical BEGIN after Host recovery would reopen the old session and
+        ; count offline time. Fold every retained mining row into a fresh, immediately
+        ; closed recovery session before the first idle replay. Commit disk first.
+        startedAt := UnixTimeMilliseconds()
+        resetOrdinal := Max(1, State.metagameSessionResetCount + 1)
+        sessionId := BuildFarmSessionId(DllCall("GetCurrentProcessId"), 1,
+            startedAt, resetOrdinal)
+        outbox := State.metagameOutbox
+        if !RebaseMetagameOutboxForSession(&outbox, sessionId, startedAt,
+            true, startedAt + 1)
+            return false
+        if !PersistMetagameOutboxArrayWithRetry(outbox)
+            return false
+        State.metagameOutbox := outbox
+        State.metagameOutboxDirty := false
+        State.metagameJournalReady := true
+        State.metagameJournalOps := 0
+        State.metagameSessionResetCount := resetOrdinal
+        WriteDiagnostic("METAGAME_STARTUP_RECOVERY session=" sessionId
+            " pending=" outbox.Length " persisted=1")
+        return true
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+}
+
+MetagameOutboxEndsWithSessionEnd(outbox) {
+    return outbox.Length
+        && outbox[outbox.Length].command = "SESSION_END"
+}
+
+ResetFarmMetagameSession(reason, beforePersist := 0) {
+    global State
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        if !State.running && !State.metagameOutbox.Length
+            return false
+        oldSessionId := State.farmSessionId
+        startedAt := Max(UnixTimeMilliseconds(), State.farmSessionStartedAt + 1)
+        nextResetCount := State.metagameSessionResetCount + 1
+        includeEnd := MetagameResetRequiresEnd(State.running,
+            State.stopInProgress, State.metagameOutbox, oldSessionId)
+        sessionId := BuildFarmSessionId(DllCall("GetCurrentProcessId"),
+            Max(1, State.generation), startedAt, nextResetCount)
+        outbox := State.metagameOutbox
+        if !RebaseMetagameOutboxForSession(&outbox, sessionId, startedAt,
+            includeEnd, includeEnd ? startedAt + 1 : 0)
+            return false
+        if IsObject(beforePersist)
+            beforePersist.Call()
+        ; Reset is copy-on-write too: the Host keeps reset pending while this returns
+        ; false, so neither the in-memory session nor its generation may advance until
+        ; the replacement FIFO is durably on disk.
+        persisted := PersistMetagameOutboxArrayWithRetry(outbox)
+        if !persisted {
+            WriteDiagnostic("METAGAME_SESSION_RESET code=" DiagnosticToken(reason)
+                " old=" oldSessionId " new=" sessionId
+                " pending=" outbox.Length " persisted=0")
+            return false
+        }
+        State.metagameOutbox := outbox
+        State.metagameOutboxDirty := false
+        State.metagameReplayNormalized := true
+        State.metagameJournalReady := true
+        State.metagameJournalOps := 0
+        State.metagameSessionResetCount := nextResetCount
+        if State.running {
+            State.farmSessionId := sessionId
+            State.farmSessionStartedAt := startedAt
+            State.farmSessionEndedAt := includeEnd ? startedAt + 1 : 0
+            State.farmSessionBeginQueued := true
+            State.farmSessionBeginSent := false
+            State.farmSessionEndQueued := includeEnd
+            State.farmSessionEndSent := false
+        }
+        WriteDiagnostic("METAGAME_SESSION_RESET code=" DiagnosticToken(reason)
+            " old=" oldSessionId " new=" sessionId
+            " pending=" State.metagameOutbox.Length " persisted=1")
+        ScheduleMetagameOutboxReplay(1)
+        return true
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+}
+
+IsValidMetaResetToken(token) {
+    ; Host persistence epochs are deliberately narrower than metagame event IDs:
+    ; exactly 16 random bytes in hex followed by a positive recovery generation.
+    return RegExMatch(token, "^[0-9A-Fa-f]{32}:[1-9][0-9]{0,18}$") != 0
+}
+
+HandleMetagameReset(resetToken) {
+    global State
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        if !IsValidMetaResetToken(resetToken)
+            return false
+        if resetToken = State.lastMetaResetToken
+            return true
+        ; If StopMining is still waiting to durably append its immutable END, close
+        ; that intent first. Otherwise an empty FIFO could acknowledge Host reset and
+        ; silently abandon the active sidecar session.
+        if FarmMetagameClosurePending() && !EndFarmMetagameSession(false)
+            return false
+        if !State.running && !State.metagameOutbox.Length {
+            ; Persisting the empty envelope is the durable acknowledgement that there
+            ; was no replay work. A failed write leaves the token unrecorded for retry.
+            if !PersistMetagameOutboxWithRetry()
+                return false
+        } else if !ResetFarmMetagameSession("host_persistence_reset_"
+            resetToken) {
+            return false
+        }
+        State.lastMetaResetToken := resetToken
+        return true
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+}
+
+ScheduleMetagameOutboxReplay(delayMs := 1) {
+    global State
+    if !State.metagameOutbox.Length && !FarmMetagameClosurePending() {
+        SetTimer FlushMetagameOutboxReplay, 0
+        return
+    }
+    SetTimer FlushMetagameOutboxReplay, -Max(1, Round(delayMs))
+}
+
+FlushMetagameOutboxReplay(*) {
+    global State
+    if FarmMetagameClosurePending() && !EndFarmMetagameSession(false) {
+        ScheduleMetagameOutboxReplay(1500)
+        return
+    }
+    if !State.metagameOutbox.Length
+        return
+    if !State.running && !State.metagameReplayNormalized {
+        if !NormalizeStoppedMetagameOutboxAtStartup() {
+            ScheduleMetagameOutboxReplay(1500)
+            return
+        }
+        State.metagameReplayNormalized := true
+    }
+    if !State.uiReady || !State.uiHwnd {
+        EnsureWebUiHost()
+        ScheduleMetagameOutboxReplay(1500)
+        return
+    }
+    FlushPendingMetagameMiningEvent(0)
+    if !TryGetMetagameOutboxHead(&head)
+        return
+    delayMs := head.nextAt ? Max(50, head.nextAt - MonotonicMs()) : 100
+    ScheduleMetagameOutboxReplay(Min(30000, delayMs))
+}
+
+FarmMetagameClosurePending() {
+    global State
+    return State.farmSessionId && State.farmSessionEndedAt > 0
+        && !State.farmSessionEndQueued && !State.farmSessionEndSent
+}
+
+PrepareMetagameForNewFarmStart() {
+    global State
+    if FarmMetagameClosurePending() && !EndFarmMetagameSession(false) {
+        ScheduleMetagameOutboxReplay(1500)
+        return false
+    }
+    if !State.metagameReplayNormalized {
+        if !NormalizeStoppedMetagameOutboxAtStartup()
+            return false
+        State.metagameReplayNormalized := true
+    }
+    return true
+}
+
+EndFarmMetagameSession(allowDrain := true) {
+    global State
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        if !State.farmSessionId || State.farmSessionEndSent
+            return true
+        ; Capture the stop wall-clock once. Every append retry must carry this same
+        ; value or an I/O outage would inflate the recorded Farm duration.
+        if State.farmSessionEndedAt < 1
+            State.farmSessionEndedAt := Max(UnixTimeMilliseconds(),
+                State.farmSessionStartedAt)
+        if !EnsureFarmMetagameSessionBeginQueued() {
+            ScheduleMetagameOutboxReplay(1500)
+            return false
+        }
+        if !State.farmSessionEndQueued {
+            if MetagameOutboxContainsCommand(State.metagameOutbox,
+                "SESSION_END", State.farmSessionId) {
+                State.farmSessionEndQueued := !State.metagameOutboxDirty
+                    || PersistMetagameOutboxWithRetry()
+            } else {
+                State.farmSessionEndQueued := DurablyEnqueueMetagameEvent(
+                    "SESSION_END", State.farmSessionId, State.farmSessionEndedAt)
+            }
+        }
+        if !State.farmSessionEndQueued {
+            ScheduleMetagameOutboxReplay(1500)
+            return false
+        }
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+    if allowDrain && State.running && State.metagameOutbox.Length {
+        ; Input is already released before this function is called. Give the Host a
+        ; short bounded window to finish atomic persistence and return meta.ack;
+        ; anything still pending remains in the durable FIFO for the next launch.
+        drainDeadline := MonotonicMs() + 1200
+        while MonotonicMs() < drainDeadline {
+            if !TryGetMetagameOutboxHead(&entry)
+                break
+            if !entry.nextAt || MonotonicMs() >= entry.nextAt
+                FlushPendingMetagameMiningEvent(State.generation)
+            Sleep 25
+        }
+    }
+    ; A missing ACK keeps SESSION_END in the durable FIFO for ordered replay.
+    if State.metagameOutbox.Length
+        ScheduleMetagameOutboxReplay(1)
+    return true
+}
+
+MetagameOutboxEnqueue(&outbox, eventId, eventAtUnixMs,
+    command := "MINING_SUCCESS") {
+    if !TryParseMetagameOutboxFields(command, eventId, eventAtUnixMs,
+        &entry)
+        return false
+    if MetagameOutboxContainsCommand(outbox, command, eventId)
+        return false
+    outbox.Push(entry)
+    return true
+}
+
+DurablyEnqueueMetagameEvent(command, eventId, eventAtUnixMs,
+    beforeMemoryCommit := 0) {
+    global State
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        if (command = "MINING_SUCCESS" && eventId = State.lastMiningEventId)
+            || MetagameOutboxContainsCommand(State.metagameOutbox, command, eventId)
+            return true
+        if !TryParseMetagameOutboxFields(command, eventId, eventAtUnixMs,
+            &entry)
+            return false
+        ; Journal append + FlushFileBuffers and the matching memory commit are one
+        ; non-interruptible transaction. An ACK/reset cannot compact away this E
+        ; record between those two operations.
+        if !AppendMetagameJournalRecord("E`t" entry.command "`t" entry.id
+            "`t" entry.at)
+            return false
+        ; Validation injects a one-shot timer here to prove that an ACK/compact
+        ; cannot observe the journal E before its matching memory entry exists.
+        if IsObject(beforeMemoryCommit)
+            beforeMemoryCommit.Call()
+        CommitDurableMetagameEntry(State.metagameOutbox, entry, true)
+        State.metagameOutboxDirty := false
+        return true
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+}
+
+CommitDurableMetagameEntry(outbox, entry, appendWasDurable) {
+    if !appendWasDurable
+        return false
+    outbox.Push(entry)
+    return true
+}
+
+MetagameOutboxAcknowledge(&outbox, command, eventId) {
+    if !BuildMetagameOutboxAfterAck(outbox, command, eventId, &candidate)
+        return false
+    outbox := candidate
+    return true
+}
+
+BuildMetagameOutboxAfterAck(outbox, command, eventId, &candidate) {
+    candidate := []
+    if !outbox.Length || outbox[1].command != command
+        || outbox[1].id != eventId
+        return false
+    Loop outbox.Length - 1
+        candidate.Push(outbox[A_Index + 1])
+    return true
+}
+
+AcknowledgeMetagameEvent(command, eventId) {
+    global State
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        if command != "SESSION_BEGIN" && command != "MINING_SUCCESS"
+            && command != "SESSION_END"
+            return false
+        if !State.metagameOutbox.Length
+            return false
+        acknowledgedEntry := State.metagameOutbox[1]
+        acknowledgedId := acknowledgedEntry.id
+        acknowledgedCommand := acknowledgedEntry.command
+        if !BuildMetagameOutboxAfterAck(State.metagameOutbox, command,
+            eventId, &outbox)
+            return false
+        ; Tombstone flush, memory removal, and optional compaction share the same
+        ; non-interruptible transaction as enqueue/reset.
+        if !AppendMetagameJournalRecord("A`t" command "`t" eventId) {
+            WriteDiagnostic("METAGAME_ACK_PERSIST_BLOCKED command=" command
+                " id=" eventId)
+            return false
+        }
+        State.metagameOutbox := outbox
+        State.metagameOutboxDirty := false
+        if acknowledgedCommand = "MINING_SUCCESS"
+            State.lastMiningEventId := acknowledgedId
+        else if acknowledgedCommand = "SESSION_BEGIN"
+            && acknowledgedId = State.farmSessionId
+            State.farmSessionBeginSent := true
+        else if acknowledgedCommand = "SESSION_END"
+            && acknowledgedId = State.farmSessionId
+            State.farmSessionEndSent := true
+        if State.metagameOutbox.Length {
+            ; Do not expose the next command to a duplicate ACK generated by a retried
+            ; predecessor until a later dispatcher pass has actually sent it.
+            State.metagameOutbox[1].enqueued := false
+            State.metagameOutbox[1].nextAt := MonotonicMs() + 100
+        }
+        WriteDiagnostic("METAGAME_ACK command=" acknowledgedCommand " id=" eventId
+            " remaining=" State.metagameOutbox.Length)
+        MaybeCompactMetagameJournal()
+        ScheduleMetagameOutboxReplay(1)
+        return true
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+}
+
+EmitVerifiedMiningSuccess(expectedGeneration, attemptId, snapshotRevision) {
+    global State
+    if !IsCurrentRun(expectedGeneration) || State.runMode != "mining"
+        return false
+    ; farmSessionId carries PID + wall-clock start and prevents persistent dedupe
+    ; collisions after an app restart, while retries keep this exact ID stable.
+    BeginFarmMetagameSession(expectedGeneration)
+    if !State.farmSessionId
+        return false
+    eventId := BuildMiningEventId(State.farmSessionId, attemptId,
+        snapshotRevision)
+    if eventId = State.lastMiningEventId
+        || MetagameOutboxContainsCommand(State.metagameOutbox,
+            "MINING_SUCCESS", eventId)
+        return true
+    if !DurablyEnqueueMetagameEvent("MINING_SUCCESS", eventId,
+        UnixTimeMilliseconds()) {
+        WriteDiagnostic("METAGAME_OUTBOX_PERSIST_FAILED id=" eventId)
+        return false
+    }
+    FlushPendingMetagameMiningEvent(expectedGeneration)
+    return true
+}
+
+FlushPendingMetagameMiningEvent(expectedGeneration) {
+    global State
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        if State.metagameFlushActive
+            return false
+        State.metagameFlushActive := true
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+    try return FlushMetagameOutboxHead(expectedGeneration)
+    finally {
+        criticalWasOn := EnterMetagameOutboxCritical()
+        try State.metagameFlushActive := false
+        finally LeaveMetagameOutboxCritical(criticalWasOn)
+    }
+}
+
+FlushMetagameOutboxHead(expectedGeneration) {
+    global State
+    retryExhausted := false
+    exhaustedWindow := 0
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        if !State.metagameOutbox.Length
+            return true
+        if expectedGeneration && !IsCurrentRun(expectedGeneration)
+            return false
+        if State.metagameOutboxDirty && !PersistMetagameOutboxWithRetry()
+            return false
+        entry := State.metagameOutbox[1]
+        now := MonotonicMs()
+        if entry.nextAt && now < entry.nextAt
+            return false
+        if entry.retries >= 3 {
+            entry.windows += 1
+            entry.retries := 0
+            entry.nextAt := now + MetagameRetryBackoffMs(entry.windows)
+            retryExhausted := true
+            exhaustedWindow := entry.windows
+        }
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+    if retryExhausted {
+        WriteDiagnostic("METAGAME_RETRY_EXHAUSTED id="
+            entry.id " window=" exhaustedWindow)
+        EnsureWebUiHost()
+        return false
+    }
+    ; `at` is the immutable real event time. Host accepts authenticated replay
+    ; history; changing this value would corrupt daily statistics.
+    sent := SendMetagameCommand(entry.command, entry.id, entry.at)
+    updated := false
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        if State.metagameOutbox.Length
+            && State.metagameOutbox[1].command = entry.command
+            && State.metagameOutbox[1].id = entry.id {
+            current := State.metagameOutbox[1]
+            current.enqueued := sent ? true : current.enqueued
+            current.retries += 1
+            current.nextAt := now + 2000
+            updated := true
+        }
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+    ; WM_COPYDATA return means only that Host accepted the enqueue. Keep this FIFO
+    ; entry until the authenticated meta.ack sent after Host atomic persistence.
+    if sent && updated
+        WriteDiagnostic("METAGAME_ENQUEUED command=" entry.command " id=" entry.id
+            " awaitingAck=1")
+    return false
+}
+
 SendWebUiCopyData(targetHwnd, message) {
     global State
     if !targetHwnd || !DllCall("user32\IsWindow", "Ptr", targetHwnd, "Int")
@@ -1014,9 +2640,12 @@ SendWebUiCopyData(targetHwnd, message) {
     NumPut("UInt", messageBuffer.Size, copyData, A_PtrSize)
     NumPut("Ptr", messageBuffer.Ptr, copyData, A_PtrSize = 8 ? 16 : 8)
     sendResult := 0
-    try return !!DllCall("user32\SendMessageTimeoutW", "Ptr", targetHwnd,
-        "UInt", 0x004A, "Ptr", State.uiBackendGui.Hwnd, "Ptr", copyData.Ptr,
-        "UInt", 0x0002, "UInt", 2000, "Ptr*", &sendResult, "Ptr")
+    try {
+        callSucceeded := !!DllCall("user32\SendMessageTimeoutW", "Ptr", targetHwnd,
+            "UInt", 0x004A, "Ptr", State.uiBackendGui.Hwnd, "Ptr", copyData.Ptr,
+            "UInt", 0x0002, "UInt", 2000, "Ptr*", &sendResult, "Ptr")
+        return callSucceeded && sendResult != 0
+    }
     catch
         return false
 }
@@ -1096,6 +2725,276 @@ CanStartFromHotkey(*) {
 
 AutomationStartAllowed(running, registrationActive) {
     return !running && !registrationActive
+}
+
+FarmStateTransitionAllowed(fromState, toState) {
+    if fromState = toState
+        return true
+    allowed := Map(
+        "IDLE", "|FARMING|ERROR|",
+        "FARMING", "|INVENTORY_CHECK|RECOVERY|STOPPING_FARM|ERROR|",
+        "INVENTORY_CHECK", "|FARMING|INVENTORY_FULL|RECOVERY|STOPPING_FARM|ERROR|",
+        "INVENTORY_FULL", "|STOPPING_FARM|RECOVERY|ERROR|",
+        "STOPPING_FARM", "|OPENING_STORAGE|IDLE|RECOVERY|ERROR|",
+        "OPENING_STORAGE", "|STORING|RECOVERY|ERROR|",
+        "STORING", "|VERIFY_STORAGE|RECOVERY|ERROR|",
+        "VERIFY_STORAGE", "|STORING|RETURNING_TO_FARM|RECOVERY|ERROR|",
+        "RETURNING_TO_FARM", "|RESUMING_FARM|RECOVERY|ERROR|",
+        "RESUMING_FARM", "|FARMING|INVENTORY_CHECK|RECOVERY|STOPPING_FARM|ERROR|",
+        "RECOVERY", "|FARMING|INVENTORY_CHECK|OPENING_STORAGE|STORING|RETURNING_TO_FARM|RESUMING_FARM|STOPPING_FARM|ERROR|",
+        "ERROR", "|IDLE|FARMING|")
+    return allowed.Has(fromState) && InStr(allowed[fromState], "|" toState "|")
+}
+
+FarmStateLegacyPhase(farmState) {
+    return farmState = "IDLE" ? "stopped"
+        : farmState = "FARMING" ? "working"
+        : farmState = "INVENTORY_CHECK" ? "capacity_check"
+        : farmState = "INVENTORY_FULL" ? "capacity_full"
+        : farmState = "STOPPING_FARM" ? "stopping_work"
+        : farmState = "OPENING_STORAGE" ? "find_registered_vehicle"
+        : farmState = "STORING" ? "depositing"
+        : farmState = "VERIFY_STORAGE" ? "verify_storage"
+        : farmState = "RETURNING_TO_FARM" ? "return_to_work"
+        : farmState = "RESUMING_FARM" ? "verify_workpoint"
+        : farmState = "RECOVERY" ? "recovery"
+        : farmState = "ERROR" ? "error" : "unknown"
+}
+
+TransitionFarmState(nextState, reason, expectedGeneration := 0,
+    expectedTaskId := 0, force := false) {
+    global State
+    if expectedGeneration && !IsCurrentRun(expectedGeneration) {
+        WriteDiagnostic("FSM_STALE_GENERATION expected=" expectedGeneration
+            " actual=" State.generation " next=" nextState)
+        return false
+    }
+    if expectedTaskId && expectedTaskId != State.farmStateTaskId {
+        WriteDiagnostic("FSM_STALE_TASK expected=" expectedTaskId
+            " actual=" State.farmStateTaskId " next=" nextState)
+        return false
+    }
+    previousState := State.farmState
+    if !force && !FarmStateTransitionAllowed(previousState, nextState) {
+        WriteDiagnostic("FSM_INVALID from=" previousState " to=" nextState
+            " reason=" DiagnosticToken(reason))
+        return false
+    }
+    Critical "On"
+    State.farmState := nextState
+    State.farmStateReason := reason
+    State.farmStateEnteredAt := MonotonicMs()
+    State.farmStateTaskId += 1
+    taskId := State.farmStateTaskId
+    State.automationPhase := FarmStateLegacyPhase(nextState)
+    Critical "Off"
+    snapshotWeight := IsObject(State.confirmedInventory)
+        ? State.confirmedInventory.weight : -1
+    snapshotUsed := IsObject(State.confirmedInventory)
+        ? State.confirmedInventory.used : -1
+    targetLostAge := State.targetLostSince
+        ? Max(0, MonotonicMs() - State.targetLostSince) : 0
+    watchdogAge := State.farmWatchdogAt
+        ? Max(0, MonotonicMs() - State.farmWatchdogAt) : 0
+    WriteDiagnostic("FSM gen=" State.generation " task=" taskId
+        " from=" previousState " to=" nextState
+        " reason=" DiagnosticToken(reason)
+        " retry=" State.farmStateRetry
+        " revision=" State.inventorySnapshotRevision
+        " weight=" snapshotWeight " used=" snapshotUsed
+        " targetLostMs=" targetLostAge " watchdogMs=" watchdogAge)
+    return true
+}
+
+DiagnosticToken(value) {
+    value := RegExReplace(String(value), "[\r\n\t]+", " ")
+    return StrLen(value) > 160 ? SubStr(value, 1, 160) : value
+}
+
+IsCurrentFarmTask(expectedGeneration, expectedTaskId := 0,
+    expectedState := "") {
+    global State
+    return IsCurrentRun(expectedGeneration)
+        && (!expectedTaskId || expectedTaskId = State.farmStateTaskId)
+        && (!expectedState || expectedState = State.farmState)
+}
+
+FarmStateDisplayName(farmState) {
+    return farmState = "IDLE" ? "停止中"
+        : farmState = "FARMING" ? "作業中"
+        : farmState = "INVENTORY_CHECK" ? "所持品確認"
+        : farmState = "INVENTORY_FULL" ? "容量不足"
+        : farmState = "STOPPING_FARM" ? "作業停止"
+        : farmState = "OPENING_STORAGE" ? "荷台探索"
+        : farmState = "STORING" ? "収納中"
+        : farmState = "VERIFY_STORAGE" ? "収納確認"
+        : farmState = "RETURNING_TO_FARM" ? "作業地点へ復帰"
+        : farmState = "RESUMING_FARM" ? "再開確認"
+        : farmState = "RECOVERY" ? "自動復旧"
+        : farmState = "ERROR" ? "要確認" : farmState
+}
+
+FarmMockStep(&stateName, nextState) {
+    if !FarmStateTransitionAllowed(stateName, nextState)
+        return false
+    stateName := nextState
+    return true
+}
+
+FarmMockRandomHit(&seed, numerator, denominator) {
+    ; Park-Miller PRNG gives reproducible fault schedules without using the global
+    ; Random state, so --validate produces the same failing cycle on every PC.
+    seed := Mod(seed * 48271, 2147483647)
+    return Mod(seed, denominator) < numerator
+}
+
+BuildFarmMockInventory(weight, oreCount) {
+    items := oreCount > 0 ? "0001.ore.e30=" oreCount : "-"
+    return {weight: weight, maxWeight: 100000,
+        used: oreCount > 0 ? oreCount + 1 : 1, slots: 50, items: items}
+}
+
+RunFarmStateMachineMockTest(cycleCount := 100) {
+    ; Deterministic integration model. It uses the production transition, capacity,
+    ; inventory-delta and storage-reduction guards instead of merely walking a list
+    ; of state names. The injected faults are deterministic so a failed invariant
+    ; returns the same validation code on every machine.
+    stateName := "FARMING"
+    inventoryWeight := 100000 ; start already full: first cycle must store
+    oreCount := 8
+    firstStorageFailurePending := true
+    firstResumeFailurePending := true
+    faultSeed := 73092026
+    stats := {verified: 0, initialFullStorage: 0, storageCycles: 0,
+        storageUiDelay: 0, storageUiFlicker: 0, storageFailures: 0,
+        storageRecoveryLoops: 0, delayedReduction: 0,
+        cameraLost: 0, targetLost: 0,
+        resumeFailures: 0, delayedRewards: 0}
+    Loop cycleCount {
+        cycleNumber := A_Index
+        injectCameraLost := FarmMockRandomHit(&faultSeed, 1, 8)
+        injectTargetLost := FarmMockRandomHit(&faultSeed, 1, 9)
+        injectStorageUiDelay := FarmMockRandomHit(&faultSeed, 1, 2)
+        injectStorageUiFlicker := FarmMockRandomHit(&faultSeed, 1, 3)
+        injectInventoryDelay := FarmMockRandomHit(&faultSeed, 1, 2)
+        injectDelayedReward := FarmMockRandomHit(&faultSeed, 1, 6)
+        if injectCameraLost {
+            if !FarmMockStep(&stateName, "RECOVERY")
+                || !FarmMockStep(&stateName, "FARMING")
+                return false
+            stats.cameraLost += 1
+        }
+        if injectTargetLost {
+            if !FarmMockStep(&stateName, "RECOVERY")
+                || !FarmMockStep(&stateName, "FARMING")
+                return false
+            stats.targetLost += 1
+        }
+        if !FarmMockStep(&stateName, "INVENTORY_CHECK")
+            return false
+        beforeCapacity := BuildFarmMockInventory(inventoryWeight, oreCount)
+        storageCycle := CapacityNeedsStorage(beforeCapacity,
+            &capacityReason, &freeWeight)
+        if storageCycle {
+            stats.storageCycles += 1
+            if cycleNumber = 1
+                stats.initialFullStorage += 1
+            for nextState in ["INVENTORY_FULL", "STOPPING_FARM",
+                "OPENING_STORAGE"] {
+                if !FarmMockStep(&stateName, nextState)
+                    return false
+            }
+            if injectStorageUiDelay {
+                ; UI appears late: remain in OPENING_STORAGE, never store blind.
+                if !FarmMockStep(&stateName, "OPENING_STORAGE")
+                    return false
+                stats.storageUiDelay += 1
+            }
+            if injectStorageUiFlicker {
+                ; One-frame visibility flicker is handled in the same state.
+                if !FarmMockStep(&stateName, "OPENING_STORAGE")
+                    return false
+                stats.storageUiFlicker += 1
+            }
+            if !FarmMockStep(&stateName, "STORING")
+                || !FarmMockStep(&stateName, "VERIFY_STORAGE")
+                return false
+            if firstStorageFailurePending {
+                firstStorageFailurePending := false
+                stats.storageFailures += 1
+                unchanged := BuildFarmMockInventory(inventoryWeight, oreCount)
+                if InventorySnapshotWasReduced(unchanged, beforeCapacity)
+                    || stateName != "VERIFY_STORAGE"
+                    return false
+                ; Model max-retry exhaustion too: RECOVERY observes that inventory
+                ; is unchanged and routes back to OPENING/STORING, never FARMING.
+                if FarmStateTransitionAllowed("STORING", "RETURNING_TO_FARM")
+                    || !FarmMockStep(&stateName, "RECOVERY")
+                    || !FarmMockStep(&stateName, "OPENING_STORAGE")
+                    || !FarmMockStep(&stateName, "STORING")
+                    || !FarmMockStep(&stateName, "VERIFY_STORAGE")
+                    return false
+                stats.storageRecoveryLoops += 1
+            }
+            ; Inventory propagation is delayed for one observation. VERIFY_STORAGE
+            ; remains active until an actual weight/item reduction is visible.
+            if injectInventoryDelay {
+                delayed := BuildFarmMockInventory(inventoryWeight, oreCount)
+                if InventorySnapshotWasReduced(delayed, beforeCapacity)
+                    || !FarmMockStep(&stateName, "VERIFY_STORAGE")
+                    return false
+                stats.delayedReduction += 1
+            }
+            reduced := BuildFarmMockInventory(1000, 0)
+            if !InventorySnapshotWasReduced(reduced, beforeCapacity)
+                || CapacityNeedsStorage(reduced, &postReason, &postFree)
+                return false
+            inventoryWeight := reduced.weight
+            oreCount := 0
+            if !FarmMockStep(&stateName, "RETURNING_TO_FARM")
+                || !FarmMockStep(&stateName, "RESUMING_FARM")
+                return false
+            if firstResumeFailurePending {
+                firstResumeFailurePending := false
+                if !FarmMockStep(&stateName, "RECOVERY")
+                    || !FarmMockStep(&stateName, "RESUMING_FARM")
+                    return false
+                stats.resumeFailures += 1
+            }
+        } else {
+            if !FarmMockStep(&stateName, "FARMING")
+                return false
+        }
+
+        rewardBefore := BuildFarmMockInventory(inventoryWeight, oreCount)
+        if injectDelayedReward {
+            delayedReward := BuildFarmMockInventory(inventoryWeight, oreCount)
+            if InventorySnapshotHasReward(delayedReward, rewardBefore)
+                return false
+            stats.delayedRewards += 1
+        }
+        rewardAfter := BuildFarmMockInventory(inventoryWeight + 12000,
+            oreCount + 1)
+        if !InventorySnapshotHasReward(rewardAfter, rewardBefore)
+            return false
+        if stateName = "RESUMING_FARM" {
+            ; Only the verified post-storage reward completes resume.
+            if !FarmMockStep(&stateName, "FARMING")
+                return false
+        }
+        inventoryWeight := rewardAfter.weight
+        oreCount += 1
+        stats.verified += 1
+    }
+    return stats.verified = cycleCount && stateName = "FARMING"
+        && stats.initialFullStorage = 1 && stats.storageCycles >= 2
+        && stats.storageUiDelay > 0 && stats.storageUiFlicker > 0
+        && stats.storageFailures = 1 && stats.storageRecoveryLoops = 1
+        && stats.delayedReduction > 0
+        && stats.cameraLost > 0 && stats.targetLost > 0
+        && stats.resumeFailures = 1 && stats.delayedRewards > 0
+        && !FarmStateTransitionAllowed("STORING", "RETURNING_TO_FARM")
+        && !FarmStateTransitionAllowed("VERIFY_STORAGE", "RESUMING_FARM")
 }
 
 IsMiningActive(*) {
@@ -1206,15 +3105,17 @@ EnsureRuntimeStatusOverlay() {
     title := overlay.AddText("x14 y7 w492 h20 Center", "")
     overlay.SetFont("s8 w500 cB8C2D0", "Segoe UI")
     meta := overlay.AddText("x14 y31 w492 h18 Center", "")
+    overlay.SetFont("s7 w500 c8F9AAA", "Cascadia Mono")
+    debug := overlay.AddText("x14 y50 w492 h36 Center Hidden", "")
     State.statusOverlay := {
-        gui: overlay, title: title, meta: meta,
+        gui: overlay, title: title, meta: meta, debug: debug,
         visible: false, textKey: "", x: "", y: "", w: "", h: ""
     }
     return State.statusOverlay
 }
 
 UpdateRuntimeStatusOverlay(*) {
-    global State
+    global State, Config
     if !RuntimeStatusOverlayShouldBeVisible(&bounds) {
         if IsObject(State.statusOverlay) && State.statusOverlay.visible {
             try State.statusOverlay.gui.Hide()
@@ -1229,7 +3130,25 @@ UpdateRuntimeStatusOverlay(*) {
     meta := RuntimeStatusOverlayMeta(State.successes,
         State.lastInventoryMaxWeight > 0, State.lastInventoryFreeWeight,
         State.storageTrips)
-    textKey := title "`n" meta
+    now := MonotonicMs()
+    watchdogAge := State.farmWatchdogAt
+        ? Max(0, now - State.farmWatchdogAt) : 0
+    targetState := State.targetLostSince ? "LOST"
+        : InStr(State.lastTargetProbeResult, "PRESENT ") = 1 ? "FOUND"
+        : InStr(State.lastTargetProbeResult, "MISSING ") = 1 ? "LOST"
+        : "UNKNOWN"
+    cameraState := State.workViewFailures > 0
+        || (State.farmState = "RECOVERY"
+            && (InStr(State.recoveryReason, "target")
+                || InStr(State.recoveryReason, "view")))
+        ? "ACTIVE" : "OK"
+    debugText := Config.debugOverlay
+        ? RuntimeStatusOverlayDebug(State.farmState,
+            State.lastInventoryWeight, State.lastInventoryMaxWeight,
+            State.lastVerifiedRewardAt, now, State.storageRetryCount,
+            targetState, cameraState, watchdogAge, Config.farmWatchdogMs)
+        : ""
+    textKey := title "`n" meta "`n" debugText
     boundsChanged := statusOverlay.x != bounds.x || statusOverlay.y != bounds.y
         || statusOverlay.w != bounds.w || statusOverlay.h != bounds.h
     textChanged := statusOverlay.textKey != textKey
@@ -1238,10 +3157,13 @@ UpdateRuntimeStatusOverlay(*) {
     if boundsChanged {
         statusOverlay.title.Move(14, 7, bounds.w - 28, 20)
         statusOverlay.meta.Move(14, 31, bounds.w - 28, 18)
+        statusOverlay.debug.Move(14, 50, bounds.w - 28, 36)
     }
     if textChanged {
         statusOverlay.title.Text := title
         statusOverlay.meta.Text := meta
+        statusOverlay.debug.Text := debugText
+        statusOverlay.debug.Visible := Config.debugOverlay
         statusOverlay.textKey := textKey
     }
 
@@ -1271,7 +3193,7 @@ UpdateRuntimeStatusOverlay(*) {
 }
 
 RuntimeStatusOverlayShouldBeVisible(&bounds) {
-    global State
+    global State, Config
     bounds := 0
     if !State.running || !State.targetHwnd
         return false
@@ -1293,17 +3215,40 @@ RuntimeStatusOverlayShouldBeVisible(&bounds) {
         return false
     if clientW <= 0 || clientH <= 0
         return false
-    bounds := RuntimeStatusOverlayBounds(clientX, clientY, clientW, clientH)
+    bounds := RuntimeStatusOverlayBounds(clientX, clientY, clientW, clientH,
+        Config.debugOverlay)
     return true
 }
 
-RuntimeStatusOverlayBounds(clientX, clientY, clientW, clientH) {
+RuntimeStatusOverlayBounds(clientX, clientY, clientW, clientH,
+    debugEnabled := false) {
     margin := clientW >= 360 ? 18 : 8
     overlayW := Min(520, Max(160, clientW - margin * 2))
-    overlayH := 58
+    overlayH := debugEnabled ? 94 : 58
     overlayX := clientX + Floor((clientW - overlayW) / 2)
     overlayY := clientY + (clientH >= 240 ? 34 : 12)
     return {x: overlayX, y: overlayY, w: overlayW, h: overlayH}
+}
+
+RuntimeStatusOverlayDebug(farmState, inventoryWeight, inventoryMaxWeight,
+    lastVerifiedRewardAt, now, storageRetry, targetState, cameraState,
+    watchdogAge, watchdogLimit) {
+    inventoryText := inventoryMaxWeight > 0
+        ? Round(inventoryWeight * 100 / inventoryMaxWeight, 1) "%"
+        : "--"
+    rewardText := lastVerifiedRewardAt > 0
+        ? Round(Max(0, now - lastVerifiedRewardAt) / 1000, 1) "s"
+        : "--"
+    targetText := targetState = "FOUND" || targetState = "LOST"
+        ? targetState : "UNKNOWN"
+    cameraText := cameraState = "ACTIVE" ? "ACTIVE" : "OK"
+    watchdogText := watchdogLimit > 0 && watchdogAge >= watchdogLimit
+        ? "LATE" : "OK"
+    return "FSM " farmState " | Inventory " inventoryText
+        . " | Reward " rewardText
+        . "`nStorage retry " Max(0, storageRetry)
+        . " | Target " targetText " | Camera " cameraText
+        . " | Watchdog " watchdogText
 }
 
 RuntimeStatusOverlayTitle(mode, rawStatus, phase) {
@@ -1339,8 +3284,7 @@ RuntimeStatusOverlayPhaseLabel(phase) {
 
 RuntimeStatusOverlayMeta(successes, freeWeightKnown, freeWeight, storageTrips) {
     freeWeightText := freeWeightKnown ? FormatInventoryWeight(freeWeight) : "未確認"
-    ; ここでの回数はtargetクリックの受理回数です。報酬受取と断定しません。
-    return "操作 " successes " | 空き " freeWeightText " | 収納 " storageTrips
+    return "実成功 " successes " | 空き " freeWeightText " | 収納 " storageTrips
 }
 
 UpdateConnectionStatus(*) {
@@ -1450,6 +3394,31 @@ SaveInlineSettings(*) {
         State.settingsErrorLabel.Text := "残り重量は250～20000gで指定してください。"
         return
     }
+    try {
+        newStorageTriggerPercent := Integer(Trim(
+            State.storageTriggerPercentControl.Value))
+        newEstimatedRewardWeight := Integer(Trim(
+            State.estimatedRewardWeightControl.Value))
+        newMinimumFreeSlots := Integer(Trim(
+            State.minimumFreeSlotsControl.Value))
+        newStorageMaxRetries := Integer(Trim(
+            State.storageMaxRetriesControl.Value))
+        newFarmWatchdogMs := Integer(Trim(State.farmWatchdogMsControl.Value))
+        newTargetLostRecoveryMs := Integer(Trim(
+            State.targetLostRecoveryMsControl.Value))
+    } catch {
+        State.settingsErrorLabel.Text := "自動収納・復旧の設定値を数値で指定してください。"
+        return
+    }
+    if newStorageTriggerPercent < 50 || newStorageTriggerPercent > 99
+        || newEstimatedRewardWeight < 250 || newEstimatedRewardWeight > 20000
+        || newMinimumFreeSlots < 0 || newMinimumFreeSlots > 10
+        || newStorageMaxRetries < 1 || newStorageMaxRetries > 8
+        || newFarmWatchdogMs < 15000 || newFarmWatchdogMs > 180000
+        || newTargetLostRecoveryMs < 5000 || newTargetLostRecoveryMs > 60000 {
+        State.settingsErrorLabel.Text := "自動収納・復旧の設定値が許容範囲外です。"
+        return
+    }
     if Config.vehicleStorageEnabled && !newBackground {
         State.settingsErrorLabel.Text := "車両収納を使う場合はバックグラウンド操作が必要です。"
         return
@@ -1466,7 +3435,14 @@ SaveInlineSettings(*) {
         workViewLock: Config.workViewLock,
         autoEat: Config.autoEat,
         foodKey: Config.foodKey,
-        minimumFreeWeight: Config.minimumFreeWeight
+        minimumFreeWeight: Config.minimumFreeWeight,
+        storageTriggerPercent: Config.storageTriggerPercent,
+        estimatedRewardWeight: Config.estimatedRewardWeight,
+        minimumFreeSlots: Config.minimumFreeSlots,
+        storageMaxRetries: Config.storageMaxRetries,
+        farmWatchdogMs: Config.farmWatchdogMs,
+        targetLostRecoveryMs: Config.targetLostRecoveryMs,
+        debugOverlay: Config.debugOverlay
     }
     UnregisterConfiguredHotkeys()
     Config.startHotkey := newStart
@@ -1489,6 +3465,13 @@ SaveInlineSettings(*) {
     Config.autoEat := State.autoEatControl.Value ? 1 : 0
     Config.foodKey := newFoodKey
     Config.minimumFreeWeight := newMinimumFreeWeight
+    Config.storageTriggerPercent := newStorageTriggerPercent
+    Config.estimatedRewardWeight := newEstimatedRewardWeight
+    Config.minimumFreeSlots := newMinimumFreeSlots
+    Config.storageMaxRetries := newStorageMaxRetries
+    Config.farmWatchdogMs := newFarmWatchdogMs
+    Config.targetLostRecoveryMs := newTargetLostRecoveryMs
+    Config.debugOverlay := State.debugOverlayControl.Value ? 1 : 0
     try {
         SaveAllSettingsAtomically()
     } catch as err {
@@ -1504,6 +3487,13 @@ SaveInlineSettings(*) {
         Config.autoEat := oldConfig.autoEat
         Config.foodKey := oldConfig.foodKey
         Config.minimumFreeWeight := oldConfig.minimumFreeWeight
+        Config.storageTriggerPercent := oldConfig.storageTriggerPercent
+        Config.estimatedRewardWeight := oldConfig.estimatedRewardWeight
+        Config.minimumFreeSlots := oldConfig.minimumFreeSlots
+        Config.storageMaxRetries := oldConfig.storageMaxRetries
+        Config.farmWatchdogMs := oldConfig.farmWatchdogMs
+        Config.targetLostRecoveryMs := oldConfig.targetLostRecoveryMs
+        Config.debugOverlay := oldConfig.debugOverlay
         try RegisterConfiguredHotkeys()
         State.settingsErrorLabel.Text := "設定を保存できません: " err.Message
         return
@@ -1563,10 +3553,19 @@ SaveAllSettingsAtomically() {
         IniWrite Config.vehicleReturnRoute, temporarySettingsPath, "VehicleStorage", "ReturnRoute"
         IniWrite Config.capacityCheckIntervalMs, temporarySettingsPath, "VehicleStorage", "CapacityCheckIntervalMs"
         IniWrite Config.minimumFreeWeight, temporarySettingsPath, "VehicleStorage", "MinimumFreeWeight"
+        IniWrite Config.storageTriggerPercent, temporarySettingsPath, "VehicleStorage", "StorageTriggerPercent"
+        IniWrite Config.estimatedRewardWeight, temporarySettingsPath, "VehicleStorage", "EstimatedRewardWeight"
+        IniWrite Config.minimumFreeSlots, temporarySettingsPath, "VehicleStorage", "MinimumFreeSlots"
+        IniWrite Config.storageMaxRetries, temporarySettingsPath, "VehicleStorage", "MaxRetries"
+        IniWrite Config.storageVerifyTimeoutMs, temporarySettingsPath, "VehicleStorage", "VerifyTimeoutMs"
         IniWrite Config.routeIdleFinishMs, temporarySettingsPath, "VehicleStorage", "RouteIdleFinishMs"
         IniWrite Config.routeSettleMs, temporarySettingsPath, "VehicleStorage", "RouteSettleMs"
         IniWrite Config.vehicleSearchPulseMs, temporarySettingsPath, "VehicleStorage", "SearchPulseMs"
         IniWrite Config.serverHealthIntervalMs, temporarySettingsPath, "Safety", "ServerHealthIntervalMs"
+        IniWrite Config.farmWatchdogMs, temporarySettingsPath, "Safety", "FarmWatchdogMs"
+        IniWrite Config.targetLostRecoveryMs, temporarySettingsPath, "Safety", "TargetLostRecoveryMs"
+        IniWrite Config.rewardConfirmTimeoutMs, temporarySettingsPath, "Safety", "RewardConfirmTimeoutMs"
+        IniWrite Config.debugOverlay, temporarySettingsPath, "Safety", "DebugOverlay"
         FileMove temporarySettingsPath, settingsPath, true
     } catch as err {
         try FileDelete temporarySettingsPath
@@ -3229,6 +5228,15 @@ StartMining(*) {
     ; 車両登録と通常自動操作を同じbridge/state上で同時実行しません。
     if !AutomationStartAllowed(State.running, State.registrationActive)
         return
+    ; A previous graceful stop may have hit a transient disk error while appending
+    ; SESSION_END. Never overwrite that session identity with a new run until its
+    ; immutable stop record is durably queued.
+    if !PrepareMetagameForNewFarmStart() {
+        State.statusLabel.Text := "●  前回セッションの終了記録を保存中です。少し待って再試行してください"
+        WriteDiagnostic("METAGAME_START_BLOCKED pendingEnd="
+            (FarmMetagameClosurePending() ? 1 : 0))
+        return
+    }
     if State.updateOperation {
         State.statusLabel.Text := "●  アップデート確認が終わるまでお待ちください"
         return
@@ -3310,6 +5318,7 @@ StartMining(*) {
     Critical "On"
     try {
     State.running := true
+    State.stopInProgress := false
     State.runMode := Config.actionMode
     State.generation += 1
     runGeneration := State.generation
@@ -3339,11 +5348,46 @@ StartMining(*) {
     State.backgroundTargetActive := false
     State.backgroundDevConPort := 0
     State.automationPhase := "preparing"
+    State.farmState := "IDLE"
+    State.farmStateReason := "開始準備"
+    State.farmStateEnteredAt := MonotonicMs()
+    State.farmStateTaskId += 1
+    State.farmStateRetry := 0
+    State.farmStateLastError := ""
+    State.farmWatchdogAt := MonotonicMs()
+    State.lastVerifiedRewardAt := 0
+    State.watchdogRecoveryCount := 0
+    State.targetLostSince := 0
+    State.targetRecoveryAttempts := 0
+    State.lastTargetProbeResult := ""
+    State.recoveryReturnState := "FARMING"
+    State.recoveryReason := ""
+    State.inventorySnapshotRevision := 0
+    State.confirmedInventory := 0
+    State.pendingFarmAttempt := 0
+    State.miningAttemptId := 0
+    State.resumeVerificationPending := false
+    State.rewardReconcileAttempts := 0
+    State.storagePreSnapshot := 0
+    State.storageRetryCount := 0
+    State.storageMovementHistory := []
+    State.storageMatchedViewRoute := ""
+    State.recoveryAtStorage := false
+    State.farmSessionId := ""
+    State.farmSessionStartedAt := 0
+    State.farmSessionEndedAt := 0
+    State.metagameSessionResetCount := 0
+    State.farmSessionBeginQueued := false
+    State.farmSessionBeginSent := false
+    State.farmSessionEndQueued := false
+    State.farmSessionEndSent := false
+    State.lastMiningEventId := ""
     State.inventoryBaseline := ""
     State.nextActionAt := 0
     State.workpointProbeFailures := 0
     State.nextCapacityCheckAt := 0
     State.storagePending := false
+    State.storageStartPending := false
     State.storageRecoveryAttempted := false
     State.capacityProbeFailures := 0
     State.serverEpoch := serverEpoch
@@ -3443,18 +5487,18 @@ StartMining(*) {
             return
         }
         State.inventoryBaseline := inventoryInfo.items
-        UpdateInventoryCapacityState(inventoryInfo)
+        RecordConfirmedInventory(inventoryInfo, "start_companion")
         if CapacityNeedsStorage(inventoryInfo, &startReason, &startFreeWeight) {
-            WriteDiagnostic("INVENTORY_START_CAPACITY reason=" startReason
-                " free=" startFreeWeight)
-            StopMining()
-            State.statusLabel.Text := startReason = "weight"
-                ? "開始時点で残り重量が少ないため開始しませんでした"
-                : "開始時点で空きスロットがないため開始しませんでした"
-            ShowPage("vehicle")
+            WriteDiagnostic("INVENTORY_START_CAPACITY_BLOCKED reason=" startReason
+                " free=" startFreeWeight " baseline=protected")
+            StopAutomationWithFault(
+                "開始時点ですでに容量が不足しています。既存の食料や道具を保護するため自動収納は行いません。手動で空きを作ってから再開してください",
+                "vehicle", "UNTRUSTED_STORAGE_BASELINE")
             return
+        } else {
+            State.nextCapacityCheckAt := MonotonicMs()
+                + Config.capacityCheckIntervalMs
         }
-        State.nextCapacityCheckAt := MonotonicMs() + Config.capacityCheckIntervalMs
         WriteDiagnostic("INVENTORY_BASELINE weight=" inventoryInfo.weight
             " max=" inventoryInfo.maxWeight " used=" inventoryInfo.used)
     }
@@ -3470,10 +5514,17 @@ StartMining(*) {
         try WinActivate "ahk_id " targetHwnd
     }
 
-    if IsCurrentRun(runGeneration)
-        State.automationPhase := "working"
-    if IsCurrentRun(runGeneration)
-        ScheduleNext(runGeneration, 900)
+    if IsCurrentRun(runGeneration) {
+        if State.storagePending {
+            TransitionFarmState("INVENTORY_FULL",
+                "開始時容量不足を確認", runGeneration, 0, true)
+            TransitionFarmState("STOPPING_FARM",
+                "開始時容量不足から自動収納", runGeneration)
+        } else
+            TransitionFarmState("FARMING", "開始準備完了", runGeneration, 0, true)
+        BeginFarmMetagameSession(runGeneration)
+        ScheduleNext(runGeneration, State.storagePending ? 100 : 900)
+    }
 }
 
 StopMining(*) {
@@ -3485,17 +5536,32 @@ StopMining(*) {
     }
 
     previousPhase := State.automationPhase
+    previousFarmState := State.farmState
+    if State.running
+        TransitionFarmState("STOPPING_FARM", "停止要求", State.generation, 0, true)
+    ; Stop/ERRORは外部IPCより先に、所有する全入力と進行中helperを止めます。
+    CancelActiveBridgeProcess()
+    ReleaseAllInputs()
+    ReleaseBackgroundTarget(true)
+    State.stopInProgress := true
+    endDurable := EndFarmMetagameSession()
     cancelCompanion := Config.vehicleCompanionProtocol = 1
         && (State.companionReady || State.companionEpoch)
     State.running := false
+    State.stopInProgress := false
+    if State.metagameOutbox.Length || !endDurable
+        ScheduleMetagameOutboxReplay(1)
     State.generation += 1
     State.automationPhase := "stopped"
     ResetActionCompletionState()
+    DiscardPendingFarmAttempt("run_stopped")
+    State.rewardReconcileAttempts := 0
     State.inventoryBaseline := ""
     State.nextActionAt := 0
     State.capacityProbeFailures := 0
     State.workpointProbeFailures := 0
     State.storagePending := false
+    State.storageStartPending := false
     State.storageRecoveryAttempted := false
     State.serverEpoch := ""
     State.serverHealthFailures := 0
@@ -3534,6 +5600,10 @@ StopMining(*) {
     State.actionControl.Enabled := true
     SetConfigurationEnabled(true)
     State.statusLabel.Text := "●  停止中"
+    TransitionFarmState("IDLE", "停止完了 (from " previousFarmState ")", 0, 0, true)
+    ; Keep session identity/endedAt while a durable END append is pending. The idle
+    ; replay timer retries it, and StartMining refuses to replace it. Successful
+    ; closure is reset atomically when the next run is installed above.
     UpdateActionUi()
     State.gui.Show("NoActivate")
     UpdateConnectionStatus()
@@ -3546,7 +5616,10 @@ SetConfigurationEnabled(enabled) {
         State.washCorrectionControl, State.autoEatControl, State.foodKeyControl,
         State.autoUpdateControl, State.vehicleEnabledControl,
         State.vehicleRegisterButton, State.vehicleNameEdit,
-        State.minimumFreeWeightControl] {
+        State.minimumFreeWeightControl, State.storageTriggerPercentControl,
+        State.estimatedRewardWeightControl, State.minimumFreeSlotsControl,
+        State.storageMaxRetriesControl, State.farmWatchdogMsControl,
+        State.targetLostRecoveryMsControl, State.debugOverlayControl] {
         try control.Enabled := enabled
     }
     ; 実行中もナビゲーションと主要ボタンは押せます。変更操作を選んだ時点で
@@ -3570,7 +5643,7 @@ ScheduleNext(expectedGeneration, delayMs) {
         try SetTimer(State.timerFn, 0)
     }
 
-    nextFn := AutomationCycle.Bind(expectedGeneration)
+    nextFn := AutomationCycle.Bind(expectedGeneration, State.farmStateTaskId)
     State.timerFn := nextFn
     SetTimer(nextFn, -Max(1, delayMs))
 }
@@ -3720,10 +5793,12 @@ MaybeHandleVehicleCapacity(expectedGeneration) {
     if !Config.vehicleStorageEnabled || !IsCurrentRun(expectedGeneration)
         return false
     now := MonotonicMs()
-    if !State.storagePending && now < State.nextCapacityCheckAt
+    if !State.storagePending && now < State.nextCapacityCheckAt {
+        TransitionFarmState("FARMING", "容量確認はまだ不要",
+            expectedGeneration, 0, true)
         return false
+    }
     State.nextCapacityCheckAt := now + Config.capacityCheckIntervalMs
-    State.automationPhase := "capacity_check"
     snapshotResult := RunBackgroundBridgeCancelable(expectedGeneration, "inventory-snapshot")
     if !IsCurrentRun(expectedGeneration)
         return true
@@ -3731,7 +5806,8 @@ MaybeHandleVehicleCapacity(expectedGeneration) {
         State.capacityProbeFailures += 1
         WriteDiagnostic("CAPACITY_PROBE_ERROR=" snapshotResult)
         if State.capacityProbeFailures >= 3 {
-            StopAutomationWithFault("インベントリ状態を確認できないため安全停止しました", "vehicle")
+            EnterFarmRecovery(expectedGeneration, "FARMING",
+                "capacity_snapshot_unavailable")
             return true
         }
         State.statusLabel.Text := "所持重量を再確認中（" State.capacityProbeFailures "/3）"
@@ -3740,13 +5816,26 @@ MaybeHandleVehicleCapacity(expectedGeneration) {
         return true
     }
     State.capacityProbeFailures := 0
-    UpdateInventoryCapacityState(inventoryInfo)
+    RecordConfirmedInventory(inventoryInfo, "capacity_check")
     needsStorage := CapacityNeedsStorage(inventoryInfo, &capacityReason, &freeWeight)
     if !needsStorage {
         State.storagePending := false
         State.storageRecoveryAttempted := false
-        State.automationPhase := "working"
+        TransitionFarmState("FARMING", "容量に余裕あり", expectedGeneration)
         return false
+    }
+    ; deposit-delta may move only inventory proven to have appeared after this
+    ; run's baseline. An empty/unknown baseline would otherwise classify every
+    ; pre-existing food or tool as farm output, so fail closed before any movement.
+    if !StorageDeltaBaselineIsSafe(State.inventoryBaseline,
+        inventoryInfo.items) {
+        WriteDiagnostic("STORAGE_BASELINE_BLOCKED source=capacity baseline="
+            DiagnosticToken(State.inventoryBaseline) " current="
+            DiagnosticToken(inventoryInfo.items))
+        StopAutomationWithFault(
+            "開始後に増えた持ち物を安全に特定できないため、既存の食料や道具を保護して停止しました",
+            "vehicle", "UNTRUSTED_STORAGE_BASELINE")
+        return true
     }
     if !State.storagePending {
         State.storagePending := true
@@ -3754,70 +5843,94 @@ MaybeHandleVehicleCapacity(expectedGeneration) {
     }
     ; 一度容量不足になったら、収納完了または停止まで通常の採集へ戻しません。
     State.nextCapacityCheckAt := 0
-    if !InventorySpecHasIncrease(inventoryInfo.items, State.inventoryBaseline) {
-        StopAutomationWithFault("開始前の持ち物で容量が不足しています。所持品を整理してください", "vehicle")
-        return true
+    State.storagePreSnapshot := inventoryInfo
+    if State.farmState != "STOPPING_FARM" {
+        State.storageRetryCount := 0
+        TransitionFarmState("INVENTORY_FULL", "容量不足: " capacityReason,
+            expectedGeneration)
     }
-    State.lastCapacityReason := capacityReason = "weight"
-        ? "残り重量が設定値以下" : "空きスロットなし"
+    State.lastCapacityReason := capacityReason = "weight_percent"
+        ? "重量率がしきい値以上"
+        : capacityReason = "next_reward_weight"
+            ? "次の報酬重量を保持できない"
+            : "空きスロットがしきい値以下"
     WriteDiagnostic("VEHICLE_CAPACITY_TRIGGER reason=" capacityReason
         " weight=" inventoryInfo.weight " max=" inventoryInfo.maxWeight
         " free=" freeWeight " used=" inventoryInfo.used " slots=" inventoryInfo.slots)
     ; 容量到達時も先に視点を作業方向へ戻します。通常cycleより前にreturnする
     ; 経路なので、ここで強制しないと視点ずれを対象消失と誤認します。
-    if !MaintainBackgroundWorkView(expectedGeneration, true)
+    if State.farmState != "STOPPING_FARM"
+        TransitionFarmState("STOPPING_FARM", "収納前に作業を停止",
+            expectedGeneration)
+    DiscardPendingFarmAttempt("inventory_full")
+    ResetActionCompletionState()
+    ReleaseAllInputs()
+    if !ReleaseBackgroundTarget(true) {
+        EnterFarmRecovery(expectedGeneration, "FARMING",
+            "storage_preflight_input_release")
         return true
-    workTargetPresent := ProbeWorkTarget(State.runMode, expectedGeneration)
-    if !IsCurrentRun(expectedGeneration)
-        return true
-    if !workTargetPresent {
-        if State.lastTargetProbeFatal {
-            StopAutomationWithFault(
-                "収納前の作業対象を安全に確認できないため停止しました", "vehicle")
+    }
+    if State.storageStartPending {
+        ; The inventory itself is the authoritative startup guard. A full warning
+        ; may hide the work target, so waiting for that target here deadlocks the
+        ; exact run that most urgently needs storage. The reversible route still
+        ; records every movement and RETURNING_TO_FARM verifies the target later.
+        WriteDiagnostic("VEHICLE_START_FULL_DIRECT_STORAGE=1")
+    } else {
+        if !MaintainBackgroundWorkView(expectedGeneration, true)
             return true
-        }
-        cooldownRemaining := WorkTargetCooldownRemainingMs()
-        if cooldownRemaining > 0 {
-            State.automationPhase := "verify_workpoint"
-            State.statusLabel.Text := "収納前に作業ボタンの再表示を待っています"
-            ScheduleNext(expectedGeneration, Min(850, cooldownRemaining))
+        workTargetPresent := ProbeWorkTarget(State.runMode, expectedGeneration)
+        if !IsCurrentRun(expectedGeneration)
             return true
-        }
-        if !State.storageRecoveryAttempted {
-            State.storageRecoveryAttempted := true
-            workTargetPresent := RecoverLocalWorkTarget(expectedGeneration)
-            if !IsCurrentRun(expectedGeneration)
-                return true
-            if !workTargetPresent && State.lastTargetProbeFatal {
-                StopAutomationWithFault(
-                    "収納前の作業対象を安全に再確認できないため停止しました", "vehicle")
+        if !workTargetPresent {
+            if State.lastTargetProbeFatal {
+                EnterFarmRecovery(expectedGeneration, "FARMING",
+                    "storage_preflight_target_probe")
                 return true
             }
-        }
-        if workTargetPresent {
-            State.workpointProbeFailures := 0
-        } else {
-        ; 再出現待ちや洗浄・砂金の位置ずれ中には車両移動を始めません。
-        ; 容量不足中は追加採集も止めたまま作業対象を再確認します。
-            State.workpointProbeFailures += 1
-            State.nextCapacityCheckAt := 0
-            State.automationPhase := "verify_workpoint"
-            State.statusLabel.Text := "収納前に現在の作業位置を確認中（"
-                State.workpointProbeFailures "/10）"
-            WriteDiagnostic("VEHICLE_WORKPOINT_PENDING attempt="
-                State.workpointProbeFailures)
-            if State.workpointProbeFailures >= 10 {
-                StopAutomationWithFault(
-                    "現在の作業位置を確認できないため安全停止しました", "vehicle")
+            cooldownRemaining := WorkTargetCooldownRemainingMs()
+            if cooldownRemaining > 0 {
+                State.statusLabel.Text := "収納前に作業ボタンの再表示を待っています"
+                ScheduleNext(expectedGeneration, Min(850, cooldownRemaining))
                 return true
             }
-            ScheduleNext(expectedGeneration, 850)
-            return true
+            if !State.storageRecoveryAttempted {
+                State.storageRecoveryAttempted := true
+                workTargetPresent := RecoverLocalWorkTarget(expectedGeneration)
+                if !IsCurrentRun(expectedGeneration)
+                    return true
+                if !workTargetPresent && State.lastTargetProbeFatal {
+                    EnterFarmRecovery(expectedGeneration, "FARMING",
+                        "storage_preflight_recovery_probe")
+                    return true
+                }
+            }
+            if workTargetPresent {
+                State.workpointProbeFailures := 0
+            } else {
+                ; During respawn or a wash/gold drift, keep Farm stopped and wait
+                ; at the work point. Never start a vehicle trip from an unknown pose.
+                State.workpointProbeFailures += 1
+                State.nextCapacityCheckAt := 0
+                State.statusLabel.Text := "収納前に現在の作業位置を確認中（"
+                    State.workpointProbeFailures "/10）"
+                WriteDiagnostic("VEHICLE_WORKPOINT_PENDING attempt="
+                    State.workpointProbeFailures)
+                if State.workpointProbeFailures >= 10 {
+                    EnterFarmRecovery(expectedGeneration, "FARMING",
+                        "storage_preflight_target_lost")
+                    return true
+                }
+                ScheduleNext(expectedGeneration, 850)
+                return true
+            }
         }
     }
     State.workpointProbeFailures := 0
     State.storageRecoveryAttempted := false
     State.timerFn := 0
+    TransitionFarmState("OPENING_STORAGE", "登録車両の荷台を探索",
+        expectedGeneration)
     RunVehicleStorageCycle(expectedGeneration)
     return true
 }
@@ -3838,12 +5951,21 @@ CapacityNeedsStorage(inventoryInfo, &reason, &freeWeight) {
     global Config
     reason := ""
     freeWeight := Max(0, inventoryInfo.maxWeight - inventoryInfo.weight)
-    if freeWeight <= Config.minimumFreeWeight {
-        reason := "weight"
+    predictedReserve := Max(Config.minimumFreeWeight,
+        Config.estimatedRewardWeight)
+    usagePercent := inventoryInfo.maxWeight > 0
+        ? inventoryInfo.weight * 100 / inventoryInfo.maxWeight : 100
+    freeSlots := Max(0, inventoryInfo.slots - inventoryInfo.used)
+    if usagePercent >= Config.storageTriggerPercent {
+        reason := "weight_percent"
         return true
     }
-    if inventoryInfo.used >= inventoryInfo.slots {
-        reason := "slots"
+    if freeWeight <= predictedReserve {
+        reason := "next_reward_weight"
+        return true
+    }
+    if freeSlots <= Config.minimumFreeSlots {
+        reason := "free_slots"
         return true
     }
     return false
@@ -3881,6 +6003,244 @@ ParseInventorySnapshot(result, &inventoryInfo) {
         return false
     inventoryInfo := {weight: weight, maxWeight: maxWeight, used: used,
         slots: slots, items: items}
+    return true
+}
+
+RecordConfirmedInventory(inventoryInfo, source := "snapshot") {
+    global State
+    if !IsObject(inventoryInfo)
+        return 0
+    State.inventorySnapshotRevision += 1
+    inventoryInfo.revision := State.inventorySnapshotRevision
+    inventoryInfo.confirmedAt := MonotonicMs()
+    State.confirmedInventory := inventoryInfo
+    UpdateInventoryCapacityState(inventoryInfo)
+    WriteDiagnostic("INVENTORY_CONFIRMED source=" source
+        " revision=" inventoryInfo.revision
+        " weight=" inventoryInfo.weight " max=" inventoryInfo.maxWeight
+        " used=" inventoryInfo.used " slots=" inventoryInfo.slots)
+    return inventoryInfo.revision
+}
+
+InventorySpecTotalCount(spec) {
+    total := 0
+    for row in InventorySpecToRows(spec)
+        total += row.count
+    return total
+}
+
+InventorySnapshotHasReward(afterInfo, beforeInfo) {
+    if !IsObject(afterInfo) || !IsObject(beforeInfo)
+        return false
+    return afterInfo.weight > beforeInfo.weight
+        || InventorySpecHasIncrease(afterInfo.items, beforeInfo.items)
+}
+
+InventorySnapshotWasReduced(afterInfo, beforeInfo) {
+    if !IsObject(afterInfo) || !IsObject(beforeInfo)
+        return false
+    return afterInfo.weight < beforeInfo.weight
+        || InventorySpecTotalCount(afterInfo.items)
+            < InventorySpecTotalCount(beforeInfo.items)
+}
+
+CaptureFarmAttemptBaseline(expectedGeneration, actionMode) {
+    global State
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    snapshotResult := RunBackgroundBridgeCancelable(expectedGeneration,
+        "inventory-snapshot")
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    if !ParseInventorySnapshot(snapshotResult, &beforeInfo) {
+        WriteDiagnostic("FARM_REWARD_BASELINE_ERROR mode=" actionMode
+            " result=" snapshotResult)
+        return false
+    }
+    revision := RecordConfirmedInventory(beforeInfo, "before_" actionMode)
+    State.miningAttemptId += 1
+    State.pendingFarmAttempt := {
+        generation: expectedGeneration,
+        attemptId: State.miningAttemptId,
+        actionMode: actionMode,
+        before: beforeInfo,
+        beforeRevision: revision,
+        clicked: false,
+        completed: false,
+        progressCompleted: false,
+        completionAt: 0,
+        completionElapsedMs: 0,
+        completionWasBundled: false,
+        reconcileDeadline: 0,
+        reconcileAttempts: 0
+    }
+    return true
+}
+
+DiscardPendingFarmAttempt(reason := "discarded") {
+    global State
+    if IsObject(State.pendingFarmAttempt)
+        WriteDiagnostic("FARM_ATTEMPT_DISCARD id="
+            State.pendingFarmAttempt.attemptId " reason=" reason)
+    State.pendingFarmAttempt := 0
+}
+
+MarkPendingFarmAttemptClicked(expectedGeneration, actionMode) {
+    global State
+    if !FarmAttemptHasBaseline(State.pendingFarmAttempt,
+        expectedGeneration, actionMode)
+        return false
+    State.pendingFarmAttempt.clicked := true
+    return true
+}
+
+FarmAttemptHasBaseline(attempt, expectedGeneration, actionMode) {
+    return IsObject(attempt)
+        && attempt.generation = expectedGeneration
+        && attempt.actionMode = actionMode
+        && IsObject(attempt.before)
+        && attempt.beforeRevision > 0
+}
+
+FarmAttemptCanFinalize(attempt, expectedGeneration, actionMode,
+    confirmedInfo) {
+    return FarmAttemptHasBaseline(attempt, expectedGeneration, actionMode)
+        && attempt.clicked && attempt.completed
+        && IsObject(confirmedInfo) && confirmedInfo.revision > attempt.beforeRevision
+}
+
+ConfirmPendingFarmReward(expectedGeneration, actionMode, &confirmedInfo,
+    &confirmationReason) {
+    global State, Config
+    confirmedInfo := 0
+    confirmationReason := ""
+    if !IsCurrentRun(expectedGeneration) || !IsObject(State.pendingFarmAttempt)
+        return false
+    attempt := State.pendingFarmAttempt
+    if attempt.generation != expectedGeneration || attempt.actionMode != actionMode
+        return false
+    deadline := MonotonicMs() + Config.rewardConfirmTimeoutMs
+    lastResult := ""
+    while MonotonicMs() < deadline {
+        snapshotState := TryConfirmPendingFarmRewardSnapshot(expectedGeneration,
+            actionMode, &confirmedInfo, &confirmationReason, &lastResult)
+        if snapshotState = "CONFIRMED"
+            return true
+        if snapshotState = "STALE"
+            return false
+        ; A valid but unchanged snapshot may precede the server inventory update.
+        Sleep snapshotState = "UNCHANGED" ? 120 : 180
+    }
+    WriteDiagnostic("FARM_REWARD_TIMEOUT id=" attempt.attemptId
+        " mode=" actionMode " last=" lastResult)
+    confirmationReason := "inventory_delta_timeout"
+    return false
+}
+
+TryConfirmPendingFarmRewardSnapshot(expectedGeneration, actionMode,
+    &confirmedInfo, &confirmationReason, &snapshotResult) {
+    global State
+    confirmedInfo := 0
+    confirmationReason := ""
+    snapshotResult := ""
+    if !IsCurrentRun(expectedGeneration) || !IsObject(State.pendingFarmAttempt)
+        return "STALE"
+    attempt := State.pendingFarmAttempt
+    if attempt.generation != expectedGeneration || attempt.actionMode != actionMode
+        return "STALE"
+    snapshotResult := RunBackgroundBridgeCancelable(expectedGeneration,
+        "inventory-snapshot")
+    if !IsCurrentRun(expectedGeneration)
+        return "STALE"
+    if !ParseInventorySnapshot(snapshotResult, &afterInfo)
+        return "UNAVAILABLE"
+    if !InventorySnapshotHasReward(afterInfo, attempt.before)
+        return "UNCHANGED"
+    RecordConfirmedInventory(afterInfo, "reward_" actionMode)
+    attempt.completed := true
+    confirmedInfo := afterInfo
+    confirmationReason := afterInfo.weight > attempt.before.weight
+        ? "weight_increase" : "item_increase"
+    WriteDiagnostic("FARM_REWARD_CONFIRMED id=" attempt.attemptId
+        " mode=" actionMode " reason=" confirmationReason
+        " beforeWeight=" attempt.before.weight
+        " afterWeight=" afterInfo.weight
+        " revision=" afterInfo.revision)
+    return "CONFIRMED"
+}
+
+RewardReconcileDecision(hasReward, epochMatches, nowMs, deadlineMs) {
+    if !epochMatches
+        return "SESSION_CHANGED"
+    if hasReward
+        return "CONFIRMED"
+    return nowMs >= deadlineMs ? "TIMEOUT" : "WAIT"
+}
+
+BeginPendingFarmRewardReconciliation(expectedGeneration, actionMode,
+    completionAt, completionElapsedMs, completionWasBundled) {
+    global State, Config
+    if !IsCurrentRun(expectedGeneration) || !IsObject(State.pendingFarmAttempt)
+        return false
+    attempt := State.pendingFarmAttempt
+    if attempt.generation != expectedGeneration || attempt.actionMode != actionMode
+        return false
+    attempt.progressCompleted := true
+    attempt.completionAt := completionAt
+    attempt.completionElapsedMs := completionElapsedMs
+    attempt.completionWasBundled := completionWasBundled
+    ; The fast confirmation window already elapsed. Keep the exact attempt and
+    ; baseline for a second bounded window, with no new click, while late server
+    ; inventory replication catches up.
+    attempt.reconcileDeadline := MonotonicMs()
+        + Max(5000, Min(30000, Config.rewardConfirmTimeoutMs * 3))
+    attempt.reconcileAttempts := 0
+    State.rewardReconcileAttempts := 0
+    ResetActionCompletionState()
+    return EnterFarmRecovery(expectedGeneration,
+        State.farmState = "RESUMING_FARM" ? "RESUMING_FARM" : "FARMING",
+        actionMode "_reward_reconciliation")
+}
+
+HandlePendingFarmRewardReconciliation(expectedGeneration, expectedTaskId) {
+    global State
+    if !IsCurrentFarmTask(expectedGeneration, expectedTaskId, "RECOVERY")
+        return false
+    if !IsObject(State.pendingFarmAttempt)
+        || !State.pendingFarmAttempt.progressCompleted
+        || !State.pendingFarmAttempt.reconcileDeadline
+        return false
+    attempt := State.pendingFarmAttempt
+    actionMode := attempt.actionMode
+    attempt.reconcileAttempts += 1
+    State.rewardReconcileAttempts := attempt.reconcileAttempts
+    snapshotState := TryConfirmPendingFarmRewardSnapshot(expectedGeneration,
+        actionMode, &confirmedInfo, &rewardReason, &snapshotResult)
+    if snapshotState = "STALE"
+        return true
+    now := MonotonicMs()
+    decision := RewardReconcileDecision(snapshotState = "CONFIRMED", true,
+        now, attempt.reconcileDeadline)
+    WriteDiagnostic("FARM_REWARD_RECONCILE id=" attempt.attemptId
+        " try=" attempt.reconcileAttempts " snapshot=" snapshotState
+        " decision=" decision " remainingMs="
+        Max(0, attempt.reconcileDeadline - now))
+    if decision = "CONFIRMED" {
+        CompleteVerifiedFarmReward(expectedGeneration, actionMode,
+            attempt.completionAt, attempt.completionElapsedMs,
+            attempt.completionWasBundled, confirmedInfo, rewardReason)
+        return true
+    }
+    if decision = "TIMEOUT" {
+        DiscardPendingFarmAttempt("reward_reconciliation_timeout")
+        StopAutomationWithFault(BackgroundActionDisplayName(actionMode)
+            . "の実報酬を最終期限まで確認できないため停止しました",
+            "overview", "REWARD_RECONCILE_TIMEOUT")
+        return true
+    }
+    State.statusLabel.Text := "●  " BackgroundActionDisplayName(actionMode)
+        . "の報酬反映を再確認中（" attempt.reconcileAttempts "回）"
+    ScheduleNext(expectedGeneration, snapshotState = "UNCHANGED" ? 120 : 220)
     return true
 }
 
@@ -3928,6 +6288,10 @@ InventorySlotWasConsumed(beforeSpec, afterSpec, slotNumber) {
 }
 
 InventorySpecHasIncrease(currentSpec, baselineSpec) {
+    return InventorySpecDeltaUnitCount(currentSpec, baselineSpec) > 0
+}
+
+InventorySpecDeltaUnitCount(currentSpec, baselineSpec) {
     currentRows := InventorySpecToRows(currentSpec)
     baselineRows := InventorySpecToRows(baselineSpec)
     baselineBySlot := Map()
@@ -3976,11 +6340,16 @@ InventorySpecHasIncrease(currentSpec, baselineSpec) {
         row.reserved += reserve
         remainingNames[row.name] -= reserve
     }
-    for row in currentRows {
-        if row.count > row.reserved
-            return true
-    }
-    return false
+    deltaUnits := 0
+    for row in currentRows
+        deltaUnits += Max(0, row.count - row.reserved)
+    return deltaUnits
+}
+
+StorageDeltaBaselineIsSafe(baselineSpec, currentSpec) {
+    return baselineSpec != "-" && IsValidInventorySpec(baselineSpec)
+        && IsValidInventorySpec(currentSpec)
+        && InventorySpecDeltaUnitCount(currentSpec, baselineSpec) > 0
 }
 
 InventorySpecToRows(spec) {
@@ -4000,15 +6369,6 @@ InventorySpecToRows(spec) {
 InitializeLocalVehicleRun(expectedGeneration) {
     global State, Config
     State.statusLabel.Text := "作業位置と満重量判定を確認しています"
-    workTargetPresent := ProbeWorkTarget(State.runMode, expectedGeneration)
-    if !IsCurrentRun(expectedGeneration)
-        return false
-    if !workTargetPresent {
-        StopMining()
-        State.statusLabel.Text := "作業ボタンを確認できないため開始しませんでした"
-        ShowPage("vehicle")
-        return false
-    }
     epochValid := ValidateServerEpochCheckpoint(expectedGeneration, "local_work_start")
     if !IsCurrentRun(expectedGeneration)
         return false
@@ -4031,14 +6391,21 @@ InitializeLocalVehicleRun(expectedGeneration) {
         return false
     }
     State.inventoryBaseline := inventoryInfo.items
-    UpdateInventoryCapacityState(inventoryInfo)
+    RecordConfirmedInventory(inventoryInfo, "start_local")
     if CapacityNeedsStorage(inventoryInfo, &startReason, &startFreeWeight) {
-        WriteDiagnostic("LOCAL_INVENTORY_START_CAPACITY reason=" startReason
-            " free=" startFreeWeight)
+        WriteDiagnostic("LOCAL_INVENTORY_START_CAPACITY_BLOCKED reason="
+            startReason " free=" startFreeWeight " baseline=protected")
+        StopAutomationWithFault(
+            "開始時点ですでに容量が不足しています。既存の食料や道具を保護するため自動収納は行いません。手動で空きを作ってから再開してください",
+            "vehicle", "UNTRUSTED_STORAGE_BASELINE")
+        return false
+    }
+    workTargetPresent := ProbeWorkTarget(State.runMode, expectedGeneration)
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    if !workTargetPresent {
         StopMining()
-        State.statusLabel.Text := startReason = "weight"
-            ? "開始前から残り重量が少ないため、所持品を整理してください"
-            : "開始前から空きスロットがないため、所持品を整理してください"
+        State.statusLabel.Text := "作業ボタンを確認できないため開始しませんでした"
         ShowPage("vehicle")
         return false
     }
@@ -4049,27 +6416,80 @@ InitializeLocalVehicleRun(expectedGeneration) {
     return true
 }
 
-RunLocalVehicleStorageCycle(expectedGeneration) {
+VerifyStorageReduction(expectedGeneration, beforeInfo, &afterInfo,
+    &lastSnapshotResult) {
+    global Config
+    afterInfo := 0
+    lastSnapshotResult := ""
+    deadline := MonotonicMs() + Config.storageVerifyTimeoutMs
+    while MonotonicMs() < deadline {
+        lastSnapshotResult := RunBackgroundBridgeCancelable(expectedGeneration,
+            "inventory-snapshot")
+        if !IsCurrentRun(expectedGeneration)
+            return false
+        if ParseInventorySnapshot(lastSnapshotResult, &candidateInfo) {
+            RecordConfirmedInventory(candidateInfo, "storage_verify")
+            if InventorySnapshotWasReduced(candidateInfo, beforeInfo) {
+                afterInfo := candidateInfo
+                return true
+            }
+            Sleep 140
+            continue
+        }
+        Sleep 180
+    }
+    return false
+}
+
+RunLocalVehicleStorageCycle(expectedGeneration, reuseStoragePose := false) {
     global State, Config
     if !IsCurrentRun(expectedGeneration)
         return
 
-    State.automationPhase := "find_registered_vehicle"
-    State.statusLabel.Text := "近くの登録車両を探しています"
-    WriteDiagnostic("LOCAL_STORAGE_TRIP_START trip=" (State.storageTrips + 1))
-    epochValid := ValidateServerEpochCheckpoint(expectedGeneration,
-        "local_vehicle_departure")
-    if !IsCurrentRun(expectedGeneration)
-        return
-    if !epochValid {
-        StopAutomationWithFault("移動前の接続状態が変わったため安全停止しました", "vehicle")
+    protectedSnapshot := IsObject(State.storagePreSnapshot)
+        ? State.storagePreSnapshot : State.confirmedInventory
+    if !IsObject(protectedSnapshot)
+        || !StorageDeltaBaselineIsSafe(State.inventoryBaseline,
+            protectedSnapshot.items) {
+        WriteDiagnostic("STORAGE_BASELINE_BLOCKED source=departure baseline="
+            DiagnosticToken(State.inventoryBaseline))
+        StopAutomationWithFault(
+            "開始後に増えた持ち物を安全に特定できないため、車両へ移動せず停止しました",
+            "vehicle", "UNTRUSTED_STORAGE_BASELINE")
         return
     }
 
-    movementHistory := []
-    matchedViewRoute := ""
-    try storageFound := FindRegisteredStorageNearby(expectedGeneration, &movementHistory,
-        &matchedViewRoute, &searchFailure)
+    TransitionFarmState("OPENING_STORAGE", "近くの登録車両を探索",
+        expectedGeneration, 0, true)
+    State.statusLabel.Text := "近くの登録車両を探しています"
+    WriteDiagnostic("LOCAL_STORAGE_TRIP_START trip=" (State.storageTrips + 1))
+    if !ValidateServerEpochCheckpoint(expectedGeneration,
+        "local_vehicle_departure") {
+        StopAutomationWithFault("移動前の接続状態が変わったため安全停止しました",
+            "vehicle")
+        return
+    }
+
+    movementHistory := reuseStoragePose && IsObject(State.storageMovementHistory)
+        ? State.storageMovementHistory : []
+    matchedViewRoute := reuseStoragePose ? State.storageMatchedViewRoute : ""
+    try {
+        if reuseStoragePose {
+            recoveryViewRoute := ""
+            storageFound := TryRegisteredStorageViews(expectedGeneration,
+                ["", "420:80", "420:144", "520:16"],
+                &recoveryViewRoute, &searchFailure, &fatalSearch)
+            if recoveryViewRoute
+                matchedViewRoute := JoinLocalRoutes([matchedViewRoute,
+                    recoveryViewRoute])
+            if fatalSearch && !storageFound
+                searchFailure := searchFailure ? searchFailure
+                    : "収納復旧中に荷台を安全に開けませんでした"
+        } else {
+            storageFound := FindRegisteredStorageNearby(expectedGeneration,
+                &movementHistory, &matchedViewRoute, &searchFailure)
+        }
+    }
     catch as err {
         storageFound := false
         searchFailure := "登録車両の探索中にエラーが発生しました"
@@ -4077,58 +6497,92 @@ RunLocalVehicleStorageCycle(expectedGeneration) {
     }
     if !IsCurrentRun(expectedGeneration)
         return
+    State.storageMovementHistory := movementHistory
+    State.storageMatchedViewRoute := matchedViewRoute
     if !storageFound {
         cleanupOk := CloseLocalStorageUi()
-        if !cleanupOk
-            searchFailure := "探索画面を安全に閉じられないため停止しました"
-        if IsCurrentRun(expectedGeneration)
-            StopAutomationWithFault(searchFailure ? searchFailure
-                : "近くに登録車両を確認できませんでした", "vehicle")
+        if !cleanupOk {
+            StopAutomationWithFault("探索画面を安全に閉じられないため停止しました",
+                "vehicle")
+            return
+        }
+        EnterFarmRecovery(expectedGeneration,
+            reuseStoragePose ? "OPENING_STORAGE" : "FARMING",
+            searchFailure ? searchFailure : "registered_storage_not_found")
         return
     }
 
     depositOk := false
-    failureMessage := ""
-    closeResult := ""
-    releaseOk := false
+    fatalDeposit := false
+    failureMessage := "収納後の所持量を確認できませんでした"
+    beforeAttempt := protectedSnapshot
     try {
-        epochValid := ValidateServerEpochCheckpoint(expectedGeneration,
-            "local_before_deposit")
-        if !IsCurrentRun(expectedGeneration) {
-            failureMessage := ""
-        } else if !epochValid {
+        if !ValidateServerEpochCheckpoint(expectedGeneration,
+            "local_before_deposit") {
             failureMessage := "収納直前に接続状態が変わったため停止しました"
+            fatalDeposit := true
         } else {
-            State.automationPhase := "depositing"
-            State.statusLabel.Text := "開始後に増えた持ち物だけを収納しています"
-            depositResult := RunBackgroundBridgeCancelable(expectedGeneration,
-                "deposit-delta", Config.vehicleStorageId,
-                Config.vehicleStorageType, State.inventoryBaseline)
-            if RegExMatch(depositResult, "^DEPOSITED (\d+) (\d+)$", &depositParts)
-                && depositParts[1] + 0 > 0 {
-                postResult := RunBackgroundBridgeCancelable(expectedGeneration,
-                    "inventory-snapshot")
-                if !ParseInventorySnapshot(postResult, &postInfo)
-                    || InventorySpecHasIncrease(postInfo.items, State.inventoryBaseline) {
-                    failureMessage := "収納後の所持品を確認できなかったため停止します"
-                    WriteDiagnostic("LOCAL_DEPOSIT_VERIFY_ERROR=" postResult)
+            Loop Config.storageMaxRetries {
+                if !IsCurrentRun(expectedGeneration)
+                    return
+                State.storageRetryCount := A_Index
+                State.farmStateRetry := A_Index - 1
+                TransitionFarmState("STORING", "収納試行 " A_Index "/"
+                    Config.storageMaxRetries, expectedGeneration, 0, true)
+                State.statusLabel.Text := "増えた持ち物を収納しています（"
+                    A_Index "/" Config.storageMaxRetries "）"
+                depositResult := RunBackgroundBridgeCancelable(expectedGeneration,
+                    "deposit-delta", Config.vehicleStorageId,
+                    Config.vehicleStorageType, State.inventoryBaseline)
+                if !IsCurrentRun(expectedGeneration)
+                    return
+                TransitionFarmState("VERIFY_STORAGE", "収納後の減少を確認",
+                    expectedGeneration)
+                reduced := VerifyStorageReduction(expectedGeneration,
+                    beforeAttempt, &postInfo, &postResult)
+                if !IsCurrentRun(expectedGeneration)
+                    return
+                WriteDiagnostic("LOCAL_DEPOSIT_ATTEMPT retry=" A_Index
+                    " command=" depositResult " reduced=" (reduced ? 1 : 0)
+                    " snapshot=" postResult)
+                if reduced {
+                    remainingDelta := InventorySpecHasIncrease(postInfo.items,
+                        State.inventoryBaseline)
+                    stillFull := CapacityNeedsStorage(postInfo,
+                        &postCapacityReason, &postFreeWeight)
+                    if !remainingDelta && !stillFull {
+                        State.inventoryBaseline := postInfo.items
+                        depositOk := true
+                        depositedCount := RegExMatch(depositResult,
+                            "^DEPOSITED (\d+) (\d+)$", &depositParts)
+                            ? depositParts[1] + 0 : 1
+                        State.lastStorageResult := depositedCount "個以上を収納"
+                        break
+                    }
+                    beforeAttempt := postInfo
+                    failureMessage := remainingDelta
+                        ? "収納対象が残っているため再試行します"
+                        : "容量不足が続いているため再試行します"
                 } else {
-                    State.inventoryBaseline := postInfo.items
-                    UpdateInventoryCapacityState(postInfo)
-                    depositOk := true
-                    State.lastStorageResult := depositParts[1] "個を収納"
-                    WriteDiagnostic("LOCAL_DEPOSIT count=" depositParts[1]
-                        " stacks=" depositParts[2])
+                    failureMessage := DepositFailureMessage(depositResult)
+                    if InStr(depositResult, "WRONG_STORAGE")
+                        || InStr(depositResult, "STORAGE_FULL") {
+                        fatalDeposit := true
+                        break
+                    }
                 }
-            } else {
-                failureMessage := DepositFailureMessage(depositResult)
-                WriteDiagnostic("LOCAL_DEPOSIT_ERROR=" depositResult)
+                if A_Index < Config.storageMaxRetries {
+                    TransitionFarmState("STORING", "収納を再試行",
+                        expectedGeneration)
+                    Sleep 180
+                }
             }
         }
     } catch as err {
         failureMessage := "収納処理でエラーが発生しました"
         WriteDiagnostic("LOCAL_STORAGE_CYCLE_ERROR=" err.Message)
     } finally {
+        ReleaseAllInputs()
         releaseOk := ReleaseBackgroundTarget(true)
         closeResult := RunBackgroundBridge("close-inventory")
     }
@@ -4139,43 +6593,54 @@ RunLocalVehicleStorageCycle(expectedGeneration) {
     if !cleanupOk
         cleanupOk := CloseLocalStorageUi()
     if !cleanupOk {
-        WriteDiagnostic("LOCAL_STORAGE_CLOSE_ERROR=" closeResult)
-        StopAutomationWithFault("インベントリを安全に閉じられないため停止しました", "vehicle")
-        return
-    }
-    State.automationPhase := "return_to_work"
-    State.statusLabel.Text := "作業位置へ戻っています"
-    poseRestored := RestoreLocalSearchPose(expectedGeneration, movementHistory,
-        matchedViewRoute)
-    if !IsCurrentRun(expectedGeneration)
-        return
-    if !poseRestored {
-        StopAutomationWithFault("作業位置へ安全に戻れないため停止しました", "vehicle")
-        return
-    }
-    epochValid := ValidateServerEpochCheckpoint(expectedGeneration, "local_work_return")
-    if !IsCurrentRun(expectedGeneration)
-        return
-    if !epochValid {
-        StopAutomationWithFault("収納中のサーバー再起動または再接続を検知しました", "vehicle")
+        StopAutomationWithFault("インベントリを安全に閉じられないため停止しました",
+            "vehicle")
         return
     }
 
-    State.automationPhase := "verify_workpoint"
+    if !depositOk {
+        if fatalDeposit {
+            StopAutomationWithFault(failureMessage, "vehicle")
+            return
+        }
+        State.recoveryAtStorage := true
+        EnterFarmRecovery(expectedGeneration, "OPENING_STORAGE",
+            "storage_verify_exhausted: " failureMessage)
+        return
+    }
+
+    CompleteVerifiedStorageReturn(expectedGeneration)
+}
+
+CompleteVerifiedStorageReturn(expectedGeneration) {
+    global State, Config
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    TransitionFarmState("RETURNING_TO_FARM", "収納減少確認後に作業地点へ復帰",
+        expectedGeneration, 0, true)
+    State.statusLabel.Text := "作業位置へ戻っています"
+    poseRestored := RestoreLocalSearchPose(expectedGeneration,
+        State.storageMovementHistory, State.storageMatchedViewRoute)
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    if !poseRestored {
+        StopAutomationWithFault("作業位置へ安全に戻れないため停止しました", "vehicle")
+        return false
+    }
+    if !ValidateServerEpochCheckpoint(expectedGeneration, "local_work_return") {
+        StopAutomationWithFault("収納中のサーバー再起動または再接続を検知しました",
+            "vehicle")
+        return false
+    }
     State.statusLabel.Text := "作業ボタンを再確認しています"
     workRecovered := RecoverLocalWorkTarget(expectedGeneration)
     if !IsCurrentRun(expectedGeneration)
-        return
+        return false
     if !workRecovered {
-        StopAutomationWithFault("作業位置を再検出できないため再開しません", "vehicle")
-        return
+        EnterFarmRecovery(expectedGeneration, "RESUMING_FARM",
+            "return_target_not_found")
+        return false
     }
-    if !depositOk {
-        StopAutomationWithFault(failureMessage ? failureMessage
-            : "収納できなかったため停止しました", "vehicle")
-        return
-    }
-
     State.storageTrips += 1
     State.vehicleTripLabel.Text := "自動収納`n" State.storageTrips
     State.waitingForStone := false
@@ -4187,11 +6652,19 @@ RunLocalVehicleStorageCycle(expectedGeneration) {
     State.nextCapacityCheckAt := MonotonicMs() + Config.capacityCheckIntervalMs
     State.workpointProbeFailures := 0
     State.storagePending := false
+    State.storageStartPending := false
     State.storageRecoveryAttempted := false
-    State.automationPhase := "working"
-    State.statusLabel.Text := "収納完了。作業を再開します"
-    WriteDiagnostic("LOCAL_STORAGE_TRIP_COMPLETE trip=" State.storageTrips)
-    ScheduleNext(expectedGeneration, 900)
+    State.recoveryAtStorage := false
+    State.resumeVerificationPending := true
+    State.targetLostSince := 0
+    State.farmWatchdogAt := MonotonicMs()
+    TransitionFarmState("RESUMING_FARM",
+        "収納完了。次の実報酬で再開確認", expectedGeneration, 0, true)
+    State.statusLabel.Text := "収納完了。次の作業結果を確認します"
+    WriteDiagnostic("LOCAL_STORAGE_TRIP_COMPLETE trip=" State.storageTrips
+        " resumePending=1")
+    ScheduleNext(expectedGeneration, 100)
+    return true
 }
 
 FindRegisteredStorageNearby(expectedGeneration, &movementHistory,
@@ -4498,10 +6971,64 @@ DepositFailureMessage(result) {
     return "車両ストレージへ収納できませんでした"
 }
 
-StopAutomationWithFault(message, pageName := "overview") {
+FarmStateNameKnown(farmState) {
+    return InStr("|IDLE|FARMING|INVENTORY_CHECK|INVENTORY_FULL|"
+        . "STOPPING_FARM|OPENING_STORAGE|STORING|VERIFY_STORAGE|"
+        . "RETURNING_TO_FARM|RESUMING_FARM|RECOVERY|ERROR|",
+        "|" farmState "|") != 0
+}
+
+FarmFailureCode(message, farmState, recoveryReason := "",
+    requestedCode := "FARM_FATAL") {
+    if requestedCode != "FARM_FATAL"
+        return requestedCode
+    detail := String(message) " " String(recoveryReason)
+    if InStr(detail, "サーバー再起動") || InStr(detail, "再接続")
+        || InStr(detail, "サーバー接続") || InStr(detail, "SERVER_SESSION")
+        || InStr(detail, "連携状態が変わった")
+        return "SERVER_SESSION_CHANGED"
+    if InStr(detail, "watchdog") || InStr(detail, "実際の作業報酬を3回")
+        return "WATCHDOG_TIMEOUT"
+    if InStr(detail, "INPUT_RELEASE") || InStr(detail, "入力を")
+        || InStr(detail, "安全に閉じられない")
+        || InStr(detail, "補正結果を確認できない")
+        return "INPUT_STUCK"
+    if !FarmStateNameKnown(farmState) || InStr(detail, "内部状態")
+        || InStr(detail, "dispatcher_unhandled")
+        return "UNKNOWN_STATE"
+    if farmState = "RETURNING_TO_FARM" || farmState = "RESUMING_FARM"
+        || InStr(detail, "作業位置へ安全に戻れない")
+        return "FARM_RESUME_FAILED"
+    if farmState = "OPENING_STORAGE" || InStr(detail, "荷台")
+        || InStr(detail, "登録車両の探索")
+        || InStr(detail, "登録した車両と一致しない")
+        return "STORAGE_UI_NOT_FOUND"
+    if farmState = "VERIFY_STORAGE" || InStr(detail, "収納後")
+        || InStr(detail, "減少を確認") || InStr(detail, "容量不足が続")
+        return "STORAGE_VERIFY_FAILED"
+    if farmState = "STORING" || InStr(detail, "車両ストレージへ収納")
+        || InStr(detail, "ストレージの容量")
+        return "STORAGE_ACTION_FAILED"
+    if farmState = "INVENTORY_CHECK" || InStr(detail, "所持品")
+        || InStr(detail, "インベントリ状態")
+        return "INVENTORY_DETECTION_FAILED"
+    if InStr(detail, "作業対象") || InStr(detail, "作業視点")
+        || InStr(detail, "作業位置") || InStr(detail, "target_lost")
+        return "FARM_TARGET_LOST"
+    return "FARM_FATAL"
+}
+
+StopAutomationWithFault(message, pageName := "overview",
+    faultCode := "FARM_FATAL") {
     global State
+    faultCode := FarmFailureCode(message, State.farmState,
+        State.recoveryReason, faultCode)
+    WriteDiagnostic("FARM_STOP code=" DiagnosticToken(faultCode)
+        " state=" State.farmState " reason=" DiagnosticToken(message))
     State.lastStorageResult := message
+    State.farmStateLastError := message
     StopMining()
+    TransitionFarmState("ERROR", message, 0, 0, true)
     State.statusLabel.Text := message
     ShowPage(pageName)
     ShowMainWindow()
@@ -4587,10 +7114,45 @@ EnsureBackgroundInventoryReady(expectedGeneration, &inventoryInfo) {
     return snapshotReady && epochValid
 }
 
-AutomationCycle(expectedGeneration) {
-    global State
-    if !IsCurrentRun(expectedGeneration)
+AutomationCycle(expectedGeneration, expectedTaskId := 0) {
+    global State, Config
+    if !IsCurrentFarmTask(expectedGeneration, expectedTaskId)
         return
+
+    if State.metagameOutbox.Length
+        FlushPendingMetagameMiningEvent(expectedGeneration)
+
+    if State.farmState = "IDLE" || State.farmState = "ERROR"
+        return
+    if State.farmState = "RECOVERY" {
+        RunFarmRecoveryCycle(expectedGeneration, expectedTaskId)
+        return
+    }
+    if FarmStateRequiresCapacityDispatch(State.farmState,
+        State.storagePending) {
+        MaybeHandleVehicleCapacity(expectedGeneration)
+        return
+    }
+    if State.farmState != "FARMING" && State.farmState != "RESUMING_FARM" {
+        EnterFarmRecovery(expectedGeneration, "FARMING",
+            "dispatcher_unhandled_" State.farmState)
+        return
+    }
+
+    if State.farmWatchdogAt
+        && MonotonicMs() - State.farmWatchdogAt >= Config.farmWatchdogMs {
+        if State.watchdogRecoveryCount >= 3 {
+            StopAutomationWithFault(
+                "実際の作業報酬を3回の復旧後も確認できないため停止しました")
+            return
+        }
+        State.watchdogRecoveryCount += 1
+        returnState := State.farmState = "RESUMING_FARM"
+            ? "RESUMING_FARM" : "FARMING"
+        EnterFarmRecovery(expectedGeneration, returnState,
+            "watchdog_no_verified_reward")
+        return
+    }
 
     ; クリック済みの作業は、実際の進捗UIが完了するまで容量・視点・食事や
     ; 次のクリックへ進めません。完了後だけ通常cycleへ戻します。
@@ -4617,8 +7179,14 @@ AutomationCycle(expectedGeneration) {
     State.nextActionAt := 0
     if MaybeHandleServerHealth(expectedGeneration)
         return
-    if MaybeHandleVehicleCapacity(expectedGeneration)
-        return
+    if State.farmState = "FARMING" && Config.vehicleStorageEnabled {
+        TransitionFarmState("INVENTORY_CHECK", "定期所持品確認",
+            expectedGeneration)
+        if MaybeHandleVehicleCapacity(expectedGeneration)
+            return
+        if State.farmState != "FARMING"
+            return
+    }
     if !MaintainBackgroundWorkView(expectedGeneration)
         return
     if MaybeHandleBackgroundEating(expectedGeneration)
@@ -4629,6 +7197,173 @@ AutomationCycle(expectedGeneration) {
         GoldAttemptBackground(expectedGeneration)
     else
         MineAttempt(expectedGeneration)
+}
+
+FarmStateRequiresCapacityDispatch(farmState, storagePending) {
+    return farmState = "INVENTORY_CHECK"
+        || (farmState = "STOPPING_FARM" && storagePending)
+}
+
+EnterFarmRecovery(expectedGeneration, returnState, reason) {
+    global State
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    State.recoveryReturnState := returnState
+    State.recoveryReason := reason
+    WriteDiagnostic("FARM_RECOVERY code=" DiagnosticToken(reason)
+        " from=" State.farmState " return=" returnState)
+    State.farmStateRetry += 1
+    TransitionFarmState("RECOVERY", reason, expectedGeneration, 0, true)
+    ; Recovery begins by cancelling every owned input and stale pending action.
+    CancelActiveBridgeProcess()
+    ReleaseAllInputs()
+    ReleaseBackgroundTarget(true)
+    RunBackgroundBridge("close-inventory")
+    ScheduleNext(expectedGeneration, 120)
+    return true
+}
+
+HandleFarmTargetMissing(expectedGeneration, actionMode) {
+    global State, Config
+    if !IsCurrentRun(expectedGeneration)
+        return true
+    now := MonotonicMs()
+    if !State.targetLostSince
+        State.targetLostSince := now
+    lostFor := now - State.targetLostSince
+    WriteDiagnostic("FARM_TARGET_MISSING mode=" actionMode
+        " lostMs=" lostFor " state=" State.farmState)
+    if lostFor >= Config.targetLostRecoveryMs {
+        returnState := State.farmState = "RESUMING_FARM"
+            ? "RESUMING_FARM" : "FARMING"
+        EnterFarmRecovery(expectedGeneration, returnState,
+            "target_lost_" actionMode)
+        return true
+    }
+    State.statusLabel.Text := "●  作業対象を再検出中（"
+        Round(lostFor / 1000, 1) "秒）"
+    ScheduleNext(expectedGeneration, Config.notFoundRetryMs)
+    return true
+}
+
+RunFarmRecoveryCycle(expectedGeneration, expectedTaskId) {
+    global State, Config
+    if !IsCurrentFarmTask(expectedGeneration, expectedTaskId, "RECOVERY")
+        return
+    rewardReconciliation := IsObject(State.pendingFarmAttempt)
+        && State.pendingFarmAttempt.progressCompleted
+        && State.pendingFarmAttempt.reconcileDeadline
+    if rewardReconciliation {
+        State.statusLabel.Text := "●  遅延した実報酬を再照合中"
+    } else {
+        if State.targetRecoveryAttempts >= 3 {
+            StopAutomationWithFault("自動復旧を3回試しましたが作業対象を確認できません")
+            return
+        }
+        State.targetRecoveryAttempts += 1
+        State.statusLabel.Text := "●  入力・画面・視点を自動復旧中（"
+            State.targetRecoveryAttempts "/3）"
+    }
+    ReleaseAllInputs()
+    if !ReleaseBackgroundTarget(true) {
+        ScheduleNext(expectedGeneration, 500)
+        return
+    }
+    closeResult := RunBackgroundBridgeCancelable(expectedGeneration,
+        "close-inventory")
+    if !IsCurrentFarmTask(expectedGeneration, expectedTaskId, "RECOVERY")
+        return
+    if closeResult != "CLOSED" {
+        WriteDiagnostic("FSM_RECOVERY_CLOSE result=" closeResult)
+        ScheduleNext(expectedGeneration, 500)
+        return
+    }
+    if !ValidateServerEpochCheckpoint(expectedGeneration, "farm_recovery") {
+        DiscardPendingFarmAttempt("reconcile_server_session_changed")
+        StopAutomationWithFault("復旧中にサーバー再起動または切断を検知しました")
+        return
+    }
+    if rewardReconciliation {
+        HandlePendingFarmRewardReconciliation(expectedGeneration, expectedTaskId)
+        return
+    }
+    if State.storagePending {
+        snapshotResult := RunBackgroundBridgeCancelable(expectedGeneration,
+            "inventory-snapshot")
+        if !IsCurrentFarmTask(expectedGeneration, expectedTaskId, "RECOVERY")
+            return
+        if ParseInventorySnapshot(snapshotResult, &inventoryInfo) {
+            RecordConfirmedInventory(inventoryInfo, "storage_recovery")
+            reduced := IsObject(State.storagePreSnapshot)
+                && InventorySnapshotWasReduced(inventoryInfo,
+                    State.storagePreSnapshot)
+            remainingDelta := InventorySpecHasIncrease(inventoryInfo.items,
+                State.inventoryBaseline)
+            stillFull := CapacityNeedsStorage(inventoryInfo,
+                &capacityReason, &freeWeight)
+            WriteDiagnostic("FSM_STORAGE_RECOVERY reduced=" (reduced ? 1 : 0)
+                " remaining=" (remainingDelta ? 1 : 0)
+                " full=" (stillFull ? 1 : 0)
+                " atStorage=" (State.recoveryAtStorage ? 1 : 0))
+            if State.recoveryAtStorage && reduced
+                && !remainingDelta && !stillFull {
+                State.targetRecoveryAttempts := 0
+                CompleteVerifiedStorageReturn(expectedGeneration)
+                return
+            }
+            if !State.recoveryAtStorage && !remainingDelta && !stillFull {
+                ; We are already back at the work point and capacity recovered by
+                ; an externally completed/late operation. Rebase the delta and use
+                ; the normal target recovery below; no vehicle return route exists.
+                State.inventoryBaseline := inventoryInfo.items
+                State.storagePending := false
+                State.storageStartPending := false
+                State.storagePreSnapshot := 0
+                State.storageRecoveryAttempted := false
+                State.capacityProbeFailures := 0
+                WriteDiagnostic("FSM_STORAGE_RECOVERY clearedAtFarm=1")
+            }
+        } else {
+            State.capacityProbeFailures += 1
+            WriteDiagnostic("FSM_STORAGE_RECOVERY_SNAPSHOT_ERROR attempt="
+                State.capacityProbeFailures " result=" snapshotResult)
+            if State.capacityProbeFailures < 3 {
+                State.statusLabel.Text := "●  収納復旧の所持品を再確認中（"
+                    State.capacityProbeFailures "/3）"
+                ScheduleNext(expectedGeneration, 500)
+                return
+            }
+        }
+        if State.storagePending {
+            ; Still full/unchanged (or three snapshots unavailable): remain in the
+            ; storage closed loop. Never transition through FARMING or emit a farm
+            ; input until a verified reduction clears storagePending.
+            State.capacityProbeFailures := 0
+            atStorage := State.recoveryAtStorage
+            TransitionFarmState("OPENING_STORAGE", atStorage
+                ? "収納地点で荷台を再確認" : "容量不足のまま荷台を再探索",
+                expectedGeneration, expectedTaskId)
+            RunLocalVehicleStorageCycle(expectedGeneration, atStorage)
+            return
+        }
+    }
+    if !MaintainBackgroundWorkView(expectedGeneration, true)
+        return
+    targetReady := RecoverLocalWorkTarget(expectedGeneration)
+    if !IsCurrentFarmTask(expectedGeneration, expectedTaskId, "RECOVERY")
+        return
+    if !targetReady {
+        ScheduleNext(expectedGeneration, 650)
+        return
+    }
+    State.targetLostSince := 0
+    State.targetRecoveryAttempts := 0
+    State.farmWatchdogAt := MonotonicMs()
+    returnState := State.recoveryReturnState = "RESUMING_FARM"
+        ? "RESUMING_FARM" : "FARMING"
+    TransitionFarmState(returnState, "自動復旧完了: " State.recoveryReason,
+        expectedGeneration, expectedTaskId)
+    ScheduleNext(expectedGeneration, 100)
 }
 
 WorkViewDownRoute(pulseMs) {
@@ -4946,6 +7681,77 @@ PerformWashCompletionCorrection(expectedGeneration) {
         expectedGeneration)
 }
 
+CompleteVerifiedFarmReward(expectedGeneration, actionMode, completionAt,
+    completionElapsedMs, completionWasBundled, confirmedInfo, rewardReason) {
+    global State, Config
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    attempt := State.pendingFarmAttempt
+    if !FarmAttemptCanFinalize(attempt, expectedGeneration, actionMode,
+        confirmedInfo)
+        return false
+    attemptId := attempt.attemptId
+    confirmedAt := MonotonicMs()
+    ResetActionCompletionState()
+    State.successes += 1
+    State.farmWatchdogAt := confirmedAt
+    State.lastVerifiedRewardAt := confirmedAt
+    State.watchdogRecoveryCount := 0
+    State.rewardReconcileAttempts := 0
+    if Config.vehicleStorageEnabled
+        State.nextCapacityCheckAt := 0
+    State.targetLostSince := 0
+    State.targetRecoveryAttempts := 0
+
+    metaQueued := true
+    if actionMode = "mining"
+        metaQueued := EmitVerifiedMiningSuccess(expectedGeneration, attemptId,
+            confirmedInfo.revision)
+    DiscardPendingFarmAttempt("reward_confirmed")
+    if !metaQueued {
+        StopAutomationWithFault(
+            "採掘成功通知を安全に保存できないため停止しました")
+        return false
+    }
+
+    wasResume := State.resumeVerificationPending
+    if wasResume
+        State.resumeVerificationPending := false
+    if State.farmState = "RECOVERY" || State.farmState = "RESUMING_FARM" {
+        transitionReason := wasResume
+            ? "収納後の実報酬を確認: " rewardReason
+            : "遅延した実報酬を確認: " rewardReason
+        if !TransitionFarmState("FARMING", transitionReason,
+            expectedGeneration)
+            return false
+    }
+    ; bridgeが返却直前に同じCDP接続で3つのNUI frameを照合済みです。
+    ; 直後に別helperで同じhealthを重ねず、次の定期確認まで有効扱いにします。
+    State.serverHealthFailures := 0
+    State.nextServerHealthAt := confirmedAt + Config.serverHealthIntervalMs
+    State.countLabel.Text := actionMode = "washing"
+        ? "石洗い回数`n" State.successes
+        : actionMode = "gold" ? "砂金採り回数`n" State.successes
+        : "採掘回数`n" State.successes
+    if actionMode = "gold"
+        ResetGoldRecoveryState()
+    WriteDiagnostic("attempt=" State.attempts " ACTION_PROGRESS_DONE mode="
+        actionMode " elapsed=" completionElapsedMs
+        " bundled=" completionWasBundled
+        " reward=" rewardReason " revision=" confirmedInfo.revision
+        " reconcile=" (completionAt < confirmedAt - 1000 ? 1 : 0)
+        " clickAge=" (State.lastMineAt ? confirmedAt - State.lastMineAt : -1))
+    if actionMode = "washing"
+        && !PerformWashCompletionCorrection(expectedGeneration)
+        return false
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    State.statusLabel.Text := "●  " BackgroundActionDisplayName(actionMode)
+        . "完了。次の作業を確認します"
+    ScheduleNext(expectedGeneration, 1)
+    return true
+}
+
 WaitPendingBackgroundActionCompletion(expectedGeneration, suppliedResult := "") {
     global State, Config
     if !IsCurrentRun(expectedGeneration) || !State.actionCompletionPending
@@ -4970,73 +7776,87 @@ WaitPendingBackgroundActionCompletion(expectedGeneration, suppliedResult := "") 
         return
     if ParseActionCompletionResult(completionResult, actionMode,
         &completionElapsedMs) {
-        ; pendingを先に消費し、この完了に対する計数と補正を必ず一度だけにします。
-        ResetActionCompletionState()
-        State.successes += 1
         completionAt := MonotonicMs()
         if completionWasBundled
             State.lastMineAt := Max(1, completionAt - completionElapsedMs)
-        ; bridgeが返却直前に同じCDP接続で3つのNUI frameを照合済みです。
-        ; 直後に別helperで同じhealthを重ねず、次の定期確認まで有効扱いにします。
-        State.serverHealthFailures := 0
-        State.nextServerHealthAt := completionAt + Config.serverHealthIntervalMs
-        State.countLabel.Text := actionMode = "washing"
-            ? "石洗い回数`n" State.successes
-            : actionMode = "gold" ? "砂金採り回数`n" State.successes
-            : "採掘回数`n" State.successes
-        if actionMode = "gold"
-            ResetGoldRecoveryState()
-        WriteDiagnostic("attempt=" State.attempts " ACTION_PROGRESS_DONE mode="
-            actionMode " elapsed=" completionElapsedMs
-            " bundled=" completionWasBundled
-            " clickAge=" (State.lastMineAt ? completionAt - State.lastMineAt : -1))
-        if actionMode = "washing"
-            && !PerformWashCompletionCorrection(expectedGeneration)
+        if !IsObject(State.pendingFarmAttempt)
+            || !State.pendingFarmAttempt.clicked {
+            ResetActionCompletionState()
+            StopAutomationWithFault(
+                displayName "の報酬照合元がないため安全停止しました")
             return
-        if !IsCurrentRun(expectedGeneration)
+        }
+        attemptId := State.pendingFarmAttempt.attemptId
+        if !ConfirmPendingFarmReward(expectedGeneration, actionMode,
+            &confirmedInfo, &rewardReason) {
+            BeginPendingFarmRewardReconciliation(expectedGeneration, actionMode,
+                completionAt, completionElapsedMs, completionWasBundled)
             return
-        State.statusLabel.Text := "●  " displayName "完了。次の作業を確認します"
-        ScheduleNext(expectedGeneration, 1)
+        }
+        ; progress完了だけではなく、NUIの個数/重量増加を確認したこの地点だけを
+        ; 1回の実績と再開成功として扱います。
+        CompleteVerifiedFarmReward(expectedGeneration, actionMode, completionAt,
+            completionElapsedMs, completionWasBundled, confirmedInfo, rewardReason)
         return
     }
 
     WriteDiagnostic("attempt=" State.attempts " ACTION_PROGRESS_ERROR mode="
         actionMode " bundled=" completionWasBundled " result=" completionResult)
     if completionResult = "ERROR SERVER_SESSION_CHANGED" {
+        DiscardPendingFarmAttempt("server_session_changed")
         StopAutomationWithFault(
             "サーバー再起動または再接続を検知したため自動停止しました")
         return
     }
     expectedPrefix := "ERROR " resultToken "_"
     if completionResult = expectedPrefix "NOT_STARTED" {
-        ; dispatch後に応答を失った場合は「送信されなかった」と断定できません。
-        ; 二重実行を避けるため、確定CLICKEDだけを再選択し、不確定送信は停止します。
-        ResetActionCompletionState()
-        ; bundled結果は、このhelper内でDOMクリックが成功した後の監視結果です。
-        ; 旧bridgeのCLICKED後に単独監視した場合も再クリックは安全ではありません。
-        ; 進捗表示だけを取りこぼした可能性があるため、NOT_STARTEDでも停止します。
-        if dispatchUncertain || completionWasBundled {
-            StopAutomationWithFault(
-                displayName "を開始したか確認できないため安全停止しました")
+        ; The bundled helper pre-opens its progress frame. Its NOT_STARTED result
+        ; is the only case where absence is authoritative enough to reselect.
+        if completionWasBundled && !dispatchUncertain {
+            ResetActionCompletionState()
+            DiscardPendingFarmAttempt("action_not_started_confirmed")
+            State.lastMineAt := 0
+            returnState := State.farmState = "RESUMING_FARM"
+                ? "RESUMING_FARM" : "FARMING"
+            EnterFarmRecovery(expectedGeneration, returnState,
+                actionMode "_not_started")
             return
         }
-        State.lastMineAt := 0
-        State.statusLabel.Text := "●  " displayName "が始まらなかったため再選択します"
-        ScheduleNext(expectedGeneration, 1)
+        ; A standalone monitor began after dispatch. It may have missed the whole
+        ; progress bar, so preserve the baseline and reconcile inventory without a
+        ; second click. A real late reward can still complete RESUMING_FARM.
+        if BeginPendingFarmRewardReconciliation(expectedGeneration, actionMode,
+            MonotonicMs(), 0, false)
+            return
+        DiscardPendingFarmAttempt("action_not_started_unrecoverable")
+        StopAutomationWithFault(
+            displayName "を開始したか確認できないため安全停止しました")
         return
     }
     if completionResult = expectedPrefix "COMPLETION_TIMEOUT" {
+        if BeginPendingFarmRewardReconciliation(expectedGeneration, actionMode,
+            MonotonicMs(), 0, completionWasBundled)
+            return
+        DiscardPendingFarmAttempt("completion_timeout")
         StopAutomationWithFault(
             displayName "の進捗が完了しないため安全停止しました")
         return
     }
     if completionResult = expectedPrefix "PROGRESS_UNAVAILABLE" {
+        if BeginPendingFarmRewardReconciliation(expectedGeneration, actionMode,
+            MonotonicMs(), 0, completionWasBundled)
+            return
+        DiscardPendingFarmAttempt("progress_unavailable")
         StopAutomationWithFault(
             displayName "の進捗を確認できないため安全停止しました")
         return
     }
     ; helper起動失敗や結果ファイル欠落も、実行済みか否かを区別できません。
     ; pendingのまま再監視・再クリックせず、二重操作を避けて停止します。
+    if BeginPendingFarmRewardReconciliation(expectedGeneration, actionMode,
+        MonotonicMs(), 0, completionWasBundled)
+        return
+    DiscardPendingFarmAttempt("completion_unknown")
     StopAutomationWithFault(
         displayName "完了の結果を確認できないため安全停止しました")
 }
@@ -5053,6 +7873,12 @@ WashAttemptBackground(expectedGeneration) {
     }
 
     State.attempts += 1
+    if !CaptureFarmAttemptBaseline(expectedGeneration, "washing") {
+        EnterFarmRecovery(expectedGeneration,
+            State.farmState = "RESUMING_FARM" ? "RESUMING_FARM" : "FARMING",
+            "wash_reward_baseline_unavailable")
+        return
+    }
     State.statusLabel.Text := "●  「石を洗う」を確認中"
     clickResult := RunBackgroundBridgeCancelable(expectedGeneration,
         "try-washing", State.serverEpoch)
@@ -5060,32 +7886,37 @@ WashAttemptBackground(expectedGeneration) {
         return
     WriteDiagnostic("attempt=" State.attempts " WASH_TRY=" clickResult)
     if IsActionCompletionBridgeResult(clickResult, "washing") {
+        MarkPendingFarmAttemptClicked(expectedGeneration, "washing")
         BeginActionCompletionWait("washing")
         WaitPendingBackgroundActionCompletion(expectedGeneration, clickResult)
         return
     }
     if clickResult = "CLICKED WASH" {
+        MarkPendingFarmAttemptClicked(expectedGeneration, "washing")
         BeginActionCompletionWait("washing", true)
         WaitPendingBackgroundActionCompletion(expectedGeneration)
         return
     }
     if clickResult = "UNCERTAIN WASH" {
+        MarkPendingFarmAttemptClicked(expectedGeneration, "washing")
         BeginActionCompletionWait("washing", true)
         WaitPendingBackgroundActionCompletion(expectedGeneration)
         return
     }
     if clickResult = "ERROR SERVER_SESSION_CHANGED" {
+        DiscardPendingFarmAttempt("server_session_changed")
         StopAutomationWithFault(
             "サーバー再起動または再接続を検知したため自動停止しました")
         return
     }
     if clickResult != "MISSING WASH" {
+        DiscardPendingFarmAttempt("wash_click_error")
         StopAutomationWithFault(
             "洗浄クリックの結果を確認できないため安全停止しました")
         return
     }
-    State.statusLabel.Text := "●  「石を洗う」を待っています"
-    ScheduleNext(expectedGeneration, Config.notFoundRetryMs)
+    DiscardPendingFarmAttempt("wash_target_missing")
+    HandleFarmTargetMissing(expectedGeneration, "washing")
 }
 
 ResetGoldRecoveryState() {
@@ -5202,6 +8033,12 @@ GoldAttemptBackground(expectedGeneration) {
     }
 
     State.attempts += 1
+    if !CaptureFarmAttemptBaseline(expectedGeneration, "gold") {
+        EnterFarmRecovery(expectedGeneration,
+            State.farmState = "RESUMING_FARM" ? "RESUMING_FARM" : "FARMING",
+            "gold_reward_baseline_unavailable")
+        return
+    }
     ; 毎回まず現在位置を検査します。bridgeが同じCDPセッションでtargetを
     ; 長時間監視するため、固定6秒待機や短い再起動ループは挟みません。
     State.statusLabel.Text := "●  「砂金採りトレイ」を確認中"
@@ -5211,6 +8048,7 @@ GoldAttemptBackground(expectedGeneration) {
         return
     WriteDiagnostic("attempt=" State.attempts " GOLD_TRY=" clickResult)
     if IsActionCompletionBridgeResult(clickResult, "gold") {
+        MarkPendingFarmAttemptClicked(expectedGeneration, "gold")
         recoveredSteps := State.goldRecoveryStep
         if recoveredSteps
             WriteDiagnostic("attempt=" State.attempts
@@ -5220,6 +8058,7 @@ GoldAttemptBackground(expectedGeneration) {
         return
     }
     if clickResult = "CLICKED GOLD" {
+        MarkPendingFarmAttemptClicked(expectedGeneration, "gold")
         recoveredSteps := State.goldRecoveryStep
         if recoveredSteps
             WriteDiagnostic("attempt=" State.attempts
@@ -5229,46 +8068,27 @@ GoldAttemptBackground(expectedGeneration) {
         return
     }
     if clickResult = "UNCERTAIN GOLD" {
+        MarkPendingFarmAttemptClicked(expectedGeneration, "gold")
         BeginActionCompletionWait("gold", true)
         WaitPendingBackgroundActionCompletion(expectedGeneration)
         return
     }
     if clickResult = "ERROR SERVER_SESSION_CHANGED" {
+        DiscardPendingFarmAttempt("server_session_changed")
         StopAutomationWithFault(
             "サーバー再起動または再接続を検知したため自動停止しました")
         return
     }
     if clickResult != "MISSING GOLD" {
+        DiscardPendingFarmAttempt("gold_click_error")
         State.goldMissingSince := 0
         StopAutomationWithFault(
             "砂金採りクリックの結果を確認できないため安全停止しました")
         return
     }
 
-    missingNow := MonotonicMs()
-    if !State.goldMissingSince {
-        State.goldMissingSince := missingNow
-        WriteDiagnostic("attempt=" State.attempts " GOLD_MISSING_STARTED")
-    }
-    missingForMs := missingNow - State.goldMissingSince
-    if Config.goldRecoveryEnabled && missingForMs >= Config.goldRecoveryAfterMs {
-        if State.goldRecoveryFault {
-            State.statusLabel.Text := "●  位置補正を完了できません。停止して位置を確認してください"
-        } else if State.goldRecoveryStep >= 6 {
-            if !State.goldRecoveryExhausted
-                WriteDiagnostic("attempt=" State.attempts " GOLD_RECOVERY_EXHAUSTED")
-            State.goldRecoveryExhausted := true
-            State.statusLabel.Text := "●  補正範囲外。位置を戻すと自動再開します"
-        } else {
-            recoveryMoved := PerformGoldRecoveryStep(expectedGeneration)
-            if recoveryMoved && IsCurrentRun(expectedGeneration)
-                State.statusLabel.Text := "●  補正後の位置を再確認します"
-        }
-    } else {
-        State.statusLabel.Text := "●  「砂金採りトレイ」を待っています"
-    }
-    if IsCurrentRun(expectedGeneration)
-        ScheduleNext(expectedGeneration, Config.notFoundRetryMs)
+    DiscardPendingFarmAttempt("gold_target_missing")
+    HandleFarmTargetMissing(expectedGeneration, "gold")
 }
 
 MineAttempt(expectedGeneration) {
@@ -5298,6 +8118,11 @@ MineAttempt(expectedGeneration) {
     }
 
     State.attempts += 1
+    if !CaptureFarmAttemptBaseline(expectedGeneration, "mining") {
+        StopAutomationWithFault(
+            "採掘前の所持品状態を確認できないため安全停止しました")
+        return
+    }
     State.statusLabel.Text := "状態: 入力をリセット中（試行 " State.attempts "）"
     clickIssued := false
 
@@ -5479,6 +8304,7 @@ MineAttempt(expectedGeneration) {
         }
         ; down送信後はfinallyのupでもクリックが成立し得るため、以後は再出現待ちへ移ります。
         clickIssued := true
+        MarkPendingFarmAttemptClicked(expectedGeneration, "mining")
         State.statusLabel.Text := "状態: 採掘ボタンをクリック中"
         if !WaitWhileReady(Config.leftHoldMs, expectedGeneration) {
             RetryAfterInterruption(expectedGeneration)
@@ -5512,17 +8338,11 @@ MineAttempt(expectedGeneration) {
         ; 途中停止・未検出・例外でも押しっぱなしを残しません。
         ReleaseAllInputs()
         if clickIssued && IsCurrentRun(expectedGeneration) {
-            State.successes += 1
-            State.waitingForStone := true
-            State.stoneGoneObserved := false
-            State.stoneAbsentVotes := 0
-            State.stoneReadyVotes := 0
-            State.lastMineAt := MonotonicMs()
-            State.countLabel.Text := "採掘回数`n" State.successes
-            State.statusLabel.Text := "状態: 採掘完了まで待機後、石の再出現を監視します"
-            ScheduleWorkCooldown(expectedGeneration, State.lastMineAt,
-                Config.miningCompleteWaitMs)
-        }
+            BeginActionCompletionWait("mining", true)
+            State.statusLabel.Text := "状態: 採掘結果を確認しています"
+            ScheduleNext(expectedGeneration, 1)
+        } else if IsCurrentRun(expectedGeneration)
+            DiscardPendingFarmAttempt("foreground_no_click")
     }
 }
 
@@ -5533,6 +8353,12 @@ MineAttemptBackground(expectedGeneration) {
         return
 
     State.attempts += 1
+    if !CaptureFarmAttemptBaseline(expectedGeneration, "mining") {
+        EnterFarmRecovery(expectedGeneration,
+            State.farmState = "RESUMING_FARM" ? "RESUMING_FARM" : "FARMING",
+            "mine_reward_baseline_unavailable")
+        return
+    }
     State.statusLabel.Text := "●  石をバックグラウンド確認中"
     ; bridgeが石の再出現を同じセッションで待ってから原子的にクリックします。
     ; 旧来の350ms probe・消失3票・再出現2票・固定5.2秒待機は使いません。
@@ -5543,32 +8369,37 @@ MineAttemptBackground(expectedGeneration) {
         return
     WriteDiagnostic("attempt=" State.attempts " BG_TRY=" clickResult)
     if IsActionCompletionBridgeResult(clickResult, "mining") {
+        MarkPendingFarmAttemptClicked(expectedGeneration, "mining")
         BeginActionCompletionWait("mining")
         WaitPendingBackgroundActionCompletion(expectedGeneration, clickResult)
         return
     }
     if clickResult = "CLICKED MINE" {
+        MarkPendingFarmAttemptClicked(expectedGeneration, "mining")
         BeginActionCompletionWait("mining", true)
         WaitPendingBackgroundActionCompletion(expectedGeneration)
         return
     }
     if clickResult = "UNCERTAIN MINE" {
+        MarkPendingFarmAttemptClicked(expectedGeneration, "mining")
         BeginActionCompletionWait("mining", true)
         WaitPendingBackgroundActionCompletion(expectedGeneration)
         return
     }
     if clickResult = "ERROR SERVER_SESSION_CHANGED" {
+        DiscardPendingFarmAttempt("server_session_changed")
         StopAutomationWithFault(
             "サーバー再起動または再接続を検知したため自動停止しました")
         return
     }
     if clickResult != "MISSING MINE" {
+        DiscardPendingFarmAttempt("mine_click_error")
         StopAutomationWithFault(
             "採掘クリックの結果を確認できないため安全停止しました")
         return
     }
-    State.statusLabel.Text := "●  採掘ボタンを待っています"
-    ScheduleNext(expectedGeneration, Config.notFoundRetryMs)
+    DiscardPendingFarmAttempt("mine_target_missing")
+    HandleFarmTargetMissing(expectedGeneration, "mining")
 }
 
 RunBackgroundBridge(mode, extra1 := "", extra2 := "") {
@@ -6595,7 +9426,13 @@ Cleanup(*) {
 
     previousPhase := State.automationPhase
     wasRegistering := State.registrationActive
+    CancelActiveBridgeProcess()
+    ReleaseAllInputs()
+    ReleaseBackgroundTarget(true)
+    State.stopInProgress := true
+    EndFarmMetagameSession()
     State.running := false
+    State.stopInProgress := false
     State.generation += 1
     if IsObject(State.timerFn) {
         try SetTimer(State.timerFn, 0)
@@ -6654,10 +9491,27 @@ DeleteExtractedTemplates() {
             State.uiAssetsPath "\app.js",
             State.uiAssetsPath "\build-info.json",
             State.uiAssetsPath "\vendor\framework7-bundle.min.css",
-            State.uiAssetsPath "\vendor\framework7-bundle.min.js"
+            State.uiAssetsPath "\vendor\framework7-bundle.min.js",
+            State.uiAssetsPath "\metagame\meta-game.css",
+            State.uiAssetsPath "\metagame\meta-game.js",
+            State.uiAssetsPath "\metagame\meta-game-adapter.js",
+            State.uiAssetsPath "\metagame\meta-game-entry.js",
+            State.uiAssetsPath "\metagame\meta-game-template.html",
+            State.uiAssetsPath "\metagame\demo-adapter.js",
+            State.uiAssetsPath "\metagame\data\achievements.json",
+            State.uiAssetsPath "\metagame\data\affinity.json",
+            State.uiAssetsPath "\metagame\data\assets.json",
+            State.uiAssetsPath "\metagame\data\banners.json",
+            State.uiAssetsPath "\metagame\data\gacha.json",
+            State.uiAssetsPath "\metagame\data\items.json",
+            State.uiAssetsPath "\metagame\data\level-rewards.json",
+            State.uiAssetsPath "\metagame\data\messages.json",
+            State.uiAssetsPath "\metagame\data\titles.json"
         ]
         for filePath in knownUiFiles
             try FileDelete filePath
+        try DirDelete State.uiAssetsPath "\metagame\data"
+        try DirDelete State.uiAssetsPath "\metagame"
         try DirDelete State.uiAssetsPath "\vendor"
         try DirDelete State.uiAssetsPath
         try DirDelete State.uiRuntimeRoot
@@ -6678,13 +9532,32 @@ ResetDiagnosticLog() {
 
 WriteDiagnostic(message) {
     global State
-    if State.diagnosticLines >= 400
-        return
+    if State.diagnosticLines >= 5000 {
+        RotateDiagnosticLogs()
+        State.diagnosticLines := 0
+    }
 
-    timestamp := FormatTime(, "yyyy-MM-dd HH:mm:ss")
+    timestamp := FormatTime(, "yyyy-MM-dd HH:mm:ss") "."
+        . Format("{:03}", A_MSec)
     try {
         FileAppend timestamp " | " message "`r`n", State.diagnosticPath, "UTF-8"
         State.diagnosticLines += 1
+    }
+}
+
+RotateDiagnosticLogs() {
+    global State
+    currentPath := State.diagnosticPath
+    firstArchive := currentPath ".1"
+    secondArchive := currentPath ".2"
+    try FileDelete secondArchive
+    try {
+        if FileExist(firstArchive)
+            FileMove firstArchive, secondArchive, true
+    }
+    try {
+        if FileExist(currentPath)
+            FileMove currentPath, firstArchive, true
     }
 }
 

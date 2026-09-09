@@ -24,4 +24,9 @@
     <PackageReference Include="Microsoft.Web.WebView2" Version="[1.0.4191.47]" />
     <Reference Include="System.Web.Extensions" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\sidecar\stone-metagame\backend\*.cs"
+             Link="MetaGame\%(Filename)%(Extension)" />
+  </ItemGroup>
 </Project>

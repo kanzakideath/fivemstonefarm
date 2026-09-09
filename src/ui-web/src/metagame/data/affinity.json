@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 2,
+  "ranks": [
+    { "id": "first-meeting", "mined": 0, "name": "初対面", "line": "まだ引き返せます。", "badge": "STONE 00", "eventTitle": "はじめまして、石です。", "rewards": [] },
+    { "id": "familiar-face", "mined": 10, "name": "顔見知り", "line": "石もあなたの顔を覚え始めました。", "badge": "STONE 01", "eventTitle": "石がこちらを認識しました", "rewards": [{ "type": "points", "amount": 50 }] },
+    { "id": "acquaintance", "mined": 50, "name": "知り合い", "line": "会えば掘る仲です。", "badge": "STONE 02", "eventTitle": "沈黙の知り合い", "rewards": [{ "type": "points", "amount": 100 }] },
+    { "id": "friend", "mined": 100, "name": "友達", "line": "石があなたを認識しました。", "badge": "STONE 03", "eventTitle": "友情は地層を越える", "rewards": [{ "type": "tickets", "amount": 1 }, { "type": "title", "titleId": "stone-friend", "amount": 1 }] },
+    { "id": "close", "mined": 250, "name": "仲良し", "line": "沈黙が気まずくありません。", "badge": "STONE 04", "eventTitle": "言葉はいらない", "rewards": [{ "type": "points", "amount": 250 }] },
+    { "id": "best-friend", "mined": 500, "name": "親友", "line": "だいたい何を考えているか分かります。石ですが。", "badge": "STONE 05", "eventTitle": "最高の鉱物友達", "rewards": [{ "type": "tickets", "amount": 2 }] },
+    { "id": "destiny", "mined": 1000, "name": "運命を感じている", "line": "最近、石を見る目が変わってきました。", "badge": "STONE 06", "eventTitle": "運命は硬度7", "rewards": [{ "type": "tickets", "amount": 3 }] },
+    { "id": "lover", "mined": 2500, "name": "恋人", "line": "会うたびに少し小さくなっています。", "badge": "STONE 07", "eventTitle": "石との交際を開始しました", "rewards": [{ "type": "tickets", "amount": 5 }] },
+    { "id": "fiance", "mined": 5000, "name": "婚約者", "line": "指輪もたぶん石です。", "badge": "STONE 08", "eventTitle": "婚約指輪の原材料", "rewards": [{ "type": "tickets", "amount": 7 }, { "type": "title", "titleId": "stone-beloved", "amount": 1 }] },
+    { "id": "married", "mined": 10000, "name": "結婚", "line": "もう石側もあなたを待っています。", "badge": "STONE 09", "eventTitle": "本日、石と入籍しました", "rewards": [{ "type": "tickets", "amount": 10 }, { "type": "fragments", "amount": 1000 }] },
+    { "id": "old-couple", "mined": 25000, "name": "熟年夫婦", "line": "言葉は要りません。最初からありません。", "badge": "STONE 10", "eventTitle": "地層より長い関係", "rewards": [{ "type": "tickets", "amount": 20 }] },
+    { "id": "one-body", "mined": 50000, "name": "一心同体", "line": "あなたが石を掘っているのか、石があなたを掘っているのか。", "badge": "STONE 11", "eventTitle": "境界面が消失しました", "rewards": [{ "type": "tickets", "amount": 30 }, { "type": "profileFrame", "itemId": "legendary-frame", "amount": 1 }] },
+    { "id": "stone", "mined": 100000, "name": "石", "line": "石", "badge": "STONE ∞", "eventTitle": "人類側の処理を終了します", "rewards": [{ "type": "tickets", "amount": 100 }, { "type": "title", "titleId": "just-stone", "amount": 1 }] }
+  ]
+}

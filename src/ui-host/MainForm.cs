@@ -1,5 +1,6 @@
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
+using AiMiner.StoneMetaGame;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -25,17 +26,39 @@ namespace AiMiner.UiHost
         private readonly Label _nativeError;
         private readonly System.Windows.Forms.Timer _backendMonitor;
         private readonly BlockingCollection<string> _outbound = new BlockingCollection<string>(128);
+        private readonly BlockingCollection<MetaWorkItem> _metaWork
+            = new BlockingCollection<MetaWorkItem>(256);
         private readonly Thread _senderThread;
+        private readonly Thread _metaThread;
+        private readonly MetaGameRuntime _metaGame;
+        private readonly string _metaGameCreationError;
+        private readonly string _fixtureMetaStateDirectory;
         private volatile bool _closing;
         private bool _webReady;
         private bool _backendRequestedExit;
         private bool _pendingSmoke;
+        private bool _visualBaseSmokePassed;
+        private bool _visualMetaSmokePassed;
+        private bool _visualSmokeFailed;
+        private bool _stoneHostMiningIssued;
+        private readonly List<MetaWebRequest> _pendingMetaRequests = new List<MetaWebRequest>();
         private string _pendingStateJson;
         private int _visualBrowserProcessId;
 
         internal MainForm(Program.HostOptions options)
+            : this(options, null)
+        {
+        }
+
+        private MainForm(Program.HostOptions options, string metaGameStatePathOverride)
         {
             _options = options;
+            string fixtureStateDirectory;
+            string metaCreationError;
+            _metaGame = CreateMetaGameRuntime(options, metaGameStatePathOverride,
+                out metaCreationError, out fixtureStateDirectory);
+            _metaGameCreationError = metaCreationError;
+            _fixtureMetaStateDirectory = fixtureStateDirectory;
             Text = _options.VisualTest ? "AI採掘機を準備中" : "AI採掘機";
             try
             {
@@ -88,15 +111,189 @@ namespace AiMiner.UiHost
                 IsBackground = true,
                 Name = "AI採掘機 UI IPC"
             };
+            _metaThread = new Thread(MetaCommandLoop)
+            {
+                IsBackground = true,
+                Name = "AI採掘機 Stone Metagame"
+            };
 
             Shown += async delegate { await InitializeWebViewAsync(); };
             FormClosing += MainFormOnClosing;
             FormClosed += MainFormOnClosed;
 
+            if (_metaGame != null) _metaThread.Start();
             if (!_options.Fixture)
             {
                 _senderThread.Start();
                 _backendMonitor.Start();
+            }
+        }
+
+        // Exercises the same authenticated WM_COPYDATA ingress, worker queue, atomic sidecar
+        // persistence, and typed ACK egress used by the AHK controller. The state override is
+        // private to this in-process self-test so production startup can only use LocalAppData.
+        internal static bool RunTrustedTransportSelfTest(string assetsPath, out string error)
+        {
+            error = null;
+            string temporaryRoot = Path.Combine(Path.GetTempPath(),
+                "ai-miner-meta-transport-test-" + Guid.NewGuid().ToString("N"));
+            string statePath = Path.Combine(temporaryRoot, "state.json");
+            string dataPath = Path.Combine(assetsPath, "metagame", "data");
+            const string session = "transport-session-0001";
+            string eventId = "transport:mining:" + Guid.NewGuid().ToString("N");
+            MainForm form = null;
+            MetaTransportTestBackend backend = null;
+            TransportTestSenderWindow impostor = null;
+            try
+            {
+                Directory.CreateDirectory(temporaryRoot);
+                backend = new MetaTransportTestBackend(session, eventId, dataPath, statePath);
+                impostor = new TransportTestSenderWindow();
+                Program.HostOptions options = new Program.HostOptions
+                {
+                    BackendWindow = backend.Handle,
+                    BackendPid = Process.GetCurrentProcess().Id,
+                    Session = session,
+                    AssetsPath = Path.GetFullPath(assetsPath),
+                    Fixture = false,
+                    VisualTest = false
+                };
+                form = new MainForm(options, statePath);
+                IntPtr hostWindow = form.Handle;
+                backend.ExpectedHostWindow = hostWindow;
+
+                if (form._metaGame == null || !form._metaGame.IsAvailable
+                    || !String.Equals(form._metaGame.StatePath, Path.GetFullPath(statePath),
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        "transport fixture did not use its isolated metagame state");
+                }
+
+                long timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                string wire = "AIUIMETA1\t" + session + "\tMINING_SUCCESS\t" + eventId
+                    + "\t" + timestamp.ToString(CultureInfo.InvariantCulture);
+
+                IntPtr dispatchResult;
+                if (!SendTransportTestCopyData(hostWindow, impostor.Handle, wire,
+                        out dispatchResult) || dispatchResult != IntPtr.Zero)
+                {
+                    throw new InvalidOperationException(
+                        "transport fixture accepted an unregistered sender window");
+                }
+                MetaGameState rejectedState = new MetaGameStateStore(statePath)
+                    .LoadOrCreate(DateTimeOffset.UtcNow);
+                if (rejectedState.Mining.TotalStoneMined != 0 || backend.MiningAckCount != 0)
+                    throw new InvalidOperationException(
+                        "rejected transport mutated state or emitted an ACK");
+
+                if (!SendTransportTestCopyData(hostWindow, backend.Handle, wire,
+                        out dispatchResult) || dispatchResult != new IntPtr(1))
+                    throw new InvalidOperationException("authenticated mining event was not queued");
+                PumpTransportMessagesUntil(backend, 1, 5000);
+
+                // A durable outbox retry must receive another ACK but must not increment again.
+                if (!SendTransportTestCopyData(hostWindow, backend.Handle, wire,
+                        out dispatchResult) || dispatchResult != new IntPtr(1))
+                    throw new InvalidOperationException("authenticated mining replay was not queued");
+                PumpTransportMessagesUntil(backend, 2, 5000);
+
+                if (!String.IsNullOrEmpty(backend.Failure))
+                    throw new InvalidOperationException(backend.Failure);
+                if (backend.MiningAckCount != 2 || backend.DurableMiningAckCount != 2)
+                    throw new InvalidOperationException(
+                        "typed mining ACKs were not emitted after durable persistence");
+
+                MetaGameState finalState = new MetaGameStateStore(statePath)
+                    .LoadOrCreate(DateTimeOffset.UtcNow);
+                int eventOccurrences = 0;
+                foreach (string processedId in finalState.ProcessedMiningEventIds)
+                    if (String.Equals(processedId, eventId, StringComparison.Ordinal))
+                        eventOccurrences++;
+                if (finalState.Mining.TotalStoneMined != 1 || eventOccurrences != 1)
+                    throw new InvalidOperationException(
+                        "transport replay was not persisted exactly once");
+                return true;
+            }
+            catch (Exception exception)
+            {
+                error = "metagame transport self-test failed: "
+                    + Protocol.SanitizeDiagnostic(exception.Message);
+                return false;
+            }
+            finally
+            {
+                if (form != null)
+                {
+                    try
+                    {
+                        form._backendRequestedExit = true;
+                        if (!form.IsDisposed) form.Close();
+                        Application.DoEvents();
+                    }
+                    catch { }
+                    try { form.Dispose(); }
+                    catch { }
+                }
+                if (impostor != null) impostor.Dispose();
+                if (backend != null) backend.Dispose();
+                try
+                {
+                    DirectoryInfo directory = new DirectoryInfo(temporaryRoot);
+                    string tempParent = Path.GetFullPath(Path.GetTempPath()).TrimEnd(
+                        Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    if (directory.Exists && directory.Parent != null
+                        && String.Equals(directory.Parent.FullName.TrimEnd(
+                                Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                            tempParent, StringComparison.OrdinalIgnoreCase)
+                        && directory.Name.StartsWith("ai-miner-meta-transport-test-",
+                            StringComparison.Ordinal)
+                        && (directory.Attributes & FileAttributes.ReparsePoint) == 0)
+                        directory.Delete(true);
+                }
+                catch { }
+            }
+        }
+
+        private static void PumpTransportMessagesUntil(MetaTransportTestBackend backend,
+            int expectedAckCount, int timeoutMilliseconds)
+        {
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            while (backend.MiningAckCount < expectedAckCount
+                && String.IsNullOrEmpty(backend.Failure)
+                && stopwatch.ElapsedMilliseconds < timeoutMilliseconds)
+            {
+                Application.DoEvents();
+                Thread.Sleep(10);
+            }
+            Application.DoEvents();
+            if (!String.IsNullOrEmpty(backend.Failure))
+                throw new InvalidOperationException(backend.Failure);
+            if (backend.MiningAckCount < expectedAckCount)
+                throw new TimeoutException("timed out waiting for the persisted metagame ACK");
+        }
+
+        private static bool SendTransportTestCopyData(IntPtr target, IntPtr sender, string message,
+            out IntPtr result)
+        {
+            byte[] bytes = Encoding.Unicode.GetBytes(message + "\0");
+            IntPtr buffer = Marshal.AllocHGlobal(bytes.Length);
+            try
+            {
+                Marshal.Copy(bytes, 0, buffer, bytes.Length);
+                CopyDataStruct data = new CopyDataStruct
+                {
+                    DataTag = Protocol.CopyDataTag,
+                    ByteCount = bytes.Length,
+                    Data = buffer
+                };
+                IntPtr sent = SendMessageTimeout(target, Protocol.WmCopyData, sender, ref data,
+                    SmtoBlock | SmtoAbortIfHung, 1500, out result);
+                return sent != IntPtr.Zero;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
             }
         }
 
@@ -105,14 +302,31 @@ namespace AiMiner.UiHost
             if (message.Msg == Protocol.WmCopyData && !_options.Fixture
                 && BackendIdentity.IsMatchingSender(message.WParam, _options.BackendWindow, _options.BackendPid))
             {
+                if (message.LParam == IntPtr.Zero)
+                {
+                    message.Result = IntPtr.Zero;
+                    return;
+                }
                 CopyDataStruct copyData = (CopyDataStruct)Marshal.PtrToStructure(message.LParam, typeof(CopyDataStruct));
-                if (copyData.ByteCount > 0 && copyData.ByteCount <= (256 * 1024 + 512) * 2
+                if (copyData.DataTag == Protocol.CopyDataTag
+                    && copyData.ByteCount > 0 && copyData.ByteCount <= (256 * 1024 + 512) * 2
                     && copyData.ByteCount % 2 == 0 && copyData.Data != IntPtr.Zero)
                 {
-                    string raw = Marshal.PtrToStringUni(copyData.Data, copyData.ByteCount / 2);
-                    if (raw != null)
+                    string wire = Marshal.PtrToStringUni(copyData.Data, copyData.ByteCount / 2);
+                    if (!String.IsNullOrEmpty(wire) && wire[wire.Length - 1] == '\0'
+                        && wire.IndexOf('\0') == wire.Length - 1)
                     {
-                        raw = raw.TrimEnd('\0');
+                        string raw = wire.Substring(0, wire.Length - 1);
+                        TrustedMetaCommand metaCommand;
+                        if (MetaGameBridge.TryParseTrustedMessage(raw, _options.Session,
+                            DateTimeOffset.UtcNow, out metaCommand))
+                        {
+                            bool accepted = _metaGame != null && !_metaWork.IsAddingCompleted
+                                && _metaWork.TryAdd(MetaWorkItem.FromTrusted(metaCommand));
+                            message.Result = accepted ? new IntPtr(1) : IntPtr.Zero;
+                            return;
+                        }
+
                         BackendMessage parsed;
                         if (Protocol.TryParseBackendMessage(raw, _options.Session, out parsed))
                         {
@@ -172,7 +386,18 @@ namespace AiMiner.UiHost
                     CoreWebView2HostResourceAccessKind.DenyCors);
                 core.NavigationStarting += delegate(object sender, CoreWebView2NavigationStartingEventArgs args)
                 {
-                    if (!IsAllowedAppUri(args.Uri)) args.Cancel = true;
+                    if (!IsAllowedTopLevelAppUri(args.Uri)) args.Cancel = true;
+                    else
+                    {
+                        _webReady = false;
+                        if (_options.VisualTest)
+                        {
+                            _visualBaseSmokePassed = false;
+                            _visualMetaSmokePassed = false;
+                            _visualSmokeFailed = false;
+                            Text = "AI採掘機を準備中";
+                        }
+                    }
                 };
                 core.FrameNavigationStarting += delegate(object sender, CoreWebView2NavigationStartingEventArgs args)
                 {
@@ -213,18 +438,26 @@ namespace AiMiner.UiHost
 
         private void CoreOnNavigationCompleted(object sender, CoreWebView2NavigationCompletedEventArgs args)
         {
-            if (!args.IsSuccess || !IsAllowedAppUri(_webView.Source == null ? null : _webView.Source.AbsoluteUri))
+            if (!args.IsSuccess || !IsAllowedTopLevelAppUri(
+                    _webView.Source == null ? null : _webView.Source.AbsoluteUri))
             {
                 ShowNativeError("UIファイルを安全に読み込めませんでした。");
                 return;
             }
             _webReady = true;
-            if (_options.VisualTest) Text = "AI採掘機";
             if (!String.IsNullOrEmpty(_pendingStateJson))
             {
                 PostJsonToWeb(_pendingStateJson);
                 _pendingStateJson = null;
             }
+            if (_pendingMetaRequests.Count > 0)
+            {
+                MetaWebRequest[] queued = _pendingMetaRequests.ToArray();
+                _pendingMetaRequests.Clear();
+                foreach (MetaWebRequest request in queued) QueueMetaWebRequest(request);
+            }
+            if (_options.VisualTest)
+                PostJsonToWeb("{\"type\":\"command\",\"command\":\"SMOKE\"}");
             if (_pendingSmoke)
             {
                 _pendingSmoke = false;
@@ -234,13 +467,32 @@ namespace AiMiner.UiHost
 
         private void CoreOnWebMessageReceived(object sender, CoreWebView2WebMessageReceivedEventArgs args)
         {
-            if (!IsAllowedAppUri(args.Source)
-                || !IsAllowedAppUri(_webView.Source == null ? null : _webView.Source.AbsoluteUri))
+            if (!IsAllowedTopLevelAppUri(args.Source)
+                || !IsAllowedTopLevelAppUri(
+                    _webView.Source == null ? null : _webView.Source.AbsoluteUri))
                 return;
 
             string action;
             IList<string> arguments;
             string error;
+            bool recognizedMeta;
+            MetaWebRequest metaRequest;
+            if (MetaGameBridge.TryParseWebRequest(args.WebMessageAsJson, out recognizedMeta,
+                out metaRequest, out error))
+            {
+                if (_webReady) QueueMetaWebRequest(metaRequest);
+                else if (_pendingMetaRequests.Count < 32) _pendingMetaRequests.Add(metaRequest);
+                return;
+            }
+            if (recognizedMeta)
+            {
+                if (metaRequest != null && !String.IsNullOrEmpty(metaRequest.RequestId))
+                    PostJsonToWeb(MetaGameBridge.BuildErrorResponse(metaRequest.RequestId,
+                        error ?? "INVALID_META_ACTION"));
+                else
+                    PostHostError("INVALID_META_ACTION", error ?? "メタゲームの操作を確認できません。");
+                return;
+            }
             if (!Protocol.TryTranslateWebMessage(args.WebMessageAsJson, out action, out arguments, out error))
             {
                 PostHostError("INVALID_ACTION", error);
@@ -249,11 +501,14 @@ namespace AiMiner.UiHost
 
             // The page can post its one-shot handshake immediately before WebView2 raises
             // NavigationCompleted. Keep all other actions gated until navigation is complete.
-            if (!_webReady && action != "hello") return;
+            if (!_webReady && action != "hello"
+                && !(_options.VisualTest && action == "smoke.result")) return;
 
             if (_options.Fixture)
             {
                 if (action == "window.close") Close();
+                else if (_options.VisualTest && action == "smoke.result")
+                    HandleVisualSmokeResult(arguments.Count == 1 ? arguments[0] : null);
                 return;
             }
 
@@ -335,8 +590,11 @@ namespace AiMiner.UiHost
         private void MainFormOnClosed(object sender, FormClosedEventArgs args)
         {
             _outbound.CompleteAdding();
+            _metaWork.CompleteAdding();
             if (_senderThread.IsAlive) _senderThread.Join(600);
+            if (_metaThread.IsAlive) _metaThread.Join(5000);
             _backendMonitor.Dispose();
+            DeleteFixtureMetaStateDirectory();
         }
 
         private void CloseVisualTestWebView()
@@ -378,6 +636,257 @@ namespace AiMiner.UiHost
                         catch { }
                     }
                 }
+            }
+            catch { }
+        }
+
+        private void MetaCommandLoop()
+        {
+            try
+            {
+                foreach (MetaWorkItem item in _metaWork.GetConsumingEnumerable())
+                {
+                    if (_closing) break;
+                    if (!WaitForMetaRecoveryReset()) break;
+                    if (item.Trusted != null) ProcessTrustedMetaWork(item.Trusted);
+                    else if (item.Web != null) ProcessWebMetaWork(item.Web);
+                }
+            }
+            catch (Exception exception)
+            {
+                WaitForMetaRecoveryReset();
+                PostMetaErrorFromWorker("META_PROCESSING_FAILED", exception.Message);
+            }
+        }
+
+        private void ProcessTrustedMetaWork(TrustedMetaCommand command)
+        {
+            try
+            {
+                string result = _metaGame.ApplyTrusted(command);
+                // Queue acceptance is not an ACK. A verified mining event is acknowledged only
+                // after the sidecar transaction, including its atomic save, returned successfully.
+                // Include command + id: BEGIN and END intentionally share a session ID, so an
+                // id-only ACK could incorrectly remove a different durable outbox head.
+                string acknowledgement = Protocol.BuildActionLine(_options.Session,
+                    "meta.ack", new[] { MetaGameBridge.CommandToken(command.Kind), command.Id });
+                SendCopyData(acknowledgement, 1500);
+                PostMetaResultFromWorker(result);
+            }
+            catch (Exception exception)
+            {
+                WaitForMetaRecoveryReset();
+                PostMetaErrorFromWorker("META_PROCESSING_FAILED", exception.Message);
+            }
+        }
+
+        private void ProcessWebMetaWork(MetaWebRequest request)
+        {
+            try
+            {
+                string response;
+                if (request.Kind == MetaWebRequestKind.Bootstrap)
+                {
+                    string bootstrap = _metaGame.GetBootstrapJson();
+                    response = MetaGameBridge.BuildBootstrapResponse(request.RequestId, bootstrap);
+                }
+                else
+                {
+                    string mutation = _metaGame.ExecuteUiJson(request.ExecuteJson);
+                    response = MetaGameBridge.BuildExecuteResponse(request.RequestId, mutation);
+                }
+                PostMetaResultFromWorker(response);
+
+                if (_options.IsHostBackedStoneFixture && !_stoneHostMiningIssued
+                    && request.Kind == MetaWebRequestKind.Execute
+                    && String.Equals(request.Action, "onboarding.complete", StringComparison.Ordinal))
+                {
+                    _stoneHostMiningIssued = true;
+                    TrustedMetaCommand mining = new TrustedMetaCommand
+                    {
+                        Kind = TrustedMetaCommandKind.MiningSuccess,
+                        Id = "visual:stone-host:mining:1",
+                        TimestampUtc = DateTimeOffset.UtcNow
+                    };
+                    PostMetaResultFromWorker(_metaGame.ApplyTrusted(mining));
+                }
+            }
+            catch (Exception exception)
+            {
+                WaitForMetaRecoveryReset();
+                PostMetaResultFromWorker(MetaGameBridge.BuildErrorResponse(request.RequestId,
+                    exception.Message));
+                if (_options.IsHostBackedStoneFixture)
+                    SetVisualErrorFromWorker("META_HOST_FLOW_FAILED");
+            }
+        }
+
+        private bool WaitForMetaRecoveryReset()
+        {
+            if (_metaGame == null || _options.Fixture) return true;
+            while (!_closing)
+            {
+                string token;
+                if (!_metaGame.TryGetRecoverySignal(out token)) return true;
+                string reset = Protocol.BuildActionLine(_options.Session, "meta.reset",
+                    new[] { token });
+                if (SendCopyData(reset, 1500))
+                {
+                    _metaGame.MarkRecoverySignalSent(token);
+                    continue;
+                }
+                Thread.Sleep(250);
+            }
+            return false;
+        }
+
+        private void QueueMetaWebRequest(MetaWebRequest request)
+        {
+            if (_metaGame == null)
+            {
+                PostJsonToWeb(MetaGameBridge.BuildErrorResponse(request.RequestId,
+                    _metaGameCreationError ?? "META_UNAVAILABLE"));
+                return;
+            }
+            if (!_metaWork.IsAddingCompleted && _metaWork.TryAdd(MetaWorkItem.FromWeb(request))) return;
+            PostJsonToWeb(MetaGameBridge.BuildErrorResponse(request.RequestId, "META_QUEUE_FULL"));
+        }
+
+        private void HandleVisualSmokeResult(string result)
+        {
+            if (!_options.VisualTest || _visualSmokeFailed) return;
+            if (String.Equals(result, "OK", StringComparison.Ordinal))
+            {
+                _visualBaseSmokePassed = true;
+                TryMarkVisualReady();
+                return;
+            }
+
+            string expected;
+            if (_options.IsHostBackedStoneFixture)
+                expected = "META_HOST_OK:home:rendered:mined=1:debug=0:mutation=onboarding.complete";
+            else if (_options.IsStoneFixture)
+                expected = "META_OK:" + _options.ExpectedMetaRoute + ":rendered";
+            else
+                expected = null;
+
+            if (expected != null && String.Equals(result, expected, StringComparison.Ordinal))
+            {
+                _visualMetaSmokePassed = true;
+                TryMarkVisualReady();
+                return;
+            }
+
+            SetVisualError(String.IsNullOrEmpty(result) ? "SMOKE_EMPTY" : "SMOKE_FAILED");
+        }
+
+        private void TryMarkVisualReady()
+        {
+            if (!_options.VisualTest || _visualSmokeFailed || !_webReady || !_visualBaseSmokePassed)
+                return;
+            if (_options.IsStoneFixture && !_visualMetaSmokePassed) return;
+            Text = "AI採掘機 READY";
+        }
+
+        private void SetVisualError(string code)
+        {
+            if (!_options.VisualTest) return;
+            _visualSmokeFailed = true;
+            Text = "AI採掘機 ERROR " + Protocol.SanitizeDiagnostic(code ?? "UNKNOWN");
+        }
+
+        private void SetVisualErrorFromWorker(string code)
+        {
+            if (!_options.VisualTest || _closing) return;
+            try
+            {
+                BeginInvoke((Action)delegate
+                {
+                    if (!_closing) SetVisualError(code);
+                });
+            }
+            catch { }
+        }
+
+        private void PostMetaResultFromWorker(string json)
+        {
+            if (_closing || String.IsNullOrEmpty(json)) return;
+            try
+            {
+                BeginInvoke((Action)delegate
+                {
+                    if (!_closing && _webReady) PostJsonToWeb(json);
+                });
+            }
+            catch { }
+        }
+
+        private void PostMetaErrorFromWorker(string code, string message)
+        {
+            if (_closing) return;
+            try
+            {
+                BeginInvoke((Action)delegate
+                {
+                    if (!_closing) PostHostError(code, Protocol.SanitizeDiagnostic(message));
+                });
+            }
+            catch { }
+        }
+
+        private static MetaGameRuntime CreateMetaGameRuntime(Program.HostOptions options,
+            string statePathOverride, out string error, out string fixtureStateDirectory)
+        {
+            error = null;
+            fixtureStateDirectory = null;
+            try
+            {
+                string dataPath = Path.Combine(options.AssetsPath, "metagame", "data");
+                string statePath;
+                if (!String.IsNullOrEmpty(statePathOverride))
+                {
+                    statePath = Path.GetFullPath(statePathOverride);
+                }
+                else if (options.Fixture)
+                {
+                    fixtureStateDirectory = Path.Combine(Path.GetTempPath(),
+                        "ai-miner-meta-fixture-" + Guid.NewGuid().ToString("N"));
+                    statePath = Path.Combine(fixtureStateDirectory, "state.json");
+                }
+                else
+                {
+                    statePath = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "AI採掘機", "metagame", "state.json");
+                }
+                // Distribution and all current fixture paths are production-trust mode. There is
+                // intentionally no general command-line switch that enables debug mutations.
+                MetaGameRuntime runtime = new MetaGameRuntime(dataPath, statePath, false);
+                if (!runtime.IsAvailable) error = runtime.LastError;
+                return runtime;
+            }
+            catch (Exception exception)
+            {
+                error = Protocol.SanitizeDiagnostic(exception.Message);
+                return null;
+            }
+        }
+
+        private void DeleteFixtureMetaStateDirectory()
+        {
+            if (!_options.Fixture || String.IsNullOrEmpty(_fixtureMetaStateDirectory)) return;
+            try
+            {
+                string parent = Path.GetFullPath(Path.GetTempPath()).TrimEnd(
+                    Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                DirectoryInfo directory = new DirectoryInfo(_fixtureMetaStateDirectory);
+                if (directory.Exists && directory.Parent != null
+                    && String.Equals(directory.Parent.FullName.TrimEnd(
+                            Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                        parent, StringComparison.OrdinalIgnoreCase)
+                    && directory.Name.StartsWith("ai-miner-meta-fixture-", StringComparison.Ordinal)
+                    && (directory.Attributes & FileAttributes.ReparsePoint) == 0)
+                    directory.Delete(true);
             }
             catch { }
         }
@@ -424,6 +933,7 @@ namespace AiMiner.UiHost
         private void ShowNativeError(string message)
         {
             _webReady = false;
+            if (_options.VisualTest) SetVisualError("NATIVE_UI_ERROR");
             _webView.Visible = false;
             _nativeError.Text = message;
             _nativeError.Visible = true;
@@ -438,6 +948,19 @@ namespace AiMiner.UiHost
                 && String.Equals(uri.Host, "app.local", StringComparison.OrdinalIgnoreCase)
                 && uri.Port == 443
                 && String.IsNullOrEmpty(uri.UserInfo);
+        }
+
+        private bool IsAllowedTopLevelAppUri(string value)
+        {
+            if (!IsAllowedAppUri(value)) return false;
+            Uri actual;
+            Uri expected;
+            return Uri.TryCreate(value, UriKind.Absolute, out actual)
+                && Uri.TryCreate(_options.GetInitialAppUri(), UriKind.Absolute, out expected)
+                && String.Equals(actual.AbsolutePath, expected.AbsolutePath,
+                    StringComparison.Ordinal)
+                && String.Equals(actual.Query, expected.Query, StringComparison.Ordinal)
+                && String.IsNullOrEmpty(actual.Fragment);
         }
 
         private static bool IsAllowedResourceUri(string value)
@@ -477,5 +1000,130 @@ namespace AiMiner.UiHost
 
         [DllImport("user32.dll")]
         private static extern bool ShowWindow(IntPtr window, int command);
+
+        private sealed class TransportTestSenderWindow : NativeWindow, IDisposable
+        {
+            internal TransportTestSenderWindow()
+            {
+                CreateHandle(new CreateParams
+                {
+                    Caption = "AI Miner Transport Test Sender",
+                    Parent = new IntPtr(-3)
+                });
+            }
+
+            public void Dispose()
+            {
+                if (Handle != IntPtr.Zero) DestroyHandle();
+            }
+        }
+
+        private sealed class MetaTransportTestBackend : NativeWindow, IDisposable
+        {
+            private readonly string _session;
+            private readonly string _eventId;
+            private readonly string _dataPath;
+            private readonly string _statePath;
+
+            internal MetaTransportTestBackend(string session, string eventId, string dataPath,
+                string statePath)
+            {
+                _session = session;
+                _eventId = eventId;
+                _dataPath = dataPath;
+                _statePath = statePath;
+                CreateHandle(new CreateParams
+                {
+                    Caption = "AI Miner Transport Test Backend",
+                    Parent = new IntPtr(-3)
+                });
+            }
+
+            internal IntPtr ExpectedHostWindow { get; set; }
+            internal int MiningAckCount { get; private set; }
+            internal int DurableMiningAckCount { get; private set; }
+            internal string Failure { get; private set; }
+
+            protected override void WndProc(ref Message message)
+            {
+                if (message.Msg != Protocol.WmCopyData)
+                {
+                    base.WndProc(ref message);
+                    return;
+                }
+                try
+                {
+                    if (message.WParam != ExpectedHostWindow || message.LParam == IntPtr.Zero)
+                        throw new InvalidOperationException("ACK sender window was not the UI host");
+                    CopyDataStruct copyData = (CopyDataStruct)Marshal.PtrToStructure(
+                        message.LParam, typeof(CopyDataStruct));
+                    if (copyData.DataTag != Protocol.CopyDataTag || copyData.ByteCount <= 0
+                        || copyData.ByteCount > 4096 || copyData.ByteCount % 2 != 0
+                        || copyData.Data == IntPtr.Zero)
+                        throw new InvalidOperationException("ACK COPYDATA envelope was invalid");
+                    string wire = Marshal.PtrToStringUni(copyData.Data, copyData.ByteCount / 2);
+                    if (String.IsNullOrEmpty(wire) || wire[wire.Length - 1] != '\0'
+                        || wire.IndexOf('\0') != wire.Length - 1)
+                        throw new InvalidOperationException("ACK COPYDATA string was invalid");
+                    string[] parts = wire.Substring(0, wire.Length - 1).Split('\t');
+                    if (parts.Length != 5 || parts[0] != "AIUI1" || parts[1] != _session
+                        || parts[2] != "meta.ack" || parts[3] != "MINING_SUCCESS"
+                        || parts[4] != _eventId)
+                        throw new InvalidOperationException("typed mining ACK payload was invalid");
+
+                    MiningAckCount++;
+                    if (IsMiningStateDurable()) DurableMiningAckCount++;
+                    else throw new InvalidOperationException(
+                        "mining ACK arrived before the atomic state was durable");
+                    message.Result = new IntPtr(1);
+                    return;
+                }
+                catch (Exception exception)
+                {
+                    Failure = Protocol.SanitizeDiagnostic(exception.Message);
+                    message.Result = IntPtr.Zero;
+                    return;
+                }
+            }
+
+            private bool IsMiningStateDurable()
+            {
+                FileInfo stateFile = new FileInfo(_statePath);
+                string directory = Path.GetDirectoryName(_statePath);
+                if (!stateFile.Exists || stateFile.Length <= 0
+                    || Directory.GetFiles(directory,
+                        Path.GetFileName(_statePath) + ".tmp-*").Length != 0)
+                    return false;
+                MetaGameState state = new MetaGameStateStore(_statePath)
+                    .LoadOrCreate(DateTimeOffset.UtcNow);
+                int occurrences = 0;
+                foreach (string processedId in state.ProcessedMiningEventIds)
+                    if (String.Equals(processedId, _eventId, StringComparison.Ordinal))
+                        occurrences++;
+                return state.SchemaVersion == 2 && state.Mining.TotalStoneMined == 1
+                    && occurrences == 1;
+            }
+
+            public void Dispose()
+            {
+                if (Handle != IntPtr.Zero) DestroyHandle();
+            }
+        }
+    }
+
+    internal sealed class MetaWorkItem
+    {
+        internal TrustedMetaCommand Trusted;
+        internal MetaWebRequest Web;
+
+        internal static MetaWorkItem FromTrusted(TrustedMetaCommand command)
+        {
+            return new MetaWorkItem { Trusted = command };
+        }
+
+        internal static MetaWorkItem FromWeb(MetaWebRequest request)
+        {
+            return new MetaWorkItem { Web = request };
+        }
     }
 }

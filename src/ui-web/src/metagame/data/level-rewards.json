@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "rewards": [
+    { "level": 5, "name": "最初の節目", "rewards": [{ "type": "tickets", "amount": 1 }] },
+    { "level": 10, "name": "採掘見習い卒業", "rewards": [{ "type": "points", "amount": 500 }, { "type": "profileFrame", "itemId": "golden-frame", "amount": 1 }] },
+    { "level": 20, "name": "二十層到達", "rewards": [{ "type": "tickets", "amount": 5 }] },
+    { "level": 25, "name": "石を見る者", "rewards": [{ "type": "title", "titleId": "stone-seer", "amount": 1 }] },
+    { "level": 35, "name": "中堅採掘者", "rewards": [{ "type": "fragments", "amount": 300 }] },
+    { "level": 50, "name": "半世紀の石", "rewards": [{ "type": "profileIcon", "itemId": "stone-avatar-cosmic", "amount": 1 }, { "type": "title", "titleId": "mining-master", "amount": 1 }] },
+    { "level": 75, "name": "地層の記憶", "rewards": [{ "type": "tickets", "amount": 10 }, { "type": "profileFrame", "itemId": "rainbow-frame", "amount": 1 }] },
+    { "level": 100, "name": "百錬成石", "rewards": [{ "type": "profileFrame", "itemId": "legendary-frame", "amount": 1 }, { "type": "title", "titleId": "century-stone", "amount": 1 }] }
+  ]
+}

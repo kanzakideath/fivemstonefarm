@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>STONE META GAME — Integration Preview</title>
+  <link rel="stylesheet" href="../ui/meta-game.css">
+  <style>
+    html,body,#preview-root{min-height:100%;margin:0}body{background:#f3f4f7}
+    .preview-badge{position:fixed;z-index:200;left:230px;bottom:12px;padding:6px 9px;border-radius:8px;color:#fff;background:rgba(20,21,27,.76);font:700 9px/1 "Segoe UI",sans-serif;letter-spacing:.08em;pointer-events:none}
+    @media(max-width:920px){.preview-badge{left:12px;bottom:74px}}
+  </style>
+</head>
+<body>
+  <div id="preview-root"></div>
+  <div class="preview-badge">INTEGRATION PREVIEW · TEST DATA</div>
+  <script type="module">
+    import { StoneMetaGameUI } from '../ui/meta-game.js';
+    import { DemoMetaGameAdapter } from './demo-adapter.js';
+
+    const query = new URLSearchParams(location.search);
+    if (query.get('reset') === '1') localStorage.clear();
+
+    const adapter = new DemoMetaGameAdapter('../data/', { onboarding: query.get('onboarding') === '1' });
+    const app = new StoneMetaGameUI(document.getElementById('preview-root'), adapter, {
+      templateUrl: '../ui/meta-game-template.html',
+      onReturnToFarm: () => app.toast('本体統合後は既存の自動操作画面へ戻ります'),
+    });
+    app.init().then(() => {
+      const route = query.get('route');
+      if (route) app.navigate(route, false);
+
+      const modal = query.get('modal');
+      const modalSelectors = {
+        rates: '[data-open-rates]',
+        history: '[data-open-history]',
+        settings: '[data-open-settings]',
+        profile: '[data-edit-profile]',
+      };
+      if (modalSelectors[modal]) {
+        window.setTimeout(() => document.querySelector(modalSelectors[modal])?.click(), 100);
+      }
+      const profileTab = query.get('profiletab');
+      if (modal === 'profile' && profileTab) {
+        window.setTimeout(() => document.querySelector(`[data-profile-editor-tab="${CSS.escape(profileTab)}"]`)?.click(), 220);
+      }
+
+      if (query.get('debugpanel') === '1') {
+        window.setTimeout(() => document.querySelector('[data-debug-open]')?.click(), 100);
+      }
+
+      const event = query.get('event');
+      if (event === 'achievement') {
+        window.setTimeout(() => app.showEvents([{
+          type: 'achievement.unlocked', id: 'stone-king', title: '石油王ではなく石王',
+          subtitle: '石を5,000回掘る', rarity: 'SSR',
+        }]), 120);
+      } else if (event === 'affinity') {
+        window.setTimeout(() => app.showEvents([{
+          type: 'affinity.levelUp', id: 'lover', title: 'Relationship Level Up',
+          subtitle: '恋人', previous: '親友', current: '恋人', rarity: 'SSR',
+        }]), 120);
+      } else if (event === 'level') {
+        window.setTimeout(() => app.showEvents([{
+          type: 'mining.levelUp', id: 'mining-level-25', title: 'Mining Level Up',
+          subtitle: 'LV.25', previous: 'LV.24', current: 'LV.25', rarity: 'SUPER_RARE',
+        }]), 120);
+      }
+
+      if (query.get('fixture') === 'legendary-error') {
+        window.setTimeout(() => {
+          const cinematic = document.querySelector('[data-cinematic]');
+          cinematic.hidden = false;
+          cinematic.dataset.rarity = 'LEGENDARY';
+          document.querySelector('[data-case-stage]').hidden = true;
+          document.querySelector('[data-ten-stage]').hidden = true;
+          document.querySelector('[data-result-stage]').hidden = true;
+          document.querySelector('[data-fake-error]').hidden = false;
+        }, 100);
+      }
+
+      const autoDraw = Number(query.get('autodraw'));
+      if (autoDraw === 1 || autoDraw === 10) {
+        window.setTimeout(async () => {
+          const forcedRarity = query.get('force') || '';
+          if (forcedRarity) await app.requestDraw(autoDraw, forcedRarity);
+          else document.querySelector(`[data-draw="${autoDraw}"]`)?.click();
+          if (autoDraw === 10 && query.get('reveal') === 'all') await app.revealAllTen();
+        }, 80);
+      }
+    }).catch((error) => {
+      document.getElementById('preview-root').innerHTML = `<pre style="padding:30px;color:#b42332">${String(error.stack || error)}</pre>`;
+    });
+  </script>
+</body>
+</html>

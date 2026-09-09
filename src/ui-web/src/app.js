@@ -3,13 +3,15 @@
 
   const UI_SCHEMA = 1;
   const FRAMEWORK7_VERSION = '9.1.3';
-  const VALID_PAGES = new Set(['overview', 'vehicle', 'settings', 'update']);
+  const VALID_PAGES = new Set(['overview', 'stone', 'vehicle', 'settings', 'update']);
   const VALID_MODES = new Set(['mining', 'washing', 'gold']);
   const VALID_TONES = new Set([
     'neutral', 'muted', 'success', 'warning', 'error', 'danger', 'accent', 'progress',
   ]);
   const query = new URLSearchParams(window.location.search);
-  const fixtureMode = query.get('fixture') === '1';
+  const fixtureToken = query.get('fixture');
+  const fixtureMode = fixtureToken === '1' || fixtureToken === 'host';
+  const hostBackedMetaFixture = fixtureToken === 'host';
   const reduceMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
 
   const modeDetails = {
@@ -48,7 +50,7 @@
   const fixtureState = {
     ...baseState,
     revision: 1,
-    version: '8.0.6',
+    version: '9.0.0',
     controls: {
       overviewSubtitle: { text: modeDetails.gold.subtitle },
       runStatus: { text: '停止中', tone: 'neutral' },
@@ -78,6 +80,13 @@
       foodKey: { value: 1, enabled: true },
       autoCheckUpdates: { value: true, enabled: true },
       minimumFreeWeight: { value: 2000, enabled: true },
+      storageTriggerPercent: { value: 92, enabled: true },
+      estimatedRewardWeight: { value: 2000, enabled: true },
+      minimumFreeSlots: { value: 1, enabled: true },
+      storageMaxRetries: { value: 5, enabled: true },
+      farmWatchdogMs: { value: 60000, enabled: true },
+      targetLostRecoveryMs: { value: 15000, enabled: true },
+      debugOverlay: { value: false, enabled: true },
       settingsSave: { text: '設定を保存', enabled: true },
       settingsFeedback: { text: '', tone: 'neutral' },
       updateStatus: { text: '最新です', tone: 'success' },
@@ -108,6 +117,11 @@
   let settingsDirty = new Set();
   let lastFeedback = { settings: '', update: '' };
   const sentActions = [];
+  let hostReady = fixtureMode;
+  let resolveHostReady = null;
+  const hostReadyPromise = fixtureMode ? Promise.resolve() : new Promise((resolve) => {
+    resolveHostReady = resolve;
+  });
 
   const app = new Framework7({
     el: '#app',
@@ -134,7 +148,9 @@
     'companion-status', 'companion-detail', 'vehicle-register', 'vehicle-register-label',
     'vehicle-delete', 'start-hotkey', 'stop-hotkey', 'setting-background', 'setting-hide',
     'setting-correction', 'setting-auto-eat', 'food-key', 'setting-auto-update',
-    'minimum-free-weight', 'settings-save',
+    'minimum-free-weight', 'storage-trigger-percent', 'estimated-reward-weight',
+    'minimum-free-slots', 'storage-max-retries', 'farm-watchdog-seconds',
+    'target-lost-recovery-seconds', 'setting-debug-overlay', 'settings-save',
     'settings-save-label', 'settings-feedback', 'current-version', 'update-status',
     'update-integrity', 'update-check', 'update-check-label', 'update-feedback',
     'update-badge', 'sidebar-connection', 'sidebar-connection-dot', 'action-popover',
@@ -323,6 +339,16 @@
     element.disabled = !enabledOf(item);
   }
 
+  function updateDurationInput(element, item, dirtyKey) {
+    if (!element || settingsDirty.has(dirtyKey)) return;
+    const milliseconds = Number(item.value ?? item.text);
+    if (Number.isFinite(milliseconds)) {
+      const seconds = Math.round(milliseconds / 1000);
+      if (element.value !== String(seconds)) element.value = String(seconds);
+    }
+    element.disabled = !enabledOf(item);
+  }
+
   function applyState(nextState, options = {}) {
     const message = normalizeMessage(nextState);
     if (!message || message.type !== 'state') return false;
@@ -501,6 +527,17 @@
       control('minimumFreeWeight', 'minimumFreeWeightControl'),
       'minimumFreeWeight',
     );
+    updateInput(elements.storageTriggerPercent, control('storageTriggerPercent'), 'storageTriggerPercent');
+    updateInput(elements.estimatedRewardWeight, control('estimatedRewardWeight'), 'estimatedRewardWeight');
+    updateInput(elements.minimumFreeSlots, control('minimumFreeSlots'), 'minimumFreeSlots');
+    updateInput(elements.storageMaxRetries, control('storageMaxRetries'), 'storageMaxRetries');
+    updateDurationInput(elements.farmWatchdogSeconds, control('farmWatchdogMs'), 'farmWatchdogMs');
+    updateDurationInput(
+      elements.targetLostRecoverySeconds,
+      control('targetLostRecoveryMs'),
+      'targetLostRecoveryMs',
+    );
+    updateSwitch(elements.settingDebugOverlay, control('debugOverlay'), 'debugOverlay');
 
     const save = control('settingsSave', 'settingsButton');
     const feedback = control('settingsFeedback', 'settingsErrorLabel');
@@ -554,6 +591,12 @@
     if (tone === 'success') {
       app.toast.create({ text, closeTimeout: 2200, position: 'center' }).open();
     }
+  }
+
+  function showSettingsValidation(message, element) {
+    setText(elements.settingsFeedback, message);
+    setTone(elements.settingsFeedback, 'error');
+    element?.focus();
   }
 
   function createPickerOptions() {
@@ -625,6 +668,7 @@
     const previous = screens.get(currentPage);
     const changed = currentPage !== page;
     currentPage = page;
+    document.body.classList.toggle('stone-page-active', page === 'stone');
 
     nav.forEach((item) => {
       const selected = item.dataset.page === page;
@@ -654,6 +698,9 @@
     previous.setAttribute('aria-hidden', 'true');
     next.classList.add('is-active');
     next.removeAttribute('aria-hidden');
+    window.dispatchEvent(new CustomEvent('ai-miner:pagechange', {
+      detail: { page, previousPage: previous.dataset.page },
+    }));
 
     const shouldAnimate = options.animate !== false && !reduceMotionQuery.matches && state.windowVisible !== false;
     if (!shouldAnimate) {
@@ -775,6 +822,13 @@
         foodKey: { value: payload.foodKey, enabled: true },
         autoCheckUpdates: { value: payload.autoCheckUpdates, enabled: true },
         minimumFreeWeight: { value: payload.minimumFreeWeight, enabled: true },
+        storageTriggerPercent: { value: payload.storageTriggerPercent, enabled: true },
+        estimatedRewardWeight: { value: payload.estimatedRewardWeight, enabled: true },
+        minimumFreeSlots: { value: payload.minimumFreeSlots, enabled: true },
+        storageMaxRetries: { value: payload.storageMaxRetries, enabled: true },
+        farmWatchdogMs: { value: payload.farmWatchdogMs, enabled: true },
+        targetLostRecoveryMs: { value: payload.targetLostRecoveryMs, enabled: true },
+        debugOverlay: { value: payload.debugOverlay, enabled: true },
         settingsFeedback: { text: '設定を保存しました', tone: 'success' },
       });
     }
@@ -836,6 +890,13 @@
       [elements.foodKey, 'foodKey'],
       [elements.settingAutoUpdate, 'autoCheckUpdates'],
       [elements.minimumFreeWeight, 'minimumFreeWeight'],
+      [elements.storageTriggerPercent, 'storageTriggerPercent'],
+      [elements.estimatedRewardWeight, 'estimatedRewardWeight'],
+      [elements.minimumFreeSlots, 'minimumFreeSlots'],
+      [elements.storageMaxRetries, 'storageMaxRetries'],
+      [elements.farmWatchdogSeconds, 'farmWatchdogMs'],
+      [elements.targetLostRecoverySeconds, 'targetLostRecoveryMs'],
+      [elements.settingDebugOverlay, 'debugOverlay'],
     ]);
     dirtyControls.forEach((key, element) => {
       element.addEventListener(element.type === 'checkbox' ? 'change' : 'input', () => settingsDirty.add(key));
@@ -849,6 +910,12 @@
       if (elements.settingsSave.classList.contains('is-pending')) return;
       const minimumFreeWeight = Number(elements.minimumFreeWeight.value);
       const foodKey = Number(elements.foodKey.value);
+      const storageTriggerPercent = Number(elements.storageTriggerPercent.value);
+      const estimatedRewardWeight = Number(elements.estimatedRewardWeight.value);
+      const minimumFreeSlots = Number(elements.minimumFreeSlots.value);
+      const storageMaxRetries = Number(elements.storageMaxRetries.value);
+      const farmWatchdogSeconds = Number(elements.farmWatchdogSeconds.value);
+      const targetLostRecoverySeconds = Number(elements.targetLostRecoverySeconds.value);
       if (!Number.isInteger(foodKey) || foodKey < 1 || foodKey > 5) {
         setText(elements.settingsFeedback, '食料スロットは1〜5で指定してください');
         setTone(elements.settingsFeedback, 'error');
@@ -859,6 +926,31 @@
         setText(elements.settingsFeedback, '残り重量は250〜20,000gで指定してください');
         setTone(elements.settingsFeedback, 'error');
         elements.minimumFreeWeight.focus();
+        return;
+      }
+      if (!Number.isInteger(storageTriggerPercent) || storageTriggerPercent < 50 || storageTriggerPercent > 99) {
+        showSettingsValidation('使用率のしきい値は50〜99%で指定してください', elements.storageTriggerPercent);
+        return;
+      }
+      if (!Number.isInteger(estimatedRewardWeight) || estimatedRewardWeight < 250 || estimatedRewardWeight > 20000) {
+        showSettingsValidation('1回分の予想重量は250〜20,000gで指定してください', elements.estimatedRewardWeight);
+        return;
+      }
+      if (!Number.isInteger(minimumFreeSlots) || minimumFreeSlots < 0 || minimumFreeSlots > 10) {
+        showSettingsValidation('空きスロットは0〜10枠で指定してください', elements.minimumFreeSlots);
+        return;
+      }
+      if (!Number.isInteger(storageMaxRetries) || storageMaxRetries < 1 || storageMaxRetries > 8) {
+        showSettingsValidation('収納の再試行は1〜8回で指定してください', elements.storageMaxRetries);
+        return;
+      }
+      if (!Number.isInteger(farmWatchdogSeconds) || farmWatchdogSeconds < 15 || farmWatchdogSeconds > 180) {
+        showSettingsValidation('成果なしの復旧時間は15〜180秒で指定してください', elements.farmWatchdogSeconds);
+        return;
+      }
+      if (!Number.isInteger(targetLostRecoverySeconds)
+        || targetLostRecoverySeconds < 5 || targetLostRecoverySeconds > 60) {
+        showSettingsValidation('対象再探索の待機時間は5〜60秒で指定してください', elements.targetLostRecoverySeconds);
         return;
       }
       setPending(elements.settingsSave, 'settings', state.revision);
@@ -872,6 +964,13 @@
         foodKey,
         autoCheckUpdates: elements.settingAutoUpdate.checked,
         minimumFreeWeight,
+        storageTriggerPercent,
+        estimatedRewardWeight,
+        minimumFreeSlots,
+        storageMaxRetries,
+        farmWatchdogMs: farmWatchdogSeconds * 1000,
+        targetLostRecoveryMs: targetLostRecoverySeconds * 1000,
+        debugOverlay: elements.settingDebugOverlay.checked,
       });
     });
     elements.updateCheck.addEventListener('click', () => {
@@ -900,12 +999,20 @@
     const message = normalizeMessage(rawMessage);
     if (!message) return;
     if (message.type === 'state') {
+      markHostReady();
       applyState(message);
       return;
     }
     if (message.type === 'command' && message.command === 'SMOKE') {
-      runSmokeTest(true);
+      window.setTimeout(() => runSmokeTest(true), 100);
     }
+  }
+
+  function markHostReady() {
+    if (hostReady) return;
+    hostReady = true;
+    resolveHostReady?.();
+    resolveHostReady = null;
   }
 
   function runSmokeTest(reportToHost = false) {
@@ -921,12 +1028,31 @@
         .every((node) => !/^(?:https?:)?\/\//i.test(
           node.getAttribute('src') || node.getAttribute('href') || '',
         )),
+      activeScreen: screens.get(currentPage)?.classList.contains('is-active')
+        && screens.get(currentPage)?.getAttribute('aria-hidden') !== 'true',
+      fixturePage: !fixtureMode || !VALID_PAGES.has(query.get('page'))
+        || currentPage === query.get('page'),
+      fixturePicker: !fixtureMode || query.get('picker') !== '1'
+        || Boolean(document.querySelector('.action-sheet.modal-in, .action-popover.modal-in')),
     };
     const failures = Object.entries(checks).filter(([, ok]) => !ok).map(([name]) => name);
     const result = failures.length ? `ERROR:${failures.join(',')}` : 'OK';
     if (reportToHost) sendAction('smoke.result', { result });
     return { result, checks };
   }
+
+  window.aiMinerUI = Object.freeze({
+    navigate: (page) => switchPage(page, { animate: true, send: true }),
+    getPage: () => currentPage,
+    whenHostReady: () => hostReadyPromise,
+    reportVisualSmoke(result) {
+      if (!fixtureMode || typeof result !== 'string'
+        || !/^[A-Za-z0-9_.:=-]{1,180}$/.test(result)) return false;
+      sendAction('smoke.result', { result });
+      return true;
+    },
+    hostBackedMetaFixture,
+  });
 
   window.aiMinerTest = Object.freeze({
     ready: true,
