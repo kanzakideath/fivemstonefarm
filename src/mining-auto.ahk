@@ -376,6 +376,8 @@ if A_Args.Length && A_Args[1] = "--validate" {
             != "FiveM内部UIへ再接続中" ? 74
         : RuntimeStatusOverlayMeta(3, true, 2500, 2)
             != "操作 3 | 空き 2.5 kg | 収納 2" ? 75
+        : RuntimeStatusOverlayTitle("washing", "●  所持品確認中", "")
+            != "石洗い | 所持品確認中" ? 76
         : testOverlayBounds.x != 480 ? 77
         : testOverlayBounds.y != 234 || testOverlayBounds.w != 520
             || testOverlayBounds.h != 58 ? 78
@@ -1282,7 +1284,7 @@ RuntimeStatusOverlayBounds(clientX, clientY, clientW, clientH) {
 
 RuntimeStatusOverlayTitle(mode, rawStatus, phase) {
     return RuntimeStatusOverlayModeLabel(mode) " | "
-        RuntimeStatusOverlayCompactStatus(rawStatus, phase)
+        . RuntimeStatusOverlayCompactStatus(rawStatus, phase)
 }
 
 RuntimeStatusOverlayModeLabel(mode) {
