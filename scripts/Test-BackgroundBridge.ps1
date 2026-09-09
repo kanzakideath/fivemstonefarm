@@ -252,7 +252,8 @@ function Test-RouteHealthProductionOnly {
 
     $resultPath = Join-Path ([IO.Path]::GetTempPath()) ('ai-miner-route-health-test-' + [Guid]::NewGuid().ToString('N') + '.txt')
     $process = $null
-    $epochBytes = [Text.Encoding]::UTF8.GetBytes("target-frame`ninventory-frame")
+    $epochBytes = [Text.Encoding]::UTF8.GetBytes(
+        "target-frame`ninventory-frame`nprogress-frame")
     $validEpoch = ([Convert]::ToBase64String($epochBytes)).TrimEnd('=').Replace('+', '-').Replace('/', '_')
     try {
         # Even while the matching test environment is enabled, play-route-health

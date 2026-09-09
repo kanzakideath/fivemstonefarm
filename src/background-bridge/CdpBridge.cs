@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Net;
@@ -15,11 +16,17 @@ internal static class CdpBridge
 {
     private const string TargetsUrl = "http://127.0.0.1:13172/json";
     private const string TargetFramePart = "cfx-nui-ox_target/web/index.html";
+    private const string ProgressFramePart = "cfx-nui-ox_lib/web/build/index.html";
     private const string InventoryFramePart = "cfx-nui-ox_inventory/web/build/index.html";
     private const string CompanionFramePart = "cfx-nui-ai_miner_companion/ui/index.html";
     private const string CompanionProtocol = "ai-miner-companion";
     private const string CompanionResource = "ai_miner_companion";
-    private const string Capabilities = "CAPS 9 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HOTBAR INVENTORYKEY HEALTH COMPANION";
+    private const string Capabilities = "CAPS 10 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HOTBAR INVENTORYKEY HEALTH COMPANION WASHWAIT";
+    private const int WashProgressStartMilliseconds = 3000;
+    private const int WashProgressTotalMilliseconds = 19500;
+    private const int WashProgressPollMilliseconds = 70;
+    private const int WashProgressMinimumActiveMilliseconds = 4000;
+    private const int WashProgressStableAbsentMilliseconds = 500;
     private const int MaximumRouteSteps = 240;
     private const int MaximumRouteMilliseconds = 90000;
     private const int RouteHealthIntervalMilliseconds = 2500;
@@ -54,7 +61,7 @@ internal static class CdpBridge
         bool twoArgumentMode = args.Length == 2 && (mode == "capabilities"
             || mode == "self-test"
             || mode == "probe-mining" || mode == "click-mining"
-            || mode == "probe-washing" || mode == "click-washing"
+            || mode == "probe-washing"
             || mode == "probe-gold" || mode == "click-gold"
             || mode == "probe-storage" || mode == "click-storage"
             || mode == "inventory-snapshot" || mode == "capture-storage"
@@ -62,9 +69,11 @@ internal static class CdpBridge
             || mode == "companion-status"
             || mode == "close-inventory"
             || mode == "try-mining" || mode == "try-probe-mining"
-            || mode == "try-washing" || mode == "try-gold"
+            || mode == "try-gold"
             || mode == "activate" || mode == "deactivate"
             || mode == "deactivate-29200" || mode == "deactivate-29300");
+        bool washTryMode = args.Length == 3 && mode == "try-washing";
+        bool washCompletionMode = args.Length == 3 && mode == "wait-wash-completion";
         bool nudgeMode = (args.Length == 4 || args.Length == 5) && mode == "nudge-forward";
         bool routeMode = (args.Length == 4 || args.Length == 5) && mode == "play-route";
         bool routeHealthMode = args.Length == 5 && mode == "play-route-health";
@@ -76,7 +85,8 @@ internal static class CdpBridge
         bool cancelOperationMode = args.Length == 3 && mode == "cancel-operation";
         bool companionCommandMode = (args.Length == 3 || args.Length == 4)
             && mode == "companion-command";
-        if (!twoArgumentMode && !nudgeMode && !routeMode && !routeHealthMode && !viewMode
+        if (!twoArgumentMode && !washTryMode && !washCompletionMode
+            && !nudgeMode && !routeMode && !routeHealthMode && !viewMode
             && !hotbarMode && !inventoryKeyMode
             && !testDeactivateMode && !depositMode && !cancelOperationMode
             && !companionCommandMode)
@@ -213,7 +223,16 @@ internal static class CdpBridge
             }
             else if (mode.StartsWith("try-", StringComparison.Ordinal))
             {
-                result = TryActionAsync(mode).GetAwaiter().GetResult();
+                if (washTryMode && !IsValidServerEpoch(args[2]))
+                    return 64;
+                result = TryActionAsync(mode, washTryMode ? args[2] : null)
+                    .GetAwaiter().GetResult();
+            }
+            else if (washCompletionMode)
+            {
+                if (!IsValidServerEpoch(args[2]))
+                    return 64;
+                result = WaitWashCompletionAsync(args[2]).GetAwaiter().GetResult();
             }
             else if (mode == "inventory-snapshot")
             {
@@ -278,10 +297,25 @@ internal static class CdpBridge
             || result.StartsWith("HEALTH READY ", StringComparison.Ordinal)
             || result.StartsWith("COMPANION 1 ", StringComparison.Ordinal)
             || result.StartsWith("COMPANION_DONE ", StringComparison.Ordinal)
+            || IsWashCompletionResult(result)
             || result.StartsWith("SNAPSHOT ", StringComparison.Ordinal)
             || result.StartsWith("STORAGE ", StringComparison.Ordinal)
             || result.StartsWith("DEPOSITED ", StringComparison.Ordinal)
             || result == "CLOSED" || result == "RELEASED" || result == "CANCELLED";
+    }
+
+    private static bool IsWashCompletionResult(string result)
+    {
+        const string prefix = "WASH_COMPLETED ";
+        if (String.IsNullOrEmpty(result)
+            || !result.StartsWith(prefix, StringComparison.Ordinal))
+            return false;
+
+        int elapsedMilliseconds;
+        return Int32.TryParse(result.Substring(prefix.Length), NumberStyles.None,
+                CultureInfo.InvariantCulture, out elapsedMilliseconds)
+            && elapsedMilliseconds >= 0
+            && elapsedMilliseconds <= 24000;
     }
 
     private static string RunSelfTest()
@@ -297,12 +331,27 @@ internal static class CdpBridge
         const string exponentMetadata = "{\"ratio\":1e-7}";
         Dictionary<string, int> exponentBaseline = ParseBaseline(
             "0004.ore." + EncodeBase64Url(exponentMetadata) + "=2");
-        string serverEpoch = EncodeBase64Url("target-frame\ninventory-frame");
+        string serverEpoch = EncodeBase64Url(
+            "target-frame\ninventory-frame\nprogress-frame");
         var routeCommand = new StringBuilder(InputReleaseCommand());
         AppendRoutePresses(routeCommand, 65);
         var viewCommand = new StringBuilder(ViewReleaseCommand());
         AppendViewPresses(viewCommand, 10);
         string inventorySnapshotExpression = InventorySnapshotExpression();
+        string washProgressExpression = WashProgressExpression();
+        string washProbeExpression = WashTargetExpression(false);
+        string washClickExpression = WashTargetExpression(true);
+        string strictProbeExpression = ProbeExpression("砂金採りトレイ", true);
+        string strictClickExpression = ClickExpression("鉱石を採掘する", false);
+        int washWaitingState = AdvanceWashProgressState(0, false);
+        int washFlickerState = AdvanceWashProgressState(washWaitingState, true);
+        int washFlickerResetState = AdvanceWashProgressState(washFlickerState, false);
+        int washFirstVisibleState = AdvanceWashProgressState(washFlickerResetState, true);
+        int washArmedState = AdvanceWashProgressState(washFirstVisibleState, true);
+        int washFirstAbsentState = AdvanceWashProgressState(washArmedState, false);
+        int washActiveResetState = AdvanceWashProgressState(washFirstAbsentState, true);
+        int washSecondFirstAbsentState = AdvanceWashProgressState(washActiveResetState, false);
+        int washCompletedState = AdvanceWashProgressState(washSecondFirstAbsentState, false);
         string staleWeightSnapshot = FormatInventorySnapshotResult("SNAPSHOT_DETAIL "
             + "{\"weight\":42,\"max\":1000,\"used\":2,\"slots\":5,\"items\":["
             + "{\"slot\":1,\"name\":\"ore\",\"count\":3,\"meta\":\"{}\"},"
@@ -413,6 +462,39 @@ internal static class CdpBridge
             || viewCommand.ToString().IndexOf(";+look_right", StringComparison.Ordinal) < 0
             || inventorySnapshotExpression.IndexOf("left.weight", StringComparison.Ordinal) >= 0
             || inventorySnapshotExpression.IndexOf("weight:whole(calculatedWeight)", StringComparison.Ordinal) < 0
+            || washWaitingState != 0 || washFlickerState != 1 || washFlickerResetState != 0
+            || washFirstVisibleState != 1 || washArmedState != 2 || washFirstAbsentState != 3
+            || washActiveResetState != 2 || washSecondFirstAbsentState != 3 || washCompletedState != 4
+            || WashProgressStartTimedOut(0, 2, 3000)
+            || WashProgressStartTimedOut(1, 3, 3000)
+            || WashProgressStartTimedOut(0, 3, 2999)
+            || !WashProgressStartTimedOut(0, 3, 3000)
+            || WashProgressCompletionReady(1000, 5000, 5499)
+            || WashProgressCompletionReady(1600, 5000, 5500)
+            || !WashProgressCompletionReady(1000, 5000, 5500)
+            || washProgressExpression.IndexOf("石を洗っています", StringComparison.Ordinal) < 0
+            || washProgressExpression.IndexOf("startsWith(q)", StringComparison.Ordinal) < 0
+            || washProgressExpression.IndexOf("nodes.some", StringComparison.Ordinal) < 0
+            || washProgressExpression.IndexOf("animationName", StringComparison.Ordinal) < 0
+            || washProgressExpression.IndexOf("progress-bar", StringComparison.Ordinal) < 0
+            || washProbeExpression.IndexOf("seen=new Set()", StringComparison.Ordinal) < 0
+            || washProbeExpression.IndexOf("!usable(leaf)||!usable(hit)", StringComparison.Ordinal) < 0
+            || washProbeExpression.IndexOf("!shown(body)", StringComparison.Ordinal) < 0
+            || washProbeExpression.IndexOf("!usable(body)", StringComparison.Ordinal) >= 0
+            || washProbeExpression.IndexOf(".click()", StringComparison.Ordinal) >= 0
+            || washClickExpression.IndexOf(":hover", StringComparison.Ordinal) < 0
+            || washClickExpression.IndexOf("[aria-selected=true]", StringComparison.Ordinal) < 0
+            || washClickExpression.IndexOf("#eyeicon", StringComparison.Ordinal) < 0
+            || washClickExpression.IndexOf("a.distance-b.distance||a.order-b.order", StringComparison.Ordinal) < 0
+            || washClickExpression.IndexOf("choice.hit.click();return true", StringComparison.Ordinal) < 0
+            || strictProbeExpression.IndexOf("matches.length!==1", StringComparison.Ordinal) < 0
+            || strictClickExpression.IndexOf("matches.length!==1", StringComparison.Ordinal) < 0
+            || !IsSuccess("WASH_COMPLETED 9750")
+            || IsSuccess("WASH_COMPLETED ")
+            || IsSuccess("WASH_COMPLETED -1")
+            || IsSuccess("WASH_COMPLETED 24001")
+            || IsSuccess("WASH_COMPLETED 9750 extra")
+            || IsSuccess("ERROR WASH_NOT_STARTED")
             || staleWeightSnapshot != "SNAPSHOT 42 1000 2 5 0001.ore.e30=3,0002.washed_stone."
                 + EncodeBase64Url("{\"quality\":100}") + "=1"
             || !baseline.TryGetValue("1\nore\n{}", out count) || count != 10
@@ -422,8 +504,9 @@ internal static class CdpBridge
             || !exponentBaseline.TryGetValue("4\nore\n" + exponentMetadata, out count) || count != 2
             || !IsValidServerEpoch(serverEpoch)
             || IsValidServerEpoch(EncodeBase64Url("target-frame"))
-            || IsValidServerEpoch(EncodeBase64Url("target\ninventory\nextra"))
-            || IsValidServerEpoch(EncodeBase64Url("target\r\ninventory"))
+            || IsValidServerEpoch(EncodeBase64Url("target\ninventory"))
+            || IsValidServerEpoch(EncodeBase64Url("target\ninventory\nprogress\nextra"))
+            || IsValidServerEpoch(EncodeBase64Url("target\r\ninventory\nprogress"))
             || IsValidServerEpoch("invalid+epoch")
             || !BaselineMetadataIsRejected("not-json")
             || DecodeIdentifier(EncodeIdentifier("trunk-test")) != "trunk-test"
@@ -590,16 +673,94 @@ internal static class CdpBridge
                     await Task.Delay(300, session.Token).ConfigureAwait(false);
                 return storageState + " STORAGE";
             }
-            bool value = await session.EvaluateBooleanAsync(
-                clickMode ? ClickExpression(targetLabel, exactOnly) : ProbeExpression(targetLabel, exactOnly),
-                clickMode).ConfigureAwait(false);
+            string expression = washingMode
+                ? WashTargetExpression(clickMode)
+                : clickMode ? ClickExpression(targetLabel, exactOnly) : ProbeExpression(targetLabel, exactOnly);
+            bool value = await session.EvaluateBooleanAsync(expression, clickMode).ConfigureAwait(false);
             if (clickMode && value)
                 await Task.Delay(300, session.Token).ConfigureAwait(false);
             return (value ? (clickMode ? "CLICKED " : "PRESENT ") : "MISSING ") + actionToken;
         }
     }
 
-    private static async Task<string> TryActionAsync(string mode)
+    private static async Task<string> WaitWashCompletionAsync(string expectedEpoch)
+    {
+        var stopwatch = new Stopwatch();
+        int progressState = 0;
+        int idleAbsentSamples = 0;
+        long progressArmedAt = -1;
+        long progressAbsentAt = -1;
+        bool monitorFailed = false;
+        try
+        {
+            if (!await ServerEpochMatchesAsync(expectedEpoch).ConfigureAwait(false))
+                return "ERROR SERVER_SESSION_CHANGED";
+            using (var session = await CdpSession.OpenAsync(
+                ProgressFramePart, TimeSpan.FromMilliseconds(24000)).ConfigureAwait(false))
+            {
+                // Connection/setup time must not consume the three-second start window.
+                stopwatch.Start();
+                while (stopwatch.ElapsedMilliseconds < WashProgressTotalMilliseconds)
+                {
+                    long elapsedMilliseconds = stopwatch.ElapsedMilliseconds;
+                    bool visible = await session.EvaluateBooleanAsync(
+                        WashProgressExpression(), false).ConfigureAwait(false);
+                    int previousState = progressState;
+                    progressState = AdvanceWashProgressState(progressState, visible);
+                    if (!visible && progressState == 0)
+                        idleAbsentSamples += 1;
+                    else
+                        idleAbsentSamples = 0;
+                    if (progressState == 2 && previousState < 2)
+                        progressArmedAt = elapsedMilliseconds;
+                    if (visible)
+                    {
+                        progressAbsentAt = -1;
+                    }
+                    else if (progressState == 3 && previousState == 2)
+                    {
+                        progressAbsentAt = elapsedMilliseconds;
+                    }
+                    if (progressState == 4)
+                    {
+                        if (WashProgressCompletionReady(progressArmedAt,
+                            progressAbsentAt, elapsedMilliseconds))
+                        {
+                            if (!await ServerEpochMatchesAsync(expectedEpoch).ConfigureAwait(false))
+                                return "ERROR SERVER_SESSION_CHANGED";
+                            return "WASH_COMPLETED "
+                                + elapsedMilliseconds.ToString(CultureInfo.InvariantCulture);
+                        }
+                        // Keep the stable-absence candidate alive until both time floors pass.
+                        progressState = 3;
+                    }
+                    // A first visible sample at the deadline still gets one poll to arm.
+                    // Only the fully idle state proves that progress never started.
+                    if (WashProgressStartTimedOut(progressState, idleAbsentSamples,
+                        stopwatch.ElapsedMilliseconds))
+                    {
+                        if (!await ServerEpochMatchesAsync(expectedEpoch).ConfigureAwait(false))
+                            return "ERROR SERVER_SESSION_CHANGED";
+                        return "ERROR WASH_NOT_STARTED";
+                    }
+
+                    await Task.Delay(WashProgressPollMilliseconds, session.Token).ConfigureAwait(false);
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // Re-check below after the failed/expired CDP session has been disposed.
+            monitorFailed = true;
+        }
+        if (!await ServerEpochMatchesAsync(expectedEpoch).ConfigureAwait(false))
+            return "ERROR SERVER_SESSION_CHANGED";
+        if (monitorFailed)
+            return "ERROR WASH_PROGRESS_UNAVAILABLE";
+        return progressState < 2 ? "ERROR WASH_NOT_STARTED" : "ERROR WASH_COMPLETION_TIMEOUT";
+    }
+
+    private static async Task<string> TryActionAsync(string mode, string expectedEpoch)
     {
         bool probeOnly = mode == "try-probe-mining";
         bool washingMode = mode == "try-washing";
@@ -608,12 +769,15 @@ internal static class CdpBridge
         string actionToken = washingMode ? "WASH" : goldMode ? "GOLD" : "MINE";
         bool exactOnly = washingMode || goldMode;
         int port = 0;
+        bool washClickMayHaveBeenDispatched = false;
         try
         {
             if (!SendRelease(0))
                 throw new InvalidOperationException("INPUT_RELEASE_UNAVAILABLE");
             port = ActivatePort();
-            using (var session = await CdpSession.OpenAsync(TargetFramePart, TimeSpan.FromSeconds(5)).ConfigureAwait(false))
+            int sessionMilliseconds = washingMode ? 9000 : 5000;
+            using (var session = await CdpSession.OpenAsync(
+                TargetFramePart, TimeSpan.FromMilliseconds(sessionMilliseconds)).ConfigureAwait(false))
             {
                 if (probeOnly)
                 {
@@ -622,18 +786,48 @@ internal static class CdpBridge
                         ProbeExpression(targetLabel, exactOnly), false).ConfigureAwait(false);
                     return (probeResult ? "PRESENT " : "MISSING ") + actionToken;
                 }
-                DateTime deadline = DateTime.UtcNow.AddMilliseconds(1600);
+                DateTime deadline = DateTime.UtcNow.AddMilliseconds(washingMode ? 7000 : 1600);
                 while (DateTime.UtcNow < deadline)
                 {
+                    string expression = washingMode
+                        ? WashTargetExpression(false) : ProbeExpression(targetLabel, exactOnly);
                     bool present = await session.EvaluateBooleanAsync(
-                        ProbeExpression(targetLabel, exactOnly), false).ConfigureAwait(false);
+                        expression, false).ConfigureAwait(false);
                     if (present)
                     {
-                        bool clicked = await session.EvaluateBooleanAsync(
-                            ClickExpression(targetLabel, exactOnly), true).ConfigureAwait(false);
+                        if (washingMode
+                            && !await ServerEpochMatchesAsync(expectedEpoch).ConfigureAwait(false))
+                            return "ERROR SERVER_SESSION_CHANGED";
+                        expression = washingMode
+                            ? WashTargetExpression(true) : ClickExpression(targetLabel, exactOnly);
+                        bool clicked;
+                        if (washingMode)
+                            washClickMayHaveBeenDispatched = true;
+                        try
+                        {
+                            clicked = await session.EvaluateBooleanAsync(
+                                expression, true).ConfigureAwait(false);
+                        }
+                        catch (Exception)
+                        {
+                            if (washingMode && washClickMayHaveBeenDispatched)
+                                return "UNCERTAIN WASH";
+                            throw;
+                        }
+                        if (!clicked)
+                            washClickMayHaveBeenDispatched = false;
                         if (clicked)
                         {
-                            await Task.Delay(300, session.Token).ConfigureAwait(false);
+                            try
+                            {
+                                await Task.Delay(300, session.Token).ConfigureAwait(false);
+                            }
+                            catch (Exception)
+                            {
+                                if (washingMode)
+                                    return "UNCERTAIN WASH";
+                                throw;
+                            }
                             return "CLICKED " + actionToken;
                         }
                     }
@@ -644,8 +838,25 @@ internal static class CdpBridge
         }
         finally
         {
-            if (!(port != 0 ? SendRelease(port) : SendRelease(0)))
+            if (!(port != 0 ? SendRelease(port) : SendRelease(0))
+                && !(washingMode && washClickMayHaveBeenDispatched))
                 throw new InvalidOperationException("INPUT_RELEASE_UNAVAILABLE");
+        }
+    }
+
+    private static async Task<bool> ServerEpochMatchesAsync(string expectedEpoch)
+    {
+        if (!IsValidServerEpoch(expectedEpoch))
+            return false;
+        try
+        {
+            string healthResult = await HealthAsync().ConfigureAwait(false);
+            return String.Equals(healthResult, "HEALTH READY " + expectedEpoch,
+                StringComparison.Ordinal);
+        }
+        catch (Exception)
+        {
+            return false;
         }
     }
 
@@ -739,9 +950,13 @@ internal static class CdpBridge
             var frameTree = GetObject(GetObject(response, "result"), "frameTree");
             string targetFrameId = FindFrame(frameTree, TargetFramePart);
             string inventoryFrameId = FindFrame(frameTree, InventoryFramePart);
-            if (String.IsNullOrEmpty(targetFrameId) || String.IsNullOrEmpty(inventoryFrameId))
+            string progressFrameId = FindFrame(frameTree, ProgressFramePart);
+            if (String.IsNullOrEmpty(targetFrameId)
+                || String.IsNullOrEmpty(inventoryFrameId)
+                || String.IsNullOrEmpty(progressFrameId))
                 return "ERROR SERVER_SESSION_UNAVAILABLE";
-            string epoch = EncodeBase64Url(targetFrameId + "\n" + inventoryFrameId);
+            string epoch = EncodeBase64Url(targetFrameId + "\n" + inventoryFrameId
+                + "\n" + progressFrameId);
             return "HEALTH READY " + epoch;
         }
     }
@@ -1650,13 +1865,17 @@ internal static class CdpBridge
         try
         {
             string decoded = DecodeBase64Url(value);
-            int separator = decoded.IndexOf('\n');
-            if (separator <= 0 || separator != decoded.LastIndexOf('\n')
-                || separator >= decoded.Length - 1)
+            string[] frameIds = decoded.Split('\n');
+            if (frameIds.Length != 3)
                 return false;
-            for (int index = 0; index < decoded.Length; index++)
-                if (index != separator && Char.IsControl(decoded[index]))
+            foreach (string frameId in frameIds)
+            {
+                if (String.IsNullOrEmpty(frameId))
                     return false;
+                foreach (char character in frameId)
+                    if (Char.IsControl(character))
+                        return false;
+            }
             return true;
         }
         catch (ArgumentException)
@@ -2097,6 +2316,79 @@ internal static class CdpBridge
             + "return match(t)&&![...e.children].some(c=>match(n(c.textContent)));});"
             + "if(matches.length!==1)return false;const e=matches[0],s=getComputedStyle(e),r=e.getBoundingClientRect();"
             + "return s.visibility!=='hidden'&&s.display!=='none'&&r.width>0&&r.height>0;})()";
+    }
+
+    private static int AdvanceWashProgressState(int state, bool visible)
+    {
+        if (visible)
+            return state == 0 ? 1 : 2;
+        if (state == 0)
+            return 0;
+        if (state == 1)
+            return 0;
+        if (state == 2)
+            return 3;
+        if (state == 3)
+            return 4;
+        return state;
+    }
+
+    private static bool WashProgressCompletionReady(
+        long progressArmedAt, long progressAbsentAt, long elapsedMilliseconds)
+    {
+        return progressArmedAt >= 0 && progressAbsentAt >= 0
+            && elapsedMilliseconds >= progressArmedAt
+                + WashProgressMinimumActiveMilliseconds
+            && elapsedMilliseconds >= progressAbsentAt
+                + WashProgressStableAbsentMilliseconds;
+    }
+
+    private static bool WashProgressStartTimedOut(
+        int progressState, int idleAbsentSamples, long elapsedMilliseconds)
+    {
+        return progressState == 0 && idleAbsentSamples >= 3
+            && elapsedMilliseconds >= WashProgressStartMilliseconds;
+    }
+
+    private static string WashProgressExpression()
+    {
+        return "(() => {"
+            + "const q='石を洗っています',n=s=>String(s||'').replace(/\\s+/g,' ').trim(),body=document.body;"
+            + "if(!body||!body.isConnected)return false;"
+            + "const visible=e=>{if(!e||!e.isConnected)return false;for(let p=e;p;p=p.parentElement){const s=getComputedStyle(p);"
+            + "if(s.visibility==='hidden'||s.display==='none'||Number(s.opacity)<=0)return false;}const r=e.getBoundingClientRect();return r.width>0&&r.height>0;};"
+            + "const progress=e=>{for(let p=e;p&&p!==body;p=p.parentElement){const s=getComputedStyle(p),names=String(s.animationName||'').split(',').map(v=>v.trim());"
+            + "if(names.includes('progress-bar')&&String(s.animationPlayState||'running')!=='paused')return true;}return false;};"
+            + "const starts=e=>n(e.textContent).startsWith(q),nodes=[...body.querySelectorAll('*')];"
+            + "return nodes.some(e=>starts(e)&&![...e.children].some(starts)&&visible(e)&&progress(e));})()";
+    }
+
+    private static string WashTargetExpression(bool click)
+    {
+        // 洗浄地点は重なるzoneから同じラベルが複数届くことがあります。実際に操作可能な
+        // hit要素へまとめ、選択状態、照準との距離、DOM順の順に一意に選びます。
+        return "(() => {"
+            + "const q='石を洗う',n=s=>String(s||'').replace(/\\s+/g,' ').trim(),body=document.body;"
+            + "const shown=e=>{if(!e||!e.isConnected)return false;for(let p=e;p;p=p.parentElement){const s=getComputedStyle(p);"
+            + "if(s.visibility==='hidden'||s.display==='none'||Number(s.opacity)<=0)return false;}return true;};"
+            + "const visible=e=>{if(!shown(e))return false;const r=e.getBoundingClientRect();return r.width>0&&r.height>0;};"
+            + "const usable=e=>visible(e)&&getComputedStyle(e).pointerEvents!=='none'&&!e.matches(':disabled')&&e.getAttribute('aria-disabled')!=='true';"
+            + "if(!shown(body))return false;const root=document.querySelector('#options-wrapper');if(!shown(root))return false;"
+            + "const match=e=>n(e.textContent)===q,leaves=[...root.querySelectorAll('*')].filter(e=>match(e)&&![...e.children].some(match));"
+            + "const seen=new Set(),candidates=[];for(let order=0;order<leaves.length;order++){const leaf=leaves[order];"
+            + "const hit=leaf.closest('.option-container,li,button,[role=button]')||leaf.closest('a')||leaf;"
+            + "if(!root.contains(hit)||seen.has(hit)||!usable(leaf)||!usable(hit))continue;seen.add(hit);candidates.push({leaf,hit,order});}"
+            + "if(!candidates.length)return false;"
+            + (click
+                ? "const semantic=e=>e.matches(':hover,:focus,:focus-within,.active,.selected,[aria-selected=true],[aria-current=true]')||!!e.querySelector(':hover,.active,.selected,[aria-selected=true],[aria-current=true]');"
+                    + "const eye=[document.querySelector('#eyeicon'),document.querySelector('#eye')].find(visible),er=eye?eye.getBoundingClientRect():null;"
+                    + "const ax=er?er.left+er.width/2:innerWidth/2,ay=er?er.top+er.height/2:innerHeight/2;"
+                    + "for(const candidate of candidates){const r=candidate.hit.getBoundingClientRect(),dx=r.left+r.width/2-ax,dy=r.top+r.height/2-ay;"
+                    + "candidate.preferred=semantic(candidate.hit)||semantic(candidate.leaf);candidate.distance=dx*dx+dy*dy;}"
+                    + "candidates.sort((a,b)=>(b.preferred?1:0)-(a.preferred?1:0)||a.distance-b.distance||a.order-b.order);"
+                    + "const choice=candidates[0];if(!usable(choice.leaf)||!usable(choice.hit))return false;choice.hit.click();return true;"
+                : "return true;")
+            + "})()";
     }
 
     private static string ProbeStorageExpression()
