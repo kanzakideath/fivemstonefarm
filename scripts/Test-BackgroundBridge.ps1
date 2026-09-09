@@ -140,6 +140,36 @@ function Invoke-BridgeCapture {
     }
 }
 
+function Invoke-BridgeSimple {
+    param(
+        [Parameter(Mandatory)] [string]$Mode
+    )
+
+    $resultPath = Join-Path ([IO.Path]::GetTempPath()) ('ai-miner-bridge-simple-' + [Guid]::NewGuid().ToString('N') + '.txt')
+    $process = $null
+    try {
+        $process = Start-Process -FilePath $Bridge -ArgumentList @(
+            $Mode, ('"' + $resultPath + '"')
+        ) -PassThru -WindowStyle Hidden
+        if (-not $process.WaitForExit(10000)) {
+            try { $process.Kill() } catch { }
+            throw "The $Mode bridge test timed out."
+        }
+        if ($process.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $resultPath -PathType Leaf)) {
+            throw "The $Mode bridge test failed with exit code $($process.ExitCode)."
+        }
+        return (Get-Content -LiteralPath $resultPath -Raw).Trim()
+    }
+    finally {
+        if ($process -and -not $process.HasExited) {
+            try { $process.Kill() } catch { }
+        }
+        if (Test-Path -LiteralPath $resultPath -PathType Leaf) {
+            Remove-Item -LiteralPath $resultPath -Force
+        }
+    }
+}
+
 function Test-FinalReleaseFailure {
     param(
         [Parameter(Mandatory)] [System.Net.Sockets.TcpListener]$Listener,
@@ -294,6 +324,10 @@ try {
 
     [Environment]::SetEnvironmentVariable($testPortVariable, ([string]$Port), 'Process')
     [Environment]::SetEnvironmentVariable($testTokenVariable, $testToken, 'Process')
+
+    if ((Invoke-BridgeSimple -Mode 'self-test') -ne 'SELFTEST OK') {
+        throw 'self-test returned an unexpected result.'
+    }
 
     Test-TestPortAuthentication -Listener $listener -SelectedPort $Port -TestToken $testToken
     Test-RouteHealthProductionOnly -Listener $listener -SelectedPort $Port

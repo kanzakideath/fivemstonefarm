@@ -9,7 +9,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "8.0.3"
+global AppVersion := "8.0.4"
 processId := DllCall("GetCurrentProcessId")
 isUiSmokeTest := HasCommandLineArgument("--smoke-test")
 isVisualTest := HasCommandLineArgument("--visual-test")
@@ -202,6 +202,7 @@ global State := {
     automationPhase: "stopped",
     inventoryBaseline: "",
     nextCapacityCheckAt: 0,
+    nextActionAt: 0,
     storagePending: false,
     storageRecoveryAttempted: false,
     capacityProbeFailures: 0,
@@ -218,6 +219,7 @@ global State := {
     lastStorageProbeResult: "",
     lastTargetProbeResult: "",
     lastTargetProbeFatal: false,
+    statusOverlay: 0,
     registrationActive: false,
     registrationCancelled: false,
     registrationOverlay: 0,
@@ -294,6 +296,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
         vehicleWorkMode: "mining", vehicleRouteFormat: 5,
         vehicleOutboundRoute: "", vehicleReturnRoute: ""
     }
+    testOverlayBounds := RuntimeStatusOverlayBounds(100, 200, 1280, 720)
     exitCode := !FileExist(State.buttonTemplates[1].path) ? 11
         : !FileExist(State.buttonTemplates[2].path) ? 12
         : !FileExist(State.hungerTemplatePath) ? 13
@@ -367,7 +370,20 @@ if A_Args.Length && A_Args[1] = "--validate" {
         : WorkViewDownRoute(450) != "450:32" ? 69
         : !InventorySlotWasConsumed("0001.food.e30=2", "0001.food.e30=1", 1) ? 70
         : InventorySlotWasConsumed("0001.food.e30=2", "0001.food.e30=2", 1) ? 71
-        : !InventorySlotWasConsumed("0001.food.e30=1", "-", 1) ? 72 : 0
+        : !InventorySlotWasConsumed("0001.food.e30=1", "-", 1) ? 72
+        : RuntimeStatusOverlayModeLabel("washing") != "石洗い" ? 73
+        : RuntimeStatusOverlayCompactStatus("●  FiveM内部UIへ再接続中")
+            != "FiveM内部UIへ再接続中" ? 74
+        : RuntimeStatusOverlayMeta(3, true, 2500, 2)
+            != "操作 3 | 空き 2.5 kg | 収納 2" ? 75
+        : testOverlayBounds.x != 480 ? 77
+        : testOverlayBounds.y != 234 || testOverlayBounds.w != 520
+            || testOverlayBounds.h != 58 ? 78
+        : WorkCooldownWakeDelay(6000) != 4500 ? 79
+        : WorkCooldownWakeDelay(1500) != 1500 ? 80
+        : !CapacityNeedsStorage({weight: 149995, maxWeight: 150000,
+            used: 8, slots: 50}, &testCapacityReason, &testFreeWeight) ? 81
+        : testCapacityReason != "weight" || testFreeWeight != 5 ? 82 : 0
     if exitCode = 19
         try FileAppend "UPDATER_CAPS=" updaterCapabilities "`r`n",
             State.diagnosticPath, "UTF-8"
@@ -1126,6 +1142,179 @@ ApplyRoundedWindowCorners(hwnd) {
         DllCall "dwmapi\DwmSetWindowAttribute", "Ptr", hwnd,
             "UInt", 33, "Ptr", preference.Ptr, "UInt", 4
     }
+}
+
+StartRuntimeStatusOverlay() {
+    SetTimer UpdateRuntimeStatusOverlay, 250
+    UpdateRuntimeStatusOverlay()
+}
+
+HideRuntimeStatusOverlay() {
+    global State
+    SetTimer UpdateRuntimeStatusOverlay, 0
+    if IsObject(State.statusOverlay) && State.statusOverlay.visible {
+        try State.statusOverlay.gui.Hide()
+        State.statusOverlay.visible := false
+    }
+}
+
+DestroyRuntimeStatusOverlay() {
+    global State
+    SetTimer UpdateRuntimeStatusOverlay, 0
+    if IsObject(State.statusOverlay) {
+        try State.statusOverlay.gui.Destroy()
+    }
+    State.statusOverlay := 0
+}
+
+EnsureRuntimeStatusOverlay() {
+    global State
+    if IsObject(State.statusOverlay)
+        return State.statusOverlay
+
+    overlay := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x20 +E0x08000000")
+    overlay.BackColor := "171A21"
+    overlay.MarginX := 14
+    overlay.MarginY := 7
+    overlay.SetFont("s10 w700 cF4F7FB", "Segoe UI")
+    title := overlay.AddText("x14 y7 w492 h20 Center", "")
+    overlay.SetFont("s8 w500 cB8C2D0", "Segoe UI")
+    meta := overlay.AddText("x14 y31 w492 h18 Center", "")
+    State.statusOverlay := {
+        gui: overlay, title: title, meta: meta,
+        visible: false, textKey: "", x: "", y: "", w: "", h: ""
+    }
+    return State.statusOverlay
+}
+
+UpdateRuntimeStatusOverlay(*) {
+    global State
+    if !RuntimeStatusOverlayShouldBeVisible(&bounds) {
+        if IsObject(State.statusOverlay) && State.statusOverlay.visible {
+            try State.statusOverlay.gui.Hide()
+            State.statusOverlay.visible := false
+        }
+        return
+    }
+
+    statusOverlay := EnsureRuntimeStatusOverlay()
+    title := RuntimeStatusOverlayTitle(State.runMode, State.statusLabel.Text,
+        State.automationPhase)
+    meta := RuntimeStatusOverlayMeta(State.successes,
+        State.lastInventoryMaxWeight > 0, State.lastInventoryFreeWeight,
+        State.storageTrips)
+    textKey := title "`n" meta
+    boundsChanged := statusOverlay.x != bounds.x || statusOverlay.y != bounds.y
+        || statusOverlay.w != bounds.w || statusOverlay.h != bounds.h
+    textChanged := statusOverlay.textKey != textKey
+    wasVisible := statusOverlay.visible
+
+    if boundsChanged {
+        statusOverlay.title.Move(14, 7, bounds.w - 28, 20)
+        statusOverlay.meta.Move(14, 31, bounds.w - 28, 18)
+    }
+    if textChanged {
+        statusOverlay.title.Text := title
+        statusOverlay.meta.Text := meta
+        statusOverlay.textKey := textKey
+    }
+
+    if !statusOverlay.visible {
+        statusOverlay.gui.Show("x" bounds.x " y" bounds.y " w" bounds.w
+            " h" bounds.h " NoActivate")
+        try WinSetTransparent 224, "ahk_id " statusOverlay.gui.Hwnd
+        ApplyRoundedWindowCorners(statusOverlay.gui.Hwnd)
+        statusOverlay.visible := true
+    } else if boundsChanged {
+        try WinMove bounds.x, bounds.y, bounds.w, bounds.h,
+            "ahk_id " statusOverlay.gui.Hwnd
+    }
+    ; 初回表示とクライアント矩形の変化時だけ、フォーカスを奪わず最前面へ
+    ; 戻します。250msごとのz-order更新はAlt+Tab先を邪魔するため行いません。
+    if !wasVisible || boundsChanged {
+        try DllCall("user32\SetWindowPos", "Ptr", statusOverlay.gui.Hwnd,
+            "Ptr", -1, "Int", 0, "Int", 0, "Int", 0, "Int", 0, "UInt", 0x13)
+    }
+
+    if boundsChanged {
+        statusOverlay.x := bounds.x
+        statusOverlay.y := bounds.y
+        statusOverlay.w := bounds.w
+        statusOverlay.h := bounds.h
+    }
+}
+
+RuntimeStatusOverlayShouldBeVisible(&bounds) {
+    global State
+    bounds := 0
+    if !State.running || !State.targetHwnd
+        return false
+    if !DllCall("user32\IsWindow", "Ptr", State.targetHwnd, "Int")
+        return false
+    if !IsFiveMWindow(State.targetHwnd)
+        return false
+    try {
+        if WinGetMinMax("ahk_id " State.targetHwnd) = -1
+            return false
+    } catch {
+        return false
+    }
+    if !WinActive("ahk_id " State.targetHwnd)
+        return false
+    try WinGetClientPos &clientX, &clientY, &clientW, &clientH,
+        "ahk_id " State.targetHwnd
+    catch
+        return false
+    if clientW <= 0 || clientH <= 0
+        return false
+    bounds := RuntimeStatusOverlayBounds(clientX, clientY, clientW, clientH)
+    return true
+}
+
+RuntimeStatusOverlayBounds(clientX, clientY, clientW, clientH) {
+    margin := clientW >= 360 ? 18 : 8
+    overlayW := Min(520, Max(160, clientW - margin * 2))
+    overlayH := 58
+    overlayX := clientX + Floor((clientW - overlayW) / 2)
+    overlayY := clientY + (clientH >= 240 ? 34 : 12)
+    return {x: overlayX, y: overlayY, w: overlayW, h: overlayH}
+}
+
+RuntimeStatusOverlayTitle(mode, rawStatus, phase) {
+    return RuntimeStatusOverlayModeLabel(mode) " | "
+        RuntimeStatusOverlayCompactStatus(rawStatus, phase)
+}
+
+RuntimeStatusOverlayModeLabel(mode) {
+    return mode = "washing" ? "石洗い"
+        : mode = "gold" ? "砂金採り" : "採掘"
+}
+
+RuntimeStatusOverlayCompactStatus(rawStatus, phase := "") {
+    statusText := Trim(String(rawStatus), " `t`r`n")
+    statusText := RegExReplace(statusText, "^(?:●\s*|状態:\s*)")
+    if !statusText
+        statusText := RuntimeStatusOverlayPhaseLabel(phase)
+    if StrLen(statusText) > 34
+        statusText := SubStr(statusText, 1, 33) "..."
+    return statusText
+}
+
+RuntimeStatusOverlayPhaseLabel(phase) {
+    return phase = "capacity_check" ? "所持品確認中"
+        : phase = "find_registered_vehicle" ? "車両へ移動中"
+        : phase = "depositing" ? "収納中"
+        : phase = "return_to_work" ? "作業地点へ復帰中"
+        : phase = "priming_inventory" ? "所持品準備中"
+        : phase = "eating" ? "食事中"
+        : phase = "preparing" ? "準備中"
+        : phase = "stopped" ? "停止中" : "作業中"
+}
+
+RuntimeStatusOverlayMeta(successes, freeWeightKnown, freeWeight, storageTrips) {
+    freeWeightText := freeWeightKnown ? FormatInventoryWeight(freeWeight) : "未確認"
+    ; ここでの回数はtargetクリックの受理回数です。報酬受取と断定しません。
+    return "操作 " successes " | 空き " freeWeightText " | 収納 " storageTrips
 }
 
 UpdateConnectionStatus(*) {
@@ -3125,6 +3314,7 @@ StartMining(*) {
     State.backgroundDevConPort := 0
     State.automationPhase := "preparing"
     State.inventoryBaseline := ""
+    State.nextActionAt := 0
     State.workpointProbeFailures := 0
     State.nextCapacityCheckAt := 0
     State.storagePending := false
@@ -3153,6 +3343,7 @@ StartMining(*) {
     } finally {
         Critical "Off"
     }
+    StartRuntimeStatusOverlay()
 
     ResetDiagnosticLog()
     WriteDiagnostic("START admin=" A_IsAdmin " hwnd=" targetHwnd
@@ -3274,6 +3465,7 @@ StopMining(*) {
     State.generation += 1
     State.automationPhase := "stopped"
     State.inventoryBaseline := ""
+    State.nextActionAt := 0
     State.capacityProbeFailures := 0
     State.workpointProbeFailures := 0
     State.storagePending := false
@@ -3287,6 +3479,7 @@ StopMining(*) {
     State.lastWorkViewAt := 0
     State.workViewFailures := 0
     State.targetPid := 0
+    HideRuntimeStatusOverlay()
 
     if IsObject(State.timerFn) {
         try SetTimer(State.timerFn, 0)
@@ -3348,6 +3541,22 @@ ScheduleNext(expectedGeneration, delayMs) {
     nextFn := AutomationCycle.Bind(expectedGeneration)
     State.timerFn := nextFn
     SetTimer(nextFn, -Max(1, delayMs))
+}
+
+WorkCooldownWakeDelay(remainingMs) {
+    ; 次回target表示の少し前に起き、サーバー確認・視点補正・食事判定を
+    ; 待ち時間内で済ませます。残り1.5秒以下なら表示予定時刻まで待ちます。
+    remaining := Max(0, Round(remainingMs))
+    return remaining > 1800 ? remaining - 1500 : remaining
+}
+
+ScheduleWorkCooldown(expectedGeneration, actionRequestedAt, cooldownMs) {
+    global State
+    if !IsCurrentRun(expectedGeneration)
+        return
+    State.nextActionAt := actionRequestedAt + cooldownMs
+    remaining := State.nextActionAt - MonotonicMs()
+    ScheduleNext(expectedGeneration, Max(1, WorkCooldownWakeDelay(remaining)))
 }
 
 ParseServerHealth(result, &epoch) {
@@ -4344,6 +4553,23 @@ AutomationCycle(expectedGeneration) {
     global State
     if !IsCurrentRun(expectedGeneration)
         return
+
+    ; 収穫アニメーション中に軽い保守処理を先行します。容量は報酬反映後の
+    ; 正確な値が必要なので、次アクション時刻までは意図的に読みません。
+    if State.nextActionAt > MonotonicMs() {
+        if MaybeHandleServerHealth(expectedGeneration)
+            return
+        if !MaintainBackgroundWorkView(expectedGeneration)
+            return
+        if MaybeHandleBackgroundEating(expectedGeneration)
+            return
+        remaining := State.nextActionAt - MonotonicMs()
+        if remaining > 0 {
+            ScheduleNext(expectedGeneration, remaining)
+            return
+        }
+    }
+    State.nextActionAt := 0
     if MaybeHandleServerHealth(expectedGeneration)
         return
     if MaybeHandleVehicleCapacity(expectedGeneration)
@@ -4666,10 +4892,11 @@ WashAttemptBackground(expectedGeneration) {
                 StopMining()
                 State.statusLabel.Text := "●  FiveMが終了したため停止"
             } else {
-                nextDelay := clickedThisAttempt
-                    ? Max(500, nextCycleAnchor + Config.washCycleMs - MonotonicMs())
-                    : Config.notFoundRetryMs
-                ScheduleNext(expectedGeneration, nextDelay)
+                if clickedThisAttempt
+                    ScheduleWorkCooldown(expectedGeneration, nextCycleAnchor,
+                        Config.washCycleMs)
+                else
+                    ScheduleNext(expectedGeneration, Config.notFoundRetryMs)
             }
         }
     }
@@ -4856,10 +5083,11 @@ GoldAttemptBackground(expectedGeneration) {
                 StopMining()
                 State.statusLabel.Text := "●  FiveMが終了したため停止"
             } else {
-                nextDelay := clickedThisAttempt
-                    ? Max(500, nextCycleAnchor + Config.goldCycleMs - MonotonicMs())
-                    : Config.notFoundRetryMs
-                ScheduleNext(expectedGeneration, nextDelay)
+                if clickedThisAttempt
+                    ScheduleWorkCooldown(expectedGeneration, nextCycleAnchor,
+                        Config.goldCycleMs)
+                else
+                    ScheduleNext(expectedGeneration, Config.notFoundRetryMs)
             }
         }
     }
@@ -5114,7 +5342,8 @@ MineAttempt(expectedGeneration) {
             State.lastMineAt := MonotonicMs()
             State.countLabel.Text := "採掘回数`n" State.successes
             State.statusLabel.Text := "状態: 採掘完了まで待機後、石の再出現を監視します"
-            ScheduleNext(expectedGeneration, Config.miningCompleteWaitMs)
+            ScheduleWorkCooldown(expectedGeneration, State.lastMineAt,
+                Config.miningCompleteWaitMs)
         }
     }
 }
@@ -5128,6 +5357,7 @@ MineAttemptBackground(expectedGeneration) {
     State.attempts += 1
     State.statusLabel.Text := "●  石をバックグラウンド確認中"
     clickIssued := false
+    clickRequestedAt := 0
 
     try {
         if State.waitingForStone {
@@ -5196,6 +5426,7 @@ MineAttemptBackground(expectedGeneration) {
         }
 
         State.statusLabel.Text := "●  採掘しています"
+        clickRequestedAt := MonotonicMs()
         clickResult := RunBackgroundBridgeCancelable(expectedGeneration, "try-mining")
         if !IsCurrentRun(expectedGeneration)
             return
@@ -5225,7 +5456,8 @@ MineAttemptBackground(expectedGeneration) {
             State.lastMineAt := MonotonicMs()
             State.countLabel.Text := "採掘回数`n" State.successes
             State.statusLabel.Text := "●  採掘完了を待っています"
-            ScheduleNext(expectedGeneration, Config.miningCompleteWaitMs)
+            ScheduleWorkCooldown(expectedGeneration, State.lastMineAt,
+                Config.miningCompleteWaitMs)
         }
     }
 }
@@ -6260,6 +6492,7 @@ Cleanup(*) {
         && (State.companionReady || State.companionEpoch)
     State.registrationCancelled := true
     CloseLocalRegistrationOverlay()
+    DestroyRuntimeStatusOverlay()
     CancelActiveBridgeProcess()
     if cancelCompanion
         RunCompanionCommand("cancel")

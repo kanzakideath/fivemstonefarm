@@ -302,6 +302,11 @@ internal static class CdpBridge
         AppendRoutePresses(routeCommand, 65);
         var viewCommand = new StringBuilder(ViewReleaseCommand());
         AppendViewPresses(viewCommand, 10);
+        string inventorySnapshotExpression = InventorySnapshotExpression();
+        string staleWeightSnapshot = FormatInventorySnapshotResult("SNAPSHOT_DETAIL "
+            + "{\"weight\":42,\"max\":1000,\"used\":2,\"slots\":5,\"items\":["
+            + "{\"slot\":1,\"name\":\"ore\",\"count\":3,\"meta\":\"{}\"},"
+            + "{\"slot\":2,\"name\":\"washed_stone\",\"count\":1,\"meta\":\"{\\\"quality\\\":100}\"}]}");
         const string companionJson = "{\"protocol\":\"ai-miner-companion\",\"protocolVersion\":1,"
             + "\"resource\":\"ai_miner_companion\",\"resourceVersion\":\"1.0.0\","
             + "\"epoch\":\"ame_0123456789abcdef0123456789abcdef\",\"sequence\":7,"
@@ -406,6 +411,10 @@ internal static class CdpBridge
             || InputReleaseCommand().IndexOf(";-inv", StringComparison.Ordinal) < 0
             || viewCommand.ToString().IndexOf(";+look_down", StringComparison.Ordinal) < 0
             || viewCommand.ToString().IndexOf(";+look_right", StringComparison.Ordinal) < 0
+            || inventorySnapshotExpression.IndexOf("left.weight", StringComparison.Ordinal) >= 0
+            || inventorySnapshotExpression.IndexOf("weight:whole(calculatedWeight)", StringComparison.Ordinal) < 0
+            || staleWeightSnapshot != "SNAPSHOT 42 1000 2 5 0001.ore.e30=3,0002.washed_stone."
+                + EncodeBase64Url("{\"quality\":100}") + "=1"
             || !baseline.TryGetValue("1\nore\n{}", out count) || count != 10
             || !canonicalBaseline.TryGetValue("2\nore\n" + canonicalMetadata, out count) || count != 3
             || largeToken.Length <= 8192 || largeToken.Length > MaximumMetadataTokenLength
@@ -642,21 +651,13 @@ internal static class CdpBridge
 
     private static async Task<string> InventorySnapshotAsync()
     {
-        string expression = "(() => {" + InventoryPrelude()
-            + "const store=findStore();if(!store)return 'ERROR INVENTORY_UNAVAILABLE';"
-            + "let inv;try{inv=store.getState().inventory;}catch(e){return 'ERROR INVENTORY_UNAVAILABLE';}"
-            + "const left=inv&&inv.leftInventory;if(!left||String(left.type||'').toLowerCase()!=='player')return 'ERROR INVENTORY_UNAVAILABLE';"
-            + "const meta=v=>{if(v===undefined||v===null)return '{}';try{if(typeof v!=='object')return JSON.stringify(v);"
-            + "const clean=x=>{if(x===null||typeof x!=='object')return x;if(Array.isArray(x))return x.map(clean);const o=Object.create(null);for(const k of Object.keys(x).sort())o[k]=clean(x[k]);return o;};return JSON.stringify(clean(v));}catch(e){return ''}};"
-            + "const items=Array.isArray(left.items)?left.items:[],entries=[];let calculatedWeight=0,used=0;"
-            + "for(const item of items){if(!item||!item.name||num(item.count)<=0)continue;"
-            + "const name=String(item.name),count=Math.trunc(num(item.count));if(!/^[A-Za-z0-9_-]{1,64}$/.test(name))return 'ERROR UNSUPPORTED_ITEM_NAME';"
-            + "if(count<=0||count>2147483647)return 'ERROR INVALID_INVENTORY';const metadata=meta(item.metadata);if(!metadata)return 'ERROR INVALID_METADATA';"
-            + "const slot=Math.trunc(num(item.slot));if(slot<1||slot>1000)return 'ERROR INVALID_INVENTORY';"
-            + "entries.push({slot:slot,name:name,count:count,meta:metadata});calculatedWeight+=Math.max(0,num(item.weight));used++;}"
-            + "const serverWeight=Number(left.weight),hasServerWeight=left.weight!==undefined&&left.weight!==null&&Number.isFinite(serverWeight)&&serverWeight>=0;"
-            + "return 'SNAPSHOT_DETAIL '+JSON.stringify({weight:whole(hasServerWeight?serverWeight:calculatedWeight),max:whole(left.maxWeight),used:used,slots:whole(left.slots),items:entries});})()";
-        string raw = await EvaluateInventoryStringAsync(expression, TimeSpan.FromSeconds(5), false).ConfigureAwait(false);
+        string raw = await EvaluateInventoryStringAsync(
+            InventorySnapshotExpression(), TimeSpan.FromSeconds(5), false).ConfigureAwait(false);
+        return FormatInventorySnapshotResult(raw);
+    }
+
+    private static string FormatInventorySnapshotResult(string raw)
+    {
         if (!raw.StartsWith("SNAPSHOT_DETAIL ", StringComparison.Ordinal))
             return raw;
 
@@ -709,6 +710,23 @@ internal static class CdpBridge
         return "SNAPSHOT " + IntegerField(detail, "weight") + " "
             + IntegerField(detail, "max") + " " + IntegerField(detail, "used") + " "
             + IntegerField(detail, "slots") + " " + baseline;
+    }
+
+    private static string InventorySnapshotExpression()
+    {
+        return "(() => {" + InventoryPrelude()
+            + "const store=findStore();if(!store)return 'ERROR INVENTORY_UNAVAILABLE';"
+            + "let inv;try{inv=store.getState().inventory;}catch(e){return 'ERROR INVENTORY_UNAVAILABLE';}"
+            + "const left=inv&&inv.leftInventory;if(!left||String(left.type||'').toLowerCase()!=='player')return 'ERROR INVENTORY_UNAVAILABLE';"
+            + "const meta=v=>{if(v===undefined||v===null)return '{}';try{if(typeof v!=='object')return JSON.stringify(v);"
+            + "const clean=x=>{if(x===null||typeof x!=='object')return x;if(Array.isArray(x))return x.map(clean);const o=Object.create(null);for(const k of Object.keys(x).sort())o[k]=clean(x[k]);return o;};return JSON.stringify(clean(v));}catch(e){return ''}};"
+            + "const items=Array.isArray(left.items)?left.items:[],entries=[];let calculatedWeight=0,used=0;"
+            + "for(const item of items){if(!item||!item.name||num(item.count)<=0)continue;"
+            + "const name=String(item.name),count=Math.trunc(num(item.count));if(!/^[A-Za-z0-9_-]{1,64}$/.test(name))return 'ERROR UNSUPPORTED_ITEM_NAME';"
+            + "if(count<=0||count>2147483647)return 'ERROR INVALID_INVENTORY';const metadata=meta(item.metadata);if(!metadata)return 'ERROR INVALID_METADATA';"
+            + "const slot=Math.trunc(num(item.slot));if(slot<1||slot>1000)return 'ERROR INVALID_INVENTORY';"
+            + "entries.push({slot:slot,name:name,count:count,meta:metadata});calculatedWeight+=Math.max(0,num(item.weight));used++;}"
+            + "return 'SNAPSHOT_DETAIL '+JSON.stringify({weight:whole(calculatedWeight),max:whole(left.maxWeight),used:used,slots:whole(left.slots),items:entries});})()";
     }
 
     private static async Task<string> HealthAsync()
