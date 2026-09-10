@@ -28,7 +28,9 @@ internal static class Updater
     private const long MaximumArtifactSize = 30L * 1024L * 1024L;
     private const int NetworkTimeoutMilliseconds = 15000;
     private const int ParentExitTimeoutMilliseconds = 30000;
-    private const int ValidationTimeoutMilliseconds = 30000;
+    // A cold WebView2 start can exceed 30 seconds on a busy GTA/FiveM machine.
+    // Build validation already uses the same 60-second budget.
+    private const int ValidationTimeoutMilliseconds = 60000;
 
     private const int MoveFileReplaceExisting = 0x1;
     private const int MoveFileDelayUntilReboot = 0x4;
@@ -728,6 +730,8 @@ internal static class Updater
 
     private static void ValidateApplicationMode(string targetPath, string arguments)
     {
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        Log("Starting updated application validation: " + SafeForLog(arguments) + ".");
         ProcessStartInfo startInfo = new ProcessStartInfo();
         startInfo.FileName = targetPath;
         startInfo.Arguments = arguments;
@@ -743,10 +747,13 @@ internal static class Updater
             if (!process.WaitForExit(ValidationTimeoutMilliseconds))
             {
                 try { process.Kill(); } catch { }
-                throw new TimeoutException("The updated application validation timed out.");
+                throw new TimeoutException("The updated application validation timed out (" + arguments + ").");
             }
             if (process.ExitCode != 0)
-                throw new InvalidDataException("The updated application failed startup validation (" + arguments + ").");
+                throw new InvalidDataException("The updated application failed startup validation (" + arguments
+                    + ", exit " + process.ExitCode.ToString(CultureInfo.InvariantCulture) + ").");
+            Log("Updated application validation passed: " + SafeForLog(arguments) + " in "
+                + stopwatch.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture) + " ms.");
         }
     }
 

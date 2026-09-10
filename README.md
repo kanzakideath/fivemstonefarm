@@ -1,4 +1,4 @@
-# AI採掘機 v9.1.2
+# AI採掘機 v9.1.3
 
 FiveMの対象UIを構造的に検出し、採掘・石洗い・砂金採りを繰り返すWindows向け補助ツールです。対象の検出と選択は画面座標やモニター解像度に依存せずバックグラウンドで行います。GTAの視点は、FiveMが前面なら相対マウス入力、バックグラウンド動作中ならFiveMのDevCon入力だけで補正し、作業中の別アプリへマウスやキーを送りません。
 
@@ -65,7 +65,7 @@ FiveMの対象UIを構造的に検出し、採掘・石洗い・砂金採りを�
 
 ## 導入
 
-1. [Releases](https://github.com/kanzakideath/fivemstonefarm/releases) から `AI-Miner-v9.1.2.zip` を取得します。
+1. [Releases](https://github.com/kanzakideath/fivemstonefarm/releases) から `AI-Miner-v9.1.3.zip` を取得します。
 2. 書き込み可能なフォルダーへ展開します。
 3. `AI採掘機.exe` を起動します。
 4. 「設定」でバックグラウンド操作、キー、視点補正、自動食事・食料スロット、自動収納のしきい値を確認します。
@@ -93,14 +93,14 @@ FiveMのウィンドウ/PIDと対象・インベントリNUIのセッション�
 - Git
 
 ```powershell
-pwsh -File .\scripts\Build.ps1 -Version 9.1.2
+pwsh -File .\scripts\Build.ps1 -Version 9.1.3
 ```
 
 ビルドは依存ロック、Web UI、WebView2ホスト、FiveM bridge、更新helper、完成EXEの自己テストを実行します。
 
 ## 確認上の制約
 
-v9.1.2の統合テストと模擬Farm状態試験は、実際のFiveMサーバーへ入力しないローカル環境で実行できます。一方、サーバー固有のox_inventory表示、車両配置、通信遅延を含む実地動作は利用先ごとに異なるため、配布前に許可されたFiveM環境での確認が必要です。
+v9.1.3の統合テストと模擬Farm状態試験は、実際のFiveMサーバーへ入力しないローカル環境で実行できます。一方、サーバー固有のox_inventory表示、車両配置、通信遅延を含む実地動作は利用先ごとに異なるため、配布前に許可されたFiveM環境での確認が必要です。
 
 ## 構成
 

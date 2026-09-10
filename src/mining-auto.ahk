@@ -9,7 +9,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "9.1.2"
+global AppVersion := "9.1.3"
 ;@Ahk2Exe-SetVersion %A_PriorLine~U)^.*"([^"]+)".*$~$1%
 processId := DllCall("GetCurrentProcessId")
 isUiSmokeTest := HasCommandLineArgument("--smoke-test")
@@ -17,8 +17,11 @@ isVisualTest := HasCommandLineArgument("--visual-test")
 isUiTestRun := isUiSmokeTest || isVisualTest
 isValidationRun := HasCommandLineArgument("--validate")
 isHistoryImportTestRun := HasCommandLineArgument("--history-import-self-test")
+; Windows reuses process IDs. Validation artifacts keyed only by PID could be
+; mistaken for the current run after an earlier test left a receipt behind.
+testRunId := processId "-" (A_TickCount & 0xFFFFFFFF) "-" Random(100000, 999999)
 persistentDataRoot := isUiTestRun || isValidationRun
-    ? A_Temp "\ai-miner-persistent-test-" processId
+    ? A_Temp "\ai-miner-persistent-test-" testRunId
     : isHistoryImportTestRun
         ? EnvGet("LOCALAPPDATA") "\AI採掘機"
         : EnvGet("USERPROFILE") "\Saved Games\AI採掘機"
@@ -36,7 +39,7 @@ FileInstall "stone-marker-template.png", stoneMarkerTemplatePath, true
 FileInstall "AI採掘機_Background.exe", backgroundBridgePath, true
 FileInstall "AI採掘機_Updater.exe", updaterHelperPath, true
 settingsPath := isUiTestRun
-    ? A_Temp "\ai-miner-ui-test-" processId ".ini"
+    ? A_Temp "\ai-miner-ui-test-" testRunId ".ini"
     : A_ScriptDir "\AI採掘機.ini"
 legacySettingsPath := A_ScriptDir "\自動採掘マクロ.ini"
 if !FileExist(settingsPath) && FileExist(legacySettingsPath) {
@@ -228,7 +231,7 @@ global State := {
     workViewNoEffectCount: 0,
     workViewDirection: Config.workViewMouseDirection,
     diagnosticPath: isUiTestRun || HasCommandLineArgument("--validate")
-        ? A_Temp "\ai-miner-diagnostic-test-" processId ".log"
+        ? A_Temp "\ai-miner-diagnostic-test-" testRunId ".log"
         : A_ScriptDir "\AI採掘機_診断.log",
     diagnosticLines: 0,
     startHotIf: 0,
@@ -303,16 +306,16 @@ global State := {
     legacyDurabilityBackupRoot: persistentDataRoot "\legacy-backups",
     legacyDurabilityMigrationReady: false,
     metagameOutboxPath: isUiTestRun || isValidationRun
-        ? A_Temp "\ai-miner-meta-outbox-test-" processId ".tsv"
+        ? A_Temp "\ai-miner-meta-outbox-test-" testRunId ".tsv"
         : persistentDataRoot "\metagame-outbox.tsv",
     metagameBackfillMarkerPath: isUiTestRun || isValidationRun
-        ? A_Temp "\ai-miner-meta-backfill-test-" processId ".done"
+        ? A_Temp "\ai-miner-meta-backfill-test-" testRunId ".done"
         : A_ScriptDir "\AI採掘機_STONE履歴移行.v1.done",
     metagameSupportBackfillReceiptPath: isUiTestRun || isValidationRun
-        ? A_Temp "\ai-miner-meta-support-receipt-test-" processId ".done"
+        ? A_Temp "\ai-miner-meta-support-receipt-test-" testRunId ".done"
         : A_ScriptDir "\AI採掘機_STONE履歴復元.v1.receipt",
     verifiedRewardWalPath: isUiTestRun || isValidationRun
-        ? A_Temp "\ai-miner-verified-reward-wal-test-" processId ".tsv"
+        ? A_Temp "\ai-miner-verified-reward-wal-test-" testRunId ".tsv"
         : persistentDataRoot "\verified-reward-wal.tsv",
     verifiedRewardWalPending: Map(),
     verifiedRewardWalOps: 0,
@@ -3645,10 +3648,12 @@ TestLegacyFarmHistoryBackfillIntegration(fixture, expectedOutboxLength) {
     testLogPath := testRoot "\AI採掘機_診断.log"
     testOutboxPath := testRoot "\outbox.tsv"
     testMarkerPath := testRoot "\backfill.done"
+    testSupportReceiptPath := testRoot "\support-backfill.done"
     saved := {
         diagnosticPath: State.diagnosticPath,
         outboxPath: State.metagameOutboxPath,
         markerPath: State.metagameBackfillMarkerPath,
+        supportReceiptPath: State.metagameSupportBackfillReceiptPath,
         outbox: State.metagameOutbox,
         outboxDirty: State.metagameOutboxDirty,
         replayNormalized: State.metagameReplayNormalized,
@@ -3661,6 +3666,7 @@ TestLegacyFarmHistoryBackfillIntegration(fixture, expectedOutboxLength) {
         try FileDelete testLogPath
         try FileDelete testOutboxPath
         try FileDelete testMarkerPath
+        try FileDelete testSupportReceiptPath
         fixtureFile := FileOpen(testLogPath, "w", "UTF-8-RAW")
         if !IsObject(fixtureFile)
             return false
@@ -3670,6 +3676,7 @@ TestLegacyFarmHistoryBackfillIntegration(fixture, expectedOutboxLength) {
         State.diagnosticPath := testLogPath
         State.metagameOutboxPath := testOutboxPath
         State.metagameBackfillMarkerPath := testMarkerPath
+        State.metagameSupportBackfillReceiptPath := testSupportReceiptPath
         State.metagameOutbox := []
         State.metagameOutboxDirty := false
         State.metagameReplayNormalized := true
@@ -3699,6 +3706,7 @@ TestLegacyFarmHistoryBackfillIntegration(fixture, expectedOutboxLength) {
         State.diagnosticPath := saved.diagnosticPath
         State.metagameOutboxPath := saved.outboxPath
         State.metagameBackfillMarkerPath := saved.markerPath
+        State.metagameSupportBackfillReceiptPath := saved.supportReceiptPath
         State.metagameOutbox := saved.outbox
         State.metagameOutboxDirty := saved.outboxDirty
         State.metagameReplayNormalized := saved.replayNormalized
@@ -3707,6 +3715,7 @@ TestLegacyFarmHistoryBackfillIntegration(fixture, expectedOutboxLength) {
         try FileDelete testLogPath
         try FileDelete testOutboxPath
         try FileDelete testMarkerPath
+        try FileDelete testSupportReceiptPath
         try DirDelete testRoot
     }
     return passed

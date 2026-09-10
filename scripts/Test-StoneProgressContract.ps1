@@ -123,8 +123,14 @@ Assert-SourcePattern `
     'supportPending := !LegacyFarmHistorySupportReceiptComplete\([\s\S]{0,2200}PersistMetagameOutbox\(candidate,[\s\S]{0,1700}WriteLegacyFarmHistorySupportReceipt\(' `
     'A support export added after the normal marker must have its own content receipt written only after queue persistence.'
 Assert-SourcePattern `
-    'diagnosticPath: isUiTestRun \|\| HasCommandLineArgument\("--validate"\)\s+\? A_Temp "\\ai-miner-diagnostic-test-" processId "\.log"\s+: A_ScriptDir "\\[^"\r\n]+\.log"' `
+    'diagnosticPath: isUiTestRun \|\| HasCommandLineArgument\("--validate"\)\s+\? A_Temp "\\ai-miner-diagnostic-test-" testRunId "\.log"\s+: A_ScriptDir "\\[^"\r\n]+\.log"' `
     'Updater validation, smoke, and visual tests must never modify the install diagnostic log.'
+Assert-SourcePattern `
+    'testRunId := processId "-" \(A_TickCount & 0xFFFFFFFF\) "-" Random\(100000, 999999\)[\s\S]{0,420}persistentDataRoot :=[\s\S]{0,160}testRunId' `
+    'Updater validation artifacts must not be keyed only by a reusable Windows process ID.'
+Assert-SourcePattern `
+    'TestLegacyFarmHistoryBackfillIntegration\(fixture, expectedOutboxLength\)[\s\S]{0,850}supportReceiptPath: State\.metagameSupportBackfillReceiptPath[\s\S]{0,900}State\.metagameSupportBackfillReceiptPath := testSupportReceiptPath[\s\S]{0,1700}State\.metagameSupportBackfillReceiptPath := saved\.supportReceiptPath' `
+    'The history integration test must isolate and restore its support-receipt path.'
 Assert-SourcePattern `
     'TryClaimStartOperation\(&startToken\)\s*\{[\s\S]{0,220}EnterMetagameOutboxCritical\(\)[\s\S]{0,500}AutomationStartAllowed\(State\.running, State\.registrationActive,[\s\S]{0,220}State\.activeFarmCallbacks\)[\s\S]{0,500}State\.startInProgress := true' `
     'A Start request does not atomically claim ownership before blocking preflight.'
