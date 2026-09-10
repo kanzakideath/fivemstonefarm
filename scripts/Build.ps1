@@ -34,6 +34,7 @@ $stoneSidecarBackendProject = Join-Path $stoneSidecarRoot 'backend\StoneMetaGame
 $stoneSidecarTestsProject = Join-Path $stoneSidecarRoot 'backend.tests\StoneMetaGame.Tests.csproj'
 $stoneSidecarUiRoot = Join-Path $stoneSidecarRoot 'ui'
 $stoneSidecarDataRoot = Join-Path $stoneSidecarRoot 'data'
+$stoneverseRoot = Join-Path $repoRoot 'sidecar\stoneverse'
 $integratedMetaRoot = Join-Path $uiWebRoot 'src\metagame'
 $rootReadme = Join-Path $repoRoot 'README.md'
 $sourceReadme = Join-Path $sourceRoot 'README.md'
@@ -363,14 +364,27 @@ finally {
     Pop-Location
 }
 
+Push-Location $stoneverseRoot
+try {
+    & $npm.Source ci --ignore-scripts --no-audit --no-fund
+    if ($LASTEXITCODE -ne 0) { throw 'npm ci failed for STONEVERSE.' }
+    & $npm.Source run build:host
+    if ($LASTEXITCODE -ne 0) { throw 'STONEVERSE Farm host bridge build failed.' }
+    & $npm.Source run build
+    if ($LASTEXITCODE -ne 0) { throw 'STONEVERSE application build failed.' }
+}
+finally {
+    Pop-Location
+}
+
 Push-Location $uiWebRoot
 try {
     & $npm.Source ci --ignore-scripts --no-audit --no-fund
     if ($LASTEXITCODE -ne 0) { throw 'npm ci failed for the offline UI.' }
-    & $npm.Source run check
-    if ($LASTEXITCODE -ne 0) { throw 'Web UI checks failed.' }
     & $npm.Source run build
     if ($LASTEXITCODE -ne 0) { throw 'Web UI build failed.' }
+    & $npm.Source run check
+    if ($LASTEXITCODE -ne 0) { throw 'Web UI checks failed.' }
 }
 finally {
     Pop-Location
@@ -399,6 +413,8 @@ if (-not (Test-Path -LiteralPath $uiLoader -PathType Leaf)) {
 foreach ($uiFile in @($uiHostExecutable, $uiHostConfig, $uiCore, $uiWinForms, $uiLoader,
         (Join-Path $uiWebOutput 'index.html'), (Join-Path $uiWebOutput 'app.css'),
         (Join-Path $uiWebOutput 'app.js'), (Join-Path $uiWebOutput 'build-info.json'),
+        (Join-Path $uiWebOutput 'stoneverse-host.js'),
+        (Join-Path $uiWebOutput 'stoneverse\index.html'),
         (Join-Path $uiWebOutput 'vendor\framework7-bundle.min.css'),
         (Join-Path $uiWebOutput 'vendor\framework7-bundle.min.js'),
         (Join-Path $uiWebOutput 'metagame\meta-game.js'),
@@ -416,6 +432,7 @@ $expectedUiFiles = @(
     'app.js',
     'build-info.json',
     'index.html',
+    'stoneverse-host.js',
     'metagame/data/achievements.json',
     'metagame/data/affinity.json',
     'metagame/data/assets.json',
@@ -434,6 +451,15 @@ $expectedUiFiles = @(
     'vendor/framework7-bundle.min.css',
     'vendor/framework7-bundle.min.js'
 )
+$stoneverseOutputPrefix = (Join-Path $stoneverseRoot 'dist').TrimEnd('\', '/') `
+    + [IO.Path]::DirectorySeparatorChar
+$expectedUiFiles += @(
+    Get-ChildItem -LiteralPath (Join-Path $stoneverseRoot 'dist') -Recurse -File |
+        ForEach-Object {
+            'stoneverse/' + $_.FullName.Substring($stoneverseOutputPrefix.Length).Replace('\', '/')
+        }
+)
+$expectedUiFiles = @($expectedUiFiles | Sort-Object)
 $uiOutputPrefix = $uiWebOutput.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
 $actualUiFiles = @(
     Get-ChildItem -LiteralPath $uiWebOutput -Recurse -File |
@@ -451,7 +477,9 @@ if ([int]$uiBuildInfo.schema -ne 1 -or $uiBuildInfo.version -ne $Version -or
     $uiBuildInfo.framework -cne 'Framework7' -or
     $uiBuildInfo.frameworkVersion -cne '9.1.3' -or $uiBuildInfo.offline -ne $true -or
     [int]$uiBuildInfo.metagame.schemaVersion -ne 2 -or
-    [int]$uiBuildInfo.metagame.catalogFiles -ne 9) {
+    [int]$uiBuildInfo.metagame.catalogFiles -ne 9 -or
+    [int]$uiBuildInfo.stoneverse.schemaVersion -ne 5 -or
+    [int]$uiBuildInfo.stoneverse.hostProtocol -ne 1) {
     throw 'Offline UI build metadata is inconsistent with this release.'
 }
 
@@ -499,6 +527,39 @@ Copy-Item -LiteralPath $uiCore -Destination $uiRuntimeHost -Force
 Copy-Item -LiteralPath $uiWinForms -Destination $uiRuntimeHost -Force
 Copy-Item -LiteralPath $uiLoader -Destination (Join-Path $uiRuntimeHost 'WebView2Loader.dll') -Force
 Copy-Item -Path (Join-Path $uiWebOutput '*') -Destination $uiRuntimeWeb -Recurse -Force
+
+# Ahk2Exe only embeds literal FileInstall sources. Generate those declarations in
+# the staged script from the complete, strictly validated STONEVERSE output so
+# hashed Vite filenames cannot be omitted from a future release executable.
+$stoneverseEmbeddedFiles = @(Get-ChildItem -LiteralPath $uiWebOutput -Recurse -File |
+    Where-Object {
+        $relative = [System.IO.Path]::GetRelativePath($uiWebOutput, $_.FullName)
+        $relative -ceq 'stoneverse-host.js' -or
+            $relative.StartsWith('stoneverse' + [System.IO.Path]::DirectorySeparatorChar,
+                [StringComparison]::Ordinal)
+    } | Sort-Object FullName)
+if ($stoneverseEmbeddedFiles.Count -lt 2) {
+    throw 'STONEVERSE offline files were not available for executable embedding.'
+}
+$stoneverseInstallLines = [Collections.Generic.List[string]]::new()
+$stoneverseDirectories = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+foreach ($file in $stoneverseEmbeddedFiles) {
+    $relative = [System.IO.Path]::GetRelativePath($uiWebOutput, $file.FullName).Replace('/', '\')
+    $directory = [System.IO.Path]::GetDirectoryName($relative)
+    if (-not [String]::IsNullOrEmpty($directory) -and $stoneverseDirectories.Add($directory)) {
+        $stoneverseInstallLines.Add(('        DirCreate State.uiAssetsPath "\{0}"' -f $directory))
+    }
+    $stoneverseInstallLines.Add(('        FileInstall "ui-runtime\web\{0}", State.uiAssetsPath "\{0}", true' -f $relative))
+}
+$stagedMainText = [System.IO.File]::ReadAllText($stagedMain)
+$stoneverseMarker = '        ;@BUILD_STONEVERSE_FILEINSTALLS'
+if ($stagedMainText.IndexOf($stoneverseMarker, [StringComparison]::Ordinal) -lt 0) {
+    throw 'The staged controller is missing its STONEVERSE embedding marker.'
+}
+$stagedMainText = $stagedMainText.Replace($stoneverseMarker,
+    ($stoneverseInstallLines -join [Environment]::NewLine))
+[System.IO.File]::WriteAllText($stagedMain, $stagedMainText,
+    [System.Text.UTF8Encoding]::new($true))
 
 Push-Location $stageRoot
 try {

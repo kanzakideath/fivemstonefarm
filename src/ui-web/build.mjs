@@ -6,6 +6,7 @@ const root = dirname(fileURLToPath(import.meta.url));
 const source = join(root, 'src');
 const output = join(root, 'www');
 const vendor = join(output, 'vendor');
+const stoneverse = join(root, '..', '..', 'sidecar', 'stoneverse');
 
 await rm(output, { recursive: true, force: true });
 await mkdir(vendor, { recursive: true });
@@ -15,6 +16,8 @@ for (const file of ['index.html', 'app.css', 'app.js']) {
 }
 
 await cp(join(source, 'metagame'), join(output, 'metagame'), { recursive: true });
+await copyFile(join(stoneverse, 'dist-host', 'stoneverse-host.js'), join(output, 'stoneverse-host.js'));
+await cp(join(stoneverse, 'dist'), join(output, 'stoneverse'), { recursive: true });
 
 for (const file of ['framework7-bundle.min.css', 'framework7-bundle.min.js']) {
   await copyFile(join(root, 'node_modules', 'framework7', file), join(vendor, file));
@@ -38,6 +41,7 @@ const buildInfo = {
     schemaVersion: 2,
     catalogFiles: 9,
   },
+  stoneverse: { schemaVersion: 5, hostProtocol: 1 },
 };
 await writeFile(join(output, 'build-info.json'), `${JSON.stringify(buildInfo, null, 2)}\n`);
 

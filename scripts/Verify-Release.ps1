@@ -93,10 +93,15 @@ $requiredDesktopEntries = @(
     'licenses/Framework7-LICENSE.txt',
     'licenses/HTM-LICENSE.txt',
     'licenses/Path-to-RegExp-LICENSE.txt',
+    'licenses/React-DOM-LICENSE.txt',
+    'licenses/React-LICENSE.txt',
+    'licenses/React-Scheduler-LICENSE.txt',
     'licenses/Skeleton-Elements-LICENSE.txt',
     'licenses/SSR-Window-4-LICENSE.txt',
     'licenses/SSR-Window-5-LICENSE.txt',
     'licenses/Swiper-LICENSE.txt',
+    'licenses/Lucide-React-LICENSE.txt',
+    'licenses/Zustand-LICENSE.txt',
     'licenses/WebView2-LICENSE.txt',
     'licenses/WebView2-NOTICE.txt'
 )

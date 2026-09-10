@@ -41,6 +41,9 @@ assert.ok(
   'scoped metagame CSS must load after the main application CSS',
 );
 assert.match(html, /<script type="module" src="metagame\/meta-game-entry\.js"><\/script>/);
+assert.match(html, /id="stoneverse-launch"/);
+assert.match(html, /<script type="module" src="stoneverse-host\.js"><\/script>/);
+assert.match(js, /stoneverse\/index\.html\?host=ai-miner/);
 assert.match(html, /id="stone-return-button"[^>]+aria-controls="screen-overview"/);
 assert.match(html, /aria-keyshortcuts="Escape Alt\+ArrowLeft"/);
 assert.match(css, /\.stone-return-button\s*\{[\s\S]*?min-height:\s*44px/);
@@ -135,8 +138,10 @@ try {
   assert.equal(buildInfo.version, packageJson.version);
   assert.equal(buildInfo.frameworkVersion, '9.1.3');
   assert.deepEqual(buildInfo.metagame, { schemaVersion: 2, catalogFiles: 9 });
+  assert.deepEqual(buildInfo.stoneverse, { schemaVersion: 5, hostProtocol: 1 });
   for (const relativePath of [
-    'index.html', 'app.css', 'app.js',
+    'index.html', 'app.css', 'app.js', 'stoneverse-host.js',
+    join('stoneverse', 'index.html'),
     join('vendor', 'framework7-bundle.min.css'),
     join('vendor', 'framework7-bundle.min.js'),
     join('metagame', 'meta-game.js'),

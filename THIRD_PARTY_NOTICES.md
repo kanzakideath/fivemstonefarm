@@ -39,6 +39,18 @@ Framework7 bundleに含まれる実行時依存関係も、ロックファイル
 
 Skeleton Elementsのnpm配布物は `license: MIT` と公式LICENSEへの参照を含みますが、LICENSEファイル自体を含まないため、配布ZIPには公式LICENSEと同じMITライセンス文を明示的に収録します。
 
+## STONEVERSE UI
+
+STONEVERSEのオフラインUIには、次の実行時依存関係をロックした版で同梱します。
+
+- React 19.2.0 — MIT License — `licenses/React-LICENSE.txt`
+- React DOM 19.2.0 — MIT License — `licenses/React-DOM-LICENSE.txt`
+- Scheduler 0.27.0 — MIT License — `licenses/React-Scheduler-LICENSE.txt`
+- Lucide React 0.544.0 — ISC License — `licenses/Lucide-React-LICENSE.txt`
+- Zustand 5.0.8 — MIT License — `licenses/Zustand-LICENSE.txt`
+
+これらは通常起動時に外部CDNへ接続せず、AI採掘機の実行ファイル内から読み込まれます。
+
 ## Microsoft Edge WebView2 SDK 1.0.4191.47
 
 - Copyright: Microsoft Corporation

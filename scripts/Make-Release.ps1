@@ -94,6 +94,29 @@ foreach ($spec in $webLicenseSpecs) {
     Copy-Item -LiteralPath $licensePath -Destination (Join-Path $licenseDirectory $spec.Output) -Force
 }
 
+$stoneverseNodeModulesRoot = Join-Path $repoRoot 'sidecar\stoneverse\node_modules'
+$stoneverseLicenseSpecs = @(
+    @{ Package = 'react'; Version = '19.2.0'; License = 'MIT'; Output = 'React-LICENSE.txt' },
+    @{ Package = 'react-dom'; Version = '19.2.0'; License = 'MIT'; Output = 'React-DOM-LICENSE.txt' },
+    @{ Package = 'scheduler'; Version = '0.27.0'; License = 'MIT'; Output = 'React-Scheduler-LICENSE.txt' },
+    @{ Package = 'lucide-react'; Version = '0.544.0'; License = 'ISC'; Output = 'Lucide-React-LICENSE.txt' },
+    @{ Package = 'zustand'; Version = '5.0.8'; License = 'MIT'; Output = 'Zustand-LICENSE.txt' }
+)
+foreach ($spec in $stoneverseLicenseSpecs) {
+    $packageRootPath = Join-Path $stoneverseNodeModulesRoot $spec.Package
+    $packageJsonPath = Join-Path $packageRootPath 'package.json'
+    $licensePath = Join-Path $packageRootPath 'LICENSE'
+    if (-not (Test-Path -LiteralPath $packageJsonPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $licensePath -PathType Leaf)) {
+        throw "Locked STONEVERSE dependency or its license is missing: $($spec.Package) $($spec.Version)"
+    }
+    $packageMetadata = Get-Content -LiteralPath $packageJsonPath -Raw | ConvertFrom-Json
+    if ($packageMetadata.version -cne $spec.Version -or $packageMetadata.license -cne $spec.License) {
+        throw "Unexpected STONEVERSE dependency metadata: $($spec.Package) $($packageMetadata.version)"
+    }
+    Copy-Item -LiteralPath $licensePath -Destination (Join-Path $licenseDirectory $spec.Output) -Force
+}
+
 # skeleton-elements 4.0.1 declares MIT in its package metadata but its npm
 # package omits LICENSE. Include the exact upstream MIT notice explicitly.
 $skeletonPackage = Get-Content -LiteralPath (Join-Path $nodeModulesRoot 'skeleton-elements\package.json') -Raw |

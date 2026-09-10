@@ -854,6 +854,8 @@ namespace AiMiner.UiHost
                     string index = ReadRequiredText(root, "index.html");
                     ReadRequiredText(root, "app.css");
                     ReadRequiredText(root, "app.js");
+                    ReadRequiredText(root, "stoneverse-host.js");
+                    ReadRequiredText(root, Path.Combine("stoneverse", "index.html"));
                     ReadRequiredText(root, Path.Combine("vendor", "framework7-bundle.min.css"));
                     ReadRequiredText(root, Path.Combine("vendor", "framework7-bundle.min.js"));
                     string buildInfo = ReadRequiredText(root, "build-info.json");

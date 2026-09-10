@@ -9,7 +9,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "9.1.1"
+global AppVersion := "9.1.2"
 ;@Ahk2Exe-SetVersion %A_PriorLine~U)^.*"([^"]+)".*$~$1%
 processId := DllCall("GetCurrentProcessId")
 isUiSmokeTest := HasCommandLineArgument("--smoke-test")
@@ -2171,6 +2171,7 @@ PrepareWebUiRuntime() {
             State.uiAssetsPath "\metagame\data\messages.json", true
         FileInstall "ui-runtime\web\metagame\data\titles.json",
             State.uiAssetsPath "\metagame\data\titles.json", true
+        ;@BUILD_STONEVERSE_FILEINSTALLS
     } else {
         repositoryRoot := RegExReplace(A_ScriptDir, "\\src$")
         State.uiRuntimeRoot := repositoryRoot "\build\ui-host"
@@ -2200,7 +2201,9 @@ PrepareWebUiRuntime() {
         State.uiAssetsPath "\metagame\data\items.json",
         State.uiAssetsPath "\metagame\data\level-rewards.json",
         State.uiAssetsPath "\metagame\data\messages.json",
-        State.uiAssetsPath "\metagame\data\titles.json"]
+        State.uiAssetsPath "\metagame\data\titles.json",
+        State.uiAssetsPath "\stoneverse-host.js",
+        State.uiAssetsPath "\stoneverse\index.html"]
     for path in required {
         if !FileExist(path)
             throw Error("UI runtime file is missing: " path)

@@ -31,8 +31,10 @@ namespace AiMiner.UiHost
         private readonly Thread _senderThread;
         private readonly Thread _metaThread;
         private readonly MetaGameRuntime _metaGame;
+        private readonly StoneverseHostBridge _stoneverse = new StoneverseHostBridge();
         private readonly string _metaGameCreationError;
         private readonly string _fixtureMetaStateDirectory;
+        private readonly bool _trustedTransportSelfTest;
         private volatile bool _closing;
         private bool _webReady;
         private bool _backendRequestedExit;
@@ -53,6 +55,7 @@ namespace AiMiner.UiHost
         private MainForm(Program.HostOptions options, string metaGameStatePathOverride)
         {
             _options = options;
+            _trustedTransportSelfTest = !String.IsNullOrEmpty(metaGameStatePathOverride);
             string fixtureStateDirectory;
             string metaCreationError;
             _metaGame = CreateMetaGameRuntime(options, metaGameStatePathOverride,
@@ -663,6 +666,7 @@ namespace AiMiner.UiHost
                     if (!IsAllowedTopLevelAppUri(args.Uri)) args.Cancel = true;
                     else
                     {
+                        _stoneverse.ResetPage();
                         _webReady = false;
                         if (_options.VisualTest)
                         {
@@ -745,6 +749,8 @@ namespace AiMiner.UiHost
                 || !IsAllowedTopLevelAppUri(
                     _webView.Source == null ? null : _webView.Source.AbsoluteUri))
                 return;
+
+            if (_stoneverse.TryHandleWebMessage(args.WebMessageAsJson)) return;
 
             string action;
             IList<string> arguments;
@@ -865,6 +871,7 @@ namespace AiMiner.UiHost
         {
             _outbound.CompleteAdding();
             _metaWork.CompleteAdding();
+            _stoneverse.Dispose();
             if (_senderThread.IsAlive) _senderThread.Join(600);
             if (_metaThread.IsAlive) _metaThread.Join(5000);
             _backendMonitor.Dispose();
@@ -968,6 +975,17 @@ namespace AiMiner.UiHost
                     PostMetaResultFromWorker(result);
                     return;
                 }
+                if (!_options.Fixture && !_trustedTransportSelfTest)
+                {
+                    string stoneverseError;
+                    if (!_stoneverse.Deliver(command, PostStoneverseCommand,
+                            out stoneverseError))
+                    {
+                        PostMetaErrorFromWorker("STONEVERSE_SYNC_PENDING",
+                            stoneverseError ?? "STONEVERSE delivery was not committed");
+                        return;
+                    }
+                }
                 // Queue acceptance is not an ACK. A verified mining event is acknowledged only
                 // after the sidecar transaction, including its atomic save, returned successfully.
                 // Include command + id: BEGIN and END intentionally share a session ID, so an
@@ -987,6 +1005,19 @@ namespace AiMiner.UiHost
             string acknowledgement = Protocol.BuildActionLine(_options.Session,
                 "meta.ack", new[] { MetaGameBridge.CommandToken(command.Kind), command.Id });
             SendCopyData(acknowledgement, 1500);
+        }
+
+        private void PostStoneverseCommand(string json)
+        {
+            if (_closing) return;
+            try
+            {
+                BeginInvoke((Action)delegate
+                {
+                    if (!_closing && _webReady) PostJsonToWeb(json);
+                });
+            }
+            catch { }
         }
 
         private static bool TrustedMutationSucceeded(string result, out string error)
@@ -1285,12 +1316,14 @@ namespace AiMiner.UiHost
             if (!IsAllowedAppUri(value)) return false;
             Uri actual;
             Uri expected;
-            return Uri.TryCreate(value, UriKind.Absolute, out actual)
-                && Uri.TryCreate(_options.GetInitialAppUri(), UriKind.Absolute, out expected)
-                && String.Equals(actual.AbsolutePath, expected.AbsolutePath,
-                    StringComparison.Ordinal)
-                && String.Equals(actual.Query, expected.Query, StringComparison.Ordinal)
-                && String.IsNullOrEmpty(actual.Fragment);
+            if (!Uri.TryCreate(value, UriKind.Absolute, out actual)
+                || !String.IsNullOrEmpty(actual.Fragment)) return false;
+            if (!_options.Fixture
+                && String.Equals(actual.AbsolutePath, "/stoneverse/index.html", StringComparison.Ordinal)
+                && String.Equals(actual.Query, "?host=ai-miner", StringComparison.Ordinal)) return true;
+            return Uri.TryCreate(_options.GetInitialAppUri(), UriKind.Absolute, out expected)
+                && String.Equals(actual.AbsolutePath, expected.AbsolutePath, StringComparison.Ordinal)
+                && String.Equals(actual.Query, expected.Query, StringComparison.Ordinal);
         }
 
         private static bool IsAllowedResourceUri(string value)

@@ -22,6 +22,8 @@ tools/
 .cache/
 .packages/
 node_modules/
+*.tsbuildinfo
+/sidecar/stoneverse/dist-host/
 
 # 生成物
 build/

@@ -50,7 +50,7 @@
   const fixtureState = {
     ...baseState,
     revision: 1,
-    version: '9.1.1',
+    version: '9.1.2',
     controls: {
       overviewSubtitle: { text: modeDetails.gold.subtitle },
       runStatus: { text: '停止中', tone: 'neutral' },
@@ -153,7 +153,7 @@
     'target-lost-recovery-seconds', 'setting-debug-overlay', 'settings-save',
     'settings-save-label', 'settings-feedback', 'current-version', 'update-status',
     'update-integrity', 'update-check', 'update-check-label', 'update-feedback',
-    'update-badge', 'sidebar-connection', 'sidebar-connection-dot', 'action-popover',
+    'update-badge', 'sidebar-connection', 'sidebar-connection-dot', 'stoneverse-launch', 'action-popover',
     'action-sheet', 'live-region', 'stone-return-button', 'stone-meta-root',
   ].map((id) => [toCamel(id), document.getElementById(id)]));
 
@@ -163,6 +163,10 @@
   );
   const indicator = document.querySelector('.sidebar-selection');
   const actionButton = elements.actionPickerButton;
+
+  elements.stoneverseLaunch?.addEventListener('click', () => {
+    window.location.assign('stoneverse/index.html?host=ai-miner');
+  });
 
   const actionSheet = app.sheet.create({
     el: elements.actionSheet,
