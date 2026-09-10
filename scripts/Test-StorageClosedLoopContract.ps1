@@ -103,6 +103,8 @@ $initializeLocal = Get-AhkFunctionBody 'InitializeLocalVehicleRun'
 $startMining = Get-AhkFunctionBody 'StartMining'
 $stopMining = Get-AhkFunctionBody 'StopMining'
 $localStorage = Get-AhkFunctionBody 'RunLocalVehicleStorageCycle'
+$playLocalRoute = Get-AhkFunctionBody 'PlayLocalRoute'
+$foregroundViewRoute = Get-AhkFunctionBody 'PlayForegroundViewRoute'
 $refill = Get-AhkFunctionBody 'RefillWashingInputAtStorage'
 $verifyRefill = Get-AhkFunctionBody 'VerifyRawStoneReceiptDelta'
 $refillReceiptParser = Get-AhkFunctionBody 'ParseVerifiedWashingRefillReceipt'
@@ -115,6 +117,17 @@ $bridgeCancelable = Get-AhkFunctionBody 'RunBackgroundBridgeCancelable'
 $transitionPolicy = Get-AhkFunctionBody 'FarmStateTransitionAllowed'
 $knownStates = Get-AhkFunctionBody 'FarmStateNameKnown'
 $ambiguousTransferMock = Get-AhkFunctionBody 'RunAmbiguousTransferNoRetryMockTest'
+
+# Foreground storage aiming must use the same real relative-mouse adapter as
+# work-view recovery. A successful DevCon command string alone is not camera proof.
+Assert-Contract ($playLocalRoute -match
+    'RouteViewSegmentCount\(route\)\s*>\s*0[\s\S]{0,180}WinActive\([\s\S]{0,120}PlayForegroundViewRoute\(') `
+    'Foreground storage view routes do not select the physical camera adapter.'
+Assert-Contract ($foregroundViewRoute -match 'SendRelativeMouseDelta\(' -and
+    $foregroundViewRoute -match 'IsTargetForeground\(expectedGeneration\)' -and
+    $foregroundViewRoute -match 'ReleaseBackgroundTarget\(false\)' -and
+    $foregroundViewRoute -notmatch 'SendEvent[^\r\n]*(Up|Down|Left|Right)') `
+    'Storage aiming is not guarded relative-mouse input or regressed to arrow keys.'
 
 # A positive exact Farm-output ledger is the departure authority. The broad
 # elapsed-run baseline must not authorize a transfer because an unrelated item

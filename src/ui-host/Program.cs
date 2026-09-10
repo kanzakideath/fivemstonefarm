@@ -43,6 +43,9 @@ namespace AiMiner.UiHost
                     && Protocol.RunSelfTests(out validationError)
                     && MetaGameBridge.RunSelfTests(options.AssetsPath, out validationError)
                     && MetaGameRuntime.RunSelfTests(options.AssetsPath, out validationError)
+                    && MetaGameStateRecovery.RunSelfTests(
+                        Path.Combine(options.AssetsPath, "metagame", "data"),
+                        out validationError)
                     && MainForm.RunTrustedTransportSelfTest(options.AssetsPath,
                         out validationError);
                 string result = valid ? "SELFTEST OK" : "SELFTEST ERROR " + Protocol.SanitizeDiagnostic(validationError);
@@ -67,6 +70,27 @@ namespace AiMiner.UiHost
                     MessageBox.Show("AI採掘機の本体へ接続できません。\r\n" + backendError,
                         "AI採掘機", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return 5;
+                }
+
+                try
+                {
+                    MetaGameStateRecovery.RecoveryReport recovery =
+                        MetaGameStateRecovery.Prepare(
+                            Path.Combine(options.AssetsPath, "metagame", "data"),
+                            options.StatePath);
+                    if (recovery.Changed)
+                        Debug.WriteLine("STONE state recovery completed: "
+                            + recovery.ImportedMiningEvents.ToString(CultureInfo.InvariantCulture)
+                            + " mining events, "
+                            + recovery.ImportedDrawRequests.ToString(CultureInfo.InvariantCulture)
+                            + " draw requests.");
+                }
+                catch (Exception recoveryError)
+                {
+                    MessageBox.Show("STONEの保存データを安全に統合できないため、起動を中止しました。\r\n"
+                        + recoveryError.Message,
+                        "AI採掘機", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return 6;
                 }
             }
 
@@ -139,6 +163,8 @@ namespace AiMiner.UiHost
             internal int BackendPid;
             internal string Session;
             internal string AssetsPath;
+            internal string StatePath;
+            internal string UserDataPath;
             internal bool Fixture;
             internal bool VisualTest;
             internal string VisualFixture;
@@ -257,7 +283,8 @@ namespace AiMiner.UiHost
                     }
 
                     if (key != "--backend-hwnd" && key != "--backend-pid" && key != "--session"
-                        && key != "--assets" && key != "--capabilities" && key != "--self-test")
+                        && key != "--assets" && key != "--state-path" && key != "--user-data"
+                        && key != "--capabilities" && key != "--self-test")
                     {
                         error = "不明な引数です: " + key;
                         return false;
@@ -320,12 +347,16 @@ namespace AiMiner.UiHost
                 string hwndText;
                 string pidText;
                 string session;
+                string statePath;
+                string userDataPath;
                 if (!values.TryGetValue("--backend-hwnd", out hwndText)
                     || !values.TryGetValue("--backend-pid", out pidText)
                     || !values.TryGetValue("--session", out session)
-                    || values.Count != 4)
+                    || !values.TryGetValue("--state-path", out statePath)
+                    || !values.TryGetValue("--user-data", out userDataPath)
+                    || values.Count != 6)
                 {
-                    error = "--backend-hwnd、--backend-pid、--session、--assets が必要です。";
+                    error = "--backend-hwnd、--backend-pid、--session、--assets、--state-path、--user-data が必要です。";
                     return false;
                 }
 
@@ -347,6 +378,10 @@ namespace AiMiner.UiHost
                     error = "--session は英数字、_、- の8～128文字で指定してください。";
                     return false;
                 }
+                options.StatePath = NormalizeAbsoluteStatePath(statePath, out error);
+                if (error != null) return false;
+                options.UserDataPath = NormalizeAbsoluteUserDataPath(userDataPath, out error);
+                if (error != null) return false;
 
                 options.BackendWindow = new IntPtr(unchecked((long)hwndValue));
                 options.BackendPid = pid;
@@ -571,13 +606,46 @@ namespace AiMiner.UiHost
                     string[] ordinaryConnected =
                     {
                         "--backend-hwnd", "1", "--backend-pid", "1",
-                        "--session", "session0", "--assets", assetsPath
+                        "--session", "session0", "--assets", assetsPath,
+                        "--state-path", Path.Combine(temporary, "AI採掘機", "metagame", "state.json"),
+                        "--user-data", Path.Combine(temporary, "AI採掘機", "WebView2")
                     };
                     if (!TryParse(ordinaryConnected, out parsed, out parseError)
                         || parsed.Fixture || parsed.VisualTest
-                        || parsed.GetInitialAppUri() != "https://app.local/index.html")
+                        || parsed.GetInitialAppUri() != "https://app.local/index.html"
+                        || !String.Equals(parsed.StatePath,
+                            Path.Combine(temporary, "AI採掘機", "metagame", "state.json"),
+                            StringComparison.OrdinalIgnoreCase)
+                        || !String.Equals(parsed.UserDataPath,
+                            Path.Combine(temporary, "AI採掘機", "WebView2"),
+                            StringComparison.OrdinalIgnoreCase))
                     {
                         error = "ordinary connected parsing changed: " + parseError;
+                        return false;
+                    }
+
+                    string[] connectedWithoutState =
+                    {
+                        "--backend-hwnd", "1", "--backend-pid", "1",
+                        "--session", "session0", "--assets", assetsPath,
+                        "--user-data", Path.Combine(temporary, "AI採掘機", "WebView2")
+                    };
+                    if (TryParse(connectedWithoutState, out parsed, out parseError))
+                    {
+                        error = "ordinary connected parser accepted a missing persistent state path.";
+                        return false;
+                    }
+
+                    string[] connectedWithRelativeState =
+                    {
+                        "--backend-hwnd", "1", "--backend-pid", "1",
+                        "--session", "session0", "--assets", assetsPath,
+                        "--state-path", Path.Combine("relative", "state.json"),
+                        "--user-data", Path.Combine(temporary, "AI採掘機", "WebView2")
+                    };
+                    if (TryParse(connectedWithRelativeState, out parsed, out parseError))
+                    {
+                        error = "ordinary connected parser accepted a relative persistent state path.";
                         return false;
                     }
 
@@ -685,6 +753,63 @@ namespace AiMiner.UiHost
                 catch (Exception ex)
                 {
                     error = "UIファイルのパスが正しくありません: " + ex.Message;
+                    return null;
+                }
+            }
+
+            private static string NormalizeAbsoluteStatePath(string path, out string error)
+            {
+                error = null;
+                try
+                {
+                    if (String.IsNullOrWhiteSpace(path) || !IsFullyQualifiedPath(path))
+                    {
+                        error = "--state-path は絶対パスで指定してください。";
+                        return null;
+                    }
+                    string fullPath = Path.GetFullPath(path);
+                    string directory = Path.GetDirectoryName(fullPath);
+                    if (String.IsNullOrEmpty(directory)
+                        || !String.Equals(Path.GetFileName(fullPath), "state.json",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        error = "--state-path は state.json の完全なパスで指定してください。";
+                        return null;
+                    }
+                    return fullPath;
+                }
+                catch (Exception ex)
+                {
+                    error = "--state-path が正しくありません: " + ex.Message;
+                    return null;
+                }
+            }
+
+            private static string NormalizeAbsoluteUserDataPath(string path, out string error)
+            {
+                error = null;
+                try
+                {
+                    if (String.IsNullOrWhiteSpace(path) || !IsFullyQualifiedPath(path))
+                    {
+                        error = "--user-data は絶対パスで指定してください。";
+                        return null;
+                    }
+                    string fullPath = Path.GetFullPath(path).TrimEnd(
+                        Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    string root = Path.GetPathRoot(fullPath).TrimEnd(
+                        Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    if (String.IsNullOrEmpty(fullPath)
+                        || String.Equals(fullPath, root, StringComparison.OrdinalIgnoreCase))
+                    {
+                        error = "--user-data にドライブまたは共有のルートは指定できません。";
+                        return null;
+                    }
+                    return fullPath;
+                }
+                catch (Exception ex)
+                {
+                    error = "--user-data が正しくありません: " + ex.Message;
                     return null;
                 }
             }

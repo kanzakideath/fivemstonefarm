@@ -131,7 +131,8 @@ namespace AiMiner.UiHost
 
         // Exercises the same authenticated WM_COPYDATA ingress, worker queue, atomic sidecar
         // persistence, and typed ACK egress used by the AHK controller. The state override is
-        // private to this in-process self-test so production startup can only use LocalAppData.
+        // private to this in-process self-test. Production receives its canonical path only
+        // through the authenticated controller launch contract.
         internal static bool RunTrustedTransportSelfTest(string assetsPath, out string error)
         {
             error = null;
@@ -207,6 +208,8 @@ namespace AiMiner.UiHost
                     BackendPid = Process.GetCurrentProcess().Id,
                     Session = session,
                     AssetsPath = Path.GetFullPath(assetsPath),
+                    StatePath = Path.GetFullPath(statePath),
+                    UserDataPath = Path.Combine(temporaryRoot, "WebView2"),
                     Fixture = false,
                     VisualTest = false
                 };
@@ -621,11 +624,20 @@ namespace AiMiner.UiHost
                             ?? "ビジュアルテストのWebView2フォルダーを確認できません。");
                     }
                 }
+                else if (_options.Fixture)
+                {
+                    if (String.IsNullOrEmpty(_fixtureMetaStateDirectory))
+                        throw new InvalidOperationException(
+                            "フィクスチャ用の永続化フォルダーを確認できません。");
+                    userDataFolder = Path.Combine(_fixtureMetaStateDirectory, "WebView2");
+                    Directory.CreateDirectory(userDataFolder);
+                }
                 else
                 {
-                    userDataFolder = Path.Combine(
-                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                        "AI採掘機", "WebView2");
+                    if (String.IsNullOrEmpty(_options.UserDataPath))
+                        throw new InvalidOperationException(
+                            "本体からWebView2の永続化パスが渡されていません。");
+                    userDataFolder = _options.UserDataPath;
                     Directory.CreateDirectory(userDataFolder);
                 }
                 CoreWebView2Environment environment = await CoreWebView2Environment.CreateAsync(null, userDataFolder);
@@ -1172,9 +1184,10 @@ namespace AiMiner.UiHost
                 }
                 else
                 {
-                    statePath = Path.Combine(
-                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                        "AI採掘機", "metagame", "state.json");
+                    if (String.IsNullOrEmpty(options.StatePath))
+                        throw new InvalidOperationException(
+                            "本体からSTONEの永続化パスが渡されていません。");
+                    statePath = options.StatePath;
                 }
                 // Distribution and all current fixture paths are production-trust mode. There is
                 // intentionally no general command-line switch that enables debug mutations.

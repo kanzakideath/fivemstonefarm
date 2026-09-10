@@ -1,4 +1,4 @@
-# Stone Metagame統合仕様（v9.1.0）
+# Stone Metagame統合仕様（v9.1.1）
 
 この文書は、検証済みの `sidecar/stone-metagame/` をAI採掘機へ接続する境界をまとめたものです。抽選率、Pity、Pickup、保証、Profile、状態構造は本体側で再実装しません。詳細な正規仕様は `sidecar/stone-metagame/INTEGRATION.md` です。
 

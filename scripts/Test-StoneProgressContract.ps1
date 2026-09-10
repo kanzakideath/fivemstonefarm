@@ -99,7 +99,7 @@ Assert-SourcePattern `
     'HandlePendingFarmRewardReconciliation\(expectedGeneration, expectedTaskId\)[\s\S]{0,1600}decision = "DURABILITY_HOLD"[\s\S]{0,650}ScheduleNext\(expectedGeneration, retryDelay\)[\s\S]{0,550}decision = "TIMEOUT"[\s\S]{0,180}DiscardPendingFarmAttempt\("reward_reconciliation_timeout"\)' `
     'Durability-pending rewards must retry indefinitely before any normal reconciliation timeout/discard path.'
 Assert-SourcePattern `
-    'if !isUiTestRun && \(!State\.verifiedRewardWalReady[\s\S]{0,140}RunLegacyFarmHistoryBackfill\(\)\)[\s\S]{0,500}BuildWebGui\(\)' `
+    'if !isUiTestRun && \(!State\.legacyDurabilityMigrationReady[\s\S]{0,180}!State\.verifiedRewardWalReady[\s\S]{0,180}RunLegacyFarmHistoryBackfill\(\)\)[\s\S]{0,500}BuildWebGui\(\)' `
     'History migration must finish before the UI Host can receive progression events.'
 Assert-SourcePattern `
     'ParseLegacyFarmHistoryContents\(contents, &records, maximumRecords := 16384\)' `
@@ -143,6 +143,24 @@ Assert-SourcePattern `
 Assert-SourcePattern `
     'TestStartOperationOwnership\(\)[\s\S]{0,2200}callbackOwnerBlocked[\s\S]{0,500}duplicateBlocked[\s\S]{0,500}stopCancelled[\s\S]{0,500}staleReleaseBlocked' `
     'The deterministic validation fixture does not cover callback drain, duplicate Start, and Stop-during-preflight ownership.'
+Assert-SourcePattern `
+    'persistentDataRoot :=[\s\S]{0,420}EnvGet\("USERPROFILE"\) "\\Saved Games\\AI採掘機"' `
+    'Production persistence must use the non-virtualized Saved Games root.'
+Assert-SourcePattern `
+    'metagameStatePath: persistentDataRoot "\\metagame\\state\.json"[\s\S]{0,180}uiUserDataPath: persistentDataRoot "\\WebView2"[\s\S]{0,700}metagameOutboxPath:[\s\S]{0,180}: persistentDataRoot "\\metagame-outbox\.tsv"[\s\S]{0,650}verifiedRewardWalPath:[\s\S]{0,180}: persistentDataRoot "\\verified-reward-wal\.tsv"' `
+    'STONE state, WebView2 data, outbox, and reward WAL must share the canonical root.'
+Assert-SourcePattern `
+    'MigrateLegacyMetagameDurabilityFiles\(\)[\s\S]{0,120}State\.metagameOutbox := LoadMetagameOutbox\(State\.metagameOutboxPath\)' `
+    'Legacy durability files must be merged before the canonical FIFO is loaded.'
+Assert-SourcePattern `
+    'GetLegacyMetagameStorageRoots\(\)[\s\S]{0,500}\\AppData\\Local\\AI採掘機[\s\S]{0,700}\\LocalCache\\Local\\AI採掘機' `
+    'Legacy discovery must cover normal LocalAppData and packaged LocalCache roots.'
+Assert-SourcePattern `
+    'MigrateLegacyMetagameDurabilityFiles\(\)[\s\S]{0,3400}PersistImmutableLegacyDurabilityBackup\([\s\S]{0,3200}PersistMetagameOutbox\(mergedOutbox,[\s\S]{0,1500}PersistVerifiedRewardWalSnapshot\(mergedWal,[\s\S]{0,900}PersistLegacyDurabilityReceipts\(receipts' `
+    'Legacy queue import must retain immutable backups and commit receipts only after canonical files.'
+Assert-SourcePattern `
+    'EnsureWebUiHost\([^)]*\)[\s\S]{0,700}--state-path " QuoteCommandArg\(State\.metagameStatePath\)[\s\S]{0,180}--user-data " QuoteCommandArg\(State\.uiUserDataPath\)' `
+    'The authenticated UI Host launch must quote both explicit persistent paths.'
 
 $finalize = [regex]::Match($source,
     'CompleteVerifiedFarmReward\(expectedGeneration, actionMode,[\s\S]{0,7500}?ScheduleNext\(expectedGeneration, 1\)')

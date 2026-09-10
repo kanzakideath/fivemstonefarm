@@ -9,12 +9,19 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "9.1.0"
+global AppVersion := "9.1.1"
 ;@Ahk2Exe-SetVersion %A_PriorLine~U)^.*"([^"]+)".*$~$1%
 processId := DllCall("GetCurrentProcessId")
 isUiSmokeTest := HasCommandLineArgument("--smoke-test")
 isVisualTest := HasCommandLineArgument("--visual-test")
 isUiTestRun := isUiSmokeTest || isVisualTest
+isValidationRun := HasCommandLineArgument("--validate")
+isHistoryImportTestRun := HasCommandLineArgument("--history-import-self-test")
+persistentDataRoot := isUiTestRun || isValidationRun
+    ? A_Temp "\ai-miner-persistent-test-" processId
+    : isHistoryImportTestRun
+        ? EnvGet("LOCALAPPDATA") "\AI採掘機"
+        : EnvGet("USERPROFILE") "\Saved Games\AI採掘機"
 buttonTemplatePath := A_Temp "\codex-mining-button-" processId ".png"
 windowedButtonTemplatePath := A_Temp "\codex-mining-button-windowed-" processId ".png"
 hungerTemplatePath := A_Temp "\codex-hunger-icon-" processId ".png"
@@ -288,18 +295,25 @@ global State := {
     metagameJournalReady: false,
     metagameJournalOps: 0,
     metagameFlushActive: false,
-    metagameOutboxPath: isUiTestRun || HasCommandLineArgument("--validate")
+    persistentDataRoot: persistentDataRoot,
+    metagameStatePath: persistentDataRoot "\metagame\state.json",
+    uiUserDataPath: persistentDataRoot "\WebView2",
+    legacyDurabilityReceiptPath: persistentDataRoot
+        "\legacy-durability-import.v1.tsv",
+    legacyDurabilityBackupRoot: persistentDataRoot "\legacy-backups",
+    legacyDurabilityMigrationReady: false,
+    metagameOutboxPath: isUiTestRun || isValidationRun
         ? A_Temp "\ai-miner-meta-outbox-test-" processId ".tsv"
-        : EnvGet("LOCALAPPDATA") "\AI採掘機\metagame-outbox.tsv",
-    metagameBackfillMarkerPath: isUiTestRun || HasCommandLineArgument("--validate")
+        : persistentDataRoot "\metagame-outbox.tsv",
+    metagameBackfillMarkerPath: isUiTestRun || isValidationRun
         ? A_Temp "\ai-miner-meta-backfill-test-" processId ".done"
         : A_ScriptDir "\AI採掘機_STONE履歴移行.v1.done",
-    metagameSupportBackfillReceiptPath: isUiTestRun || HasCommandLineArgument("--validate")
+    metagameSupportBackfillReceiptPath: isUiTestRun || isValidationRun
         ? A_Temp "\ai-miner-meta-support-receipt-test-" processId ".done"
         : A_ScriptDir "\AI採掘機_STONE履歴復元.v1.receipt",
-    verifiedRewardWalPath: isUiTestRun || HasCommandLineArgument("--validate")
+    verifiedRewardWalPath: isUiTestRun || isValidationRun
         ? A_Temp "\ai-miner-verified-reward-wal-test-" processId ".tsv"
-        : EnvGet("LOCALAPPDATA") "\AI採掘機\verified-reward-wal.tsv",
+        : persistentDataRoot "\verified-reward-wal.tsv",
     verifiedRewardWalPending: Map(),
     verifiedRewardWalOps: 0,
     verifiedRewardWalReady: false,
@@ -384,6 +398,8 @@ global State := {
 ; app restart therefore cannot turn an already verified ore reward into a lost
 ; metagame event. Invalid/corrupt rows are ignored fail-closed while valid rows
 ; retain FIFO order.
+State.legacyDurabilityMigrationReady := isUiTestRun || isValidationRun
+    || isHistoryImportTestRun || MigrateLegacyMetagameDurabilityFiles()
 State.metagameOutbox := LoadMetagameOutbox(State.metagameOutboxPath)
 State.metagameReplayNormalized := NormalizeStoppedMetagameOutboxAtStartup()
 loadedRewardWalPending := Map()
@@ -1840,9 +1856,10 @@ if needsUpdateSettingsMigration {
 ; increase. Persist the complete closed session and its one-time marker before the
 ; WebView Host can observe any event; a failed migration therefore cannot partially
 ; update Stone progression or erase the source diagnostics.
-if !isUiTestRun && (!State.verifiedRewardWalReady
+if !isUiTestRun && (!State.legacyDurabilityMigrationReady
+    || !State.verifiedRewardWalReady
     || !RunLegacyFarmHistoryBackfill()) {
-    MsgBox "以前の作業履歴をSTONEへ安全に保存できませんでした。`n"
+    MsgBox "以前の作業履歴をSTONEの共通保存先へ安全に保存できませんでした。`n"
         . "履歴を失わないため、AI採掘機を開始せず終了します。"
     DeleteExtractedTemplates()
     ExitApp 2
@@ -2205,6 +2222,8 @@ EnsureWebUiHost(*) {
         . " --backend-pid " DllCall("GetCurrentProcessId")
         . " --session " State.uiSession
         . " --assets " QuoteCommandArg(State.uiAssetsPath)
+        . " --state-path " QuoteCommandArg(State.metagameStatePath)
+        . " --user-data " QuoteCommandArg(State.uiUserDataPath)
     try Run commandLine,,, &childPid
     catch as err {
         State.uiHostError := err.Message
@@ -3123,6 +3142,395 @@ WriteLegacyFarmHistoryBackfillMarker(markerPath) {
     }
 }
 
+LegacyDurabilityPathEquals(left, right) {
+    return StrLower(RTrim(left, "\/")) = StrLower(RTrim(right, "\/"))
+}
+
+AddLegacyDurabilityStorageRoot(&roots, path) {
+    global State
+    if !path || LegacyDurabilityPathEquals(path, State.persistentDataRoot)
+        return
+    for existing in roots {
+        if LegacyDurabilityPathEquals(path, existing)
+            return
+    }
+    if DirExist(path)
+        roots.Push(RTrim(path, "\/"))
+}
+
+GetLegacyMetagameStorageRoots() {
+    roots := []
+    userProfile := EnvGet("USERPROFILE")
+    if userProfile
+        AddLegacyDurabilityStorageRoot(&roots,
+            userProfile "\AppData\Local\AI採掘機")
+    localAppData := EnvGet("LOCALAPPDATA")
+    if localAppData
+        AddLegacyDurabilityStorageRoot(&roots,
+            RTrim(localAppData, "\/") "\AI採掘機")
+    packagesRoot := userProfile
+        ? userProfile "\AppData\Local\Packages" : ""
+    if packagesRoot && DirExist(packagesRoot) {
+        try {
+            Loop Files packagesRoot "\*", "D"
+                AddLegacyDurabilityStorageRoot(&roots,
+                    A_LoopFileFullPath "\LocalCache\Local\AI採掘機")
+        }
+    }
+    return roots
+}
+
+ReadStableLegacyDurabilityFile(path, &contents) {
+    contents := ""
+    try {
+        if FileGetSize(path) > 67108864
+            return false
+        firstRead := FileRead(path, "UTF-8")
+        secondRead := FileRead(path, "UTF-8")
+        if firstRead != secondRead
+            return false
+        contents := firstRead
+        return true
+    } catch
+        return false
+}
+
+LegacyDurabilitySourceKey(kind, path, contents) {
+    if !RegExMatch(kind, "^[A-Z_]{3,32}$")
+        return ""
+    return kind "_" LegacyFarmHistorySupportReceiptToken(
+        StrLower(path) "`n" contents)
+}
+
+LoadLegacyDurabilityReceipts(path) {
+    receipts := Map()
+    if !path || !FileExist(path)
+        return receipts
+    try contents := FileRead(path, "UTF-8")
+    catch
+        return receipts
+    lines := StrSplit(StrReplace(contents, "`r", ""), "`n")
+    if !lines.Length || lines[1] != "AIMINER_LEGACY_DURABILITY_IMPORT_V1"
+        return receipts
+    Loop lines.Length - 1 {
+        line := lines[A_Index + 1]
+        if !line
+            continue
+        fields := StrSplit(line, "`t")
+        if fields.Length != 2
+            || !RegExMatch(fields[1],
+                "^[A-Z_]{3,32}_[0-9A-F]{8}_[1-9][0-9]{0,10}$")
+            continue
+        receipts[fields[1]] := fields[2]
+    }
+    return receipts
+}
+
+PersistLegacyDurabilityReceipts(receipts, path) {
+    if !IsObject(receipts) || !path
+        return false
+    SplitPath path, , &directory
+    try DirCreate directory
+    catch
+        return false
+    tempPath := path "." DllCall("GetCurrentProcessId") ".tmp"
+    try {
+        try FileDelete tempPath
+        receiptFile := FileOpen(tempPath, "w", "UTF-8-RAW")
+        if !IsObject(receiptFile)
+            return false
+        receiptFile.Write("AIMINER_LEGACY_DURABILITY_IMPORT_V1`n")
+        for key, sourcePath in receipts {
+            if !RegExMatch(key,
+                "^[A-Z_]{3,32}_[0-9A-F]{8}_[1-9][0-9]{0,10}$")
+                || InStr(sourcePath, "`r") || InStr(sourcePath, "`n")
+                || InStr(sourcePath, "`t") {
+                receiptFile.Close()
+                try FileDelete tempPath
+                return false
+            }
+            receiptFile.Write(key "`t" sourcePath "`n")
+        }
+        flushed := FlushMetagameFileHandle(receiptFile.Handle)
+        receiptFile.Close()
+        if !flushed {
+            try FileDelete tempPath
+            return false
+        }
+        moved := DllCall("kernel32\MoveFileExW", "Str", tempPath,
+            "Str", path, "UInt", 0x00000009, "Int")
+        if !moved {
+            try FileDelete tempPath
+            return false
+        }
+        return true
+    } catch {
+        try receiptFile.Close()
+        try FileDelete tempPath
+        return false
+    }
+}
+
+PersistImmutableLegacyDurabilityBackup(label, sourceKey, contents) {
+    global State
+    if !RegExMatch(label, "^[a-z-]{3,32}$")
+        || !RegExMatch(sourceKey,
+            "^[A-Z_]{3,32}_[0-9A-F]{8}_[1-9][0-9]{0,10}$")
+        return false
+    try DirCreate State.legacyDurabilityBackupRoot
+    catch
+        return false
+    backupPath := State.legacyDurabilityBackupRoot "\" label "-"
+        . sourceKey ".tsv"
+    if FileExist(backupPath) {
+        try return FileRead(backupPath, "UTF-8") = contents
+        catch
+            return false
+    }
+    tempPath := backupPath "." DllCall("GetCurrentProcessId") ".tmp"
+    try {
+        try FileDelete tempPath
+        backupFile := FileOpen(tempPath, "w", "UTF-8-RAW")
+        if !IsObject(backupFile)
+            return false
+        backupFile.Write(contents)
+        flushed := FlushMetagameFileHandle(backupFile.Handle)
+        backupFile.Close()
+        if !flushed {
+            try FileDelete tempPath
+            return false
+        }
+        moved := DllCall("kernel32\MoveFileExW", "Str", tempPath,
+            "Str", backupPath, "UInt", 0x00000008, "Int")
+        if !moved {
+            try FileDelete tempPath
+            try return FileRead(backupPath, "UTF-8") = contents
+            catch
+                return false
+        }
+        return true
+    } catch {
+        try backupFile.Close()
+        try FileDelete tempPath
+        return false
+    }
+}
+
+BuildMergedLegacyDurabilityOutbox(canonicalOutbox, importedOutboxes,
+    &candidate, &addedCount) {
+    candidate := []
+    addedCount := 0
+    miningEntries := []
+    seen := Map()
+    for entry in canonicalOutbox {
+        if !MetagameOutboxEntryValid(entry)
+            return false
+        if entry.command = "MINING_SUCCESS" && !seen.Has(entry.id) {
+            seen[entry.id] := true
+            miningEntries.Push(entry)
+        }
+        candidate.Push(entry)
+    }
+    for imported in importedOutboxes {
+        for entry in imported {
+            if !MetagameOutboxEntryValid(entry)
+                return false
+            if entry.command != "MINING_SUCCESS" || seen.Has(entry.id)
+                continue
+            seen[entry.id] := true
+            miningEntries.Push(entry)
+            addedCount += 1
+        }
+    }
+    if !addedCount
+        return true
+
+    recoveryAt := UnixTimeMilliseconds()
+    sessionId := "legacy_durability_v1_" recoveryAt "_" addedCount
+    candidate := []
+    if !MetagameOutboxEnqueue(&candidate, sessionId, recoveryAt,
+        "SESSION_BEGIN")
+        return false
+    for entry in miningEntries {
+        if !TryParseMetagameOutboxFields("MINING_SUCCESS", entry.id,
+            Min(Integer(entry.at), recoveryAt), &replayEntry)
+            return false
+        candidate.Push(replayEntry)
+    }
+    return MetagameOutboxEnqueue(&candidate, sessionId, recoveryAt + 1,
+        "SESSION_END")
+}
+
+MergeVerifiedRewardWalPending(source, &candidate, &addedCount) {
+    for eventId, entry in source {
+        if !VerifiedRewardWalEntryValid(entry)
+            return false
+        if candidate.Has(eventId) {
+            existing := candidate[eventId]
+            if existing.mode != entry.mode
+                || existing.revision != entry.revision
+                || existing.at != entry.at
+                return false
+            continue
+        }
+        candidate[eventId] := {id: entry.id, mode: entry.mode,
+            revision: Integer(entry.revision), at: Integer(entry.at)}
+        addedCount += 1
+    }
+    return true
+}
+
+PersistVerifiedRewardWalSnapshot(pending, path) {
+    if !IsObject(pending) || !path
+        return false
+    SplitPath path, , &directory
+    try DirCreate directory
+    catch
+        return false
+    tempPath := path "." DllCall("GetCurrentProcessId") ".migration.tmp"
+    try {
+        try FileDelete tempPath
+        walFile := FileOpen(tempPath, "w", "UTF-8-RAW")
+        if !IsObject(walFile)
+            return false
+        walFile.Write("AIMINERREWARDWAL1`n")
+        for eventId, entry in pending {
+            if eventId != entry.id || !VerifiedRewardWalEntryValid(entry) {
+                walFile.Close()
+                try FileDelete tempPath
+                return false
+            }
+            walFile.Write("E`t" eventId "`t" entry.mode "`t"
+                Integer(entry.revision) "`t" Integer(entry.at) "`n")
+        }
+        flushed := FlushMetagameFileHandle(walFile.Handle)
+        walFile.Close()
+        if !flushed {
+            try FileDelete tempPath
+            return false
+        }
+        moved := DllCall("kernel32\MoveFileExW", "Str", tempPath,
+            "Str", path, "UInt", 0x00000009, "Int")
+        if !moved {
+            try FileDelete tempPath
+            return false
+        }
+        return true
+    } catch {
+        try walFile.Close()
+        try FileDelete tempPath
+        return false
+    }
+}
+
+MigrateLegacyMetagameDurabilityFiles() {
+    global State
+    try DirCreate State.persistentDataRoot
+    catch
+        return false
+
+    canonicalOutbox := []
+    canonicalOutboxContents := ""
+    if FileExist(State.metagameOutboxPath) {
+        if !ReadStableLegacyDurabilityFile(State.metagameOutboxPath,
+            &canonicalOutboxContents)
+            || !ParseMetagameOutboxContents(canonicalOutboxContents,
+                &canonicalOutbox)
+            return false
+    }
+    canonicalWal := Map()
+    canonicalWalContents := ""
+    canonicalWalOps := 0
+    if FileExist(State.verifiedRewardWalPath) {
+        if !ReadStableLegacyDurabilityFile(State.verifiedRewardWalPath,
+            &canonicalWalContents)
+            || !ParseVerifiedRewardWalContents(canonicalWalContents,
+                &canonicalWal, &canonicalWalOps)
+            return false
+    }
+
+    receipts := LoadLegacyDurabilityReceipts(
+        State.legacyDurabilityReceiptPath)
+    pendingReceipts := []
+    importedOutboxes := []
+    importedWals := []
+    for storageRoot in GetLegacyMetagameStorageRoots() {
+        for source in [
+            {kind: "OUTBOX", name: "metagame-outbox.tsv",
+                backup: "legacy-outbox"},
+            {kind: "WAL", name: "verified-reward-wal.tsv",
+                backup: "legacy-wal"}] {
+            sourcePath := storageRoot "\" source.name
+            if !FileExist(sourcePath)
+                continue
+            if !ReadStableLegacyDurabilityFile(sourcePath, &contents)
+                return false
+            sourceKey := LegacyDurabilitySourceKey(source.kind,
+                sourcePath, contents)
+            if !sourceKey
+                return false
+            if receipts.Has(sourceKey)
+                continue
+            if !PersistImmutableLegacyDurabilityBackup(source.backup,
+                sourceKey, contents)
+                return false
+            pendingReceipts.Push({key: sourceKey, path: sourcePath})
+            if source.kind = "OUTBOX" {
+                if ParseMetagameOutboxContents(contents, &importedOutbox)
+                    importedOutboxes.Push(importedOutbox)
+            } else {
+                importedWalOps := 0
+                if ParseVerifiedRewardWalContents(contents, &importedWal,
+                    &importedWalOps)
+                    importedWals.Push(importedWal)
+            }
+        }
+    }
+    if !pendingReceipts.Length
+        return true
+
+    if !BuildMergedLegacyDurabilityOutbox(canonicalOutbox,
+        importedOutboxes, &mergedOutbox, &outboxAdded)
+        return false
+    mergedWal := Map()
+    walAdded := 0
+    if !MergeVerifiedRewardWalPending(canonicalWal, &mergedWal, &walAdded)
+        return false
+    canonicalWalCount := mergedWal.Count
+    for importedWal in importedWals {
+        if !MergeVerifiedRewardWalPending(importedWal, &mergedWal, &walAdded)
+            return false
+    }
+
+    if outboxAdded {
+        if canonicalOutboxContents {
+            canonicalKey := LegacyDurabilitySourceKey("CANONICAL_OUTBOX",
+                State.metagameOutboxPath, canonicalOutboxContents)
+            if !PersistImmutableLegacyDurabilityBackup("canonical-outbox",
+                canonicalKey, canonicalOutboxContents)
+                return false
+        }
+        if !PersistMetagameOutbox(mergedOutbox, State.metagameOutboxPath)
+            return false
+    }
+    if mergedWal.Count != canonicalWalCount {
+        if canonicalWalContents {
+            canonicalKey := LegacyDurabilitySourceKey("CANONICAL_WAL",
+                State.verifiedRewardWalPath, canonicalWalContents)
+            if !PersistImmutableLegacyDurabilityBackup("canonical-wal",
+                canonicalKey, canonicalWalContents)
+                return false
+        }
+        if !PersistVerifiedRewardWalSnapshot(mergedWal,
+            State.verifiedRewardWalPath)
+            return false
+    }
+    for receipt in pendingReceipts
+        receipts[receipt.key] := receipt.path
+    return PersistLegacyDurabilityReceipts(receipts,
+        State.legacyDurabilityReceiptPath)
+}
+
 RunLegacyFarmHistoryBackfill() {
     global State
     if !State.metagameReplayNormalized
@@ -3325,6 +3733,12 @@ LoadVerifiedRewardWal(path, &pending, &operationCount) {
     try content := FileRead(path, "UTF-8")
     catch
         return false
+    return ParseVerifiedRewardWalContents(content, &pending, &operationCount)
+}
+
+ParseVerifiedRewardWalContents(content, &pending, &operationCount) {
+    pending := Map()
+    operationCount := 0
     lines := StrSplit(StrReplace(content, "`r", ""), "`n")
     if !lines.Length || lines[1] != "AIMINERREWARDWAL1"
         return false
@@ -3660,9 +4074,15 @@ LoadMetagameOutbox(path) {
     try content := FileRead(path, "UTF-8")
     catch
         return outbox
+    ParseMetagameOutboxContents(content, &outbox)
+    return outbox
+}
+
+ParseMetagameOutboxContents(content, &outbox) {
+    outbox := []
     lines := StrSplit(StrReplace(content, "`r", ""), "`n")
     if !lines.Length
-        return outbox
+        return false
     header := lines[1]
     if header = "AIUIMETAOUTBOX3" {
         journal := []
@@ -3695,10 +4115,10 @@ LoadMetagameOutbox(path) {
             Loop journal.Length - headIndex + 1
                 outbox.Push(journal[headIndex + A_Index - 1])
         }
-        return outbox
+        return true
     }
     if header != "AIUIMETAOUTBOX1" && header != "AIUIMETAOUTBOX2"
-        return outbox
+        return false
     legacyFormat := header = "AIUIMETAOUTBOX1"
     seen := Map()
     Loop lines.Length - 1 {
@@ -3721,7 +4141,7 @@ LoadMetagameOutbox(path) {
         seen[key] := true
         outbox.Push(entry)
     }
-    return outbox
+    return true
 }
 
 TryParseMetagameOutboxFields(command, eventId, timestampField, &entry) {
@@ -11303,6 +11723,16 @@ PlayLocalRoute(expectedGeneration, route) {
     global State
     if !IsCurrentRun(expectedGeneration) || !route || !State.serverEpoch
         return false
+
+    ; DevCon movement is intentionally retained for background-safe walking, but
+    ; +look_* is not a mouse axis and can report ROUTE even when GTA's camera did
+    ; not move.  When FiveM owns the foreground, route every storage view segment
+    ; through the same relative SendInput adapter used by work-view recovery.
+    ; OpenStorageAndCapture remains the proof that the resulting view is useful.
+    if RouteViewSegmentCount(route) > 0
+        && State.targetHwnd && WinActive("ahk_id " State.targetHwnd)
+        return PlayForegroundViewRoute(expectedGeneration, route)
+
     if !EnsureDevConPort(false)
         return false
     port := State.lastDevConPort
@@ -11313,6 +11743,60 @@ PlayLocalRoute(expectedGeneration, route) {
     if !routeOk
         State.lastDevConPort := 0
     return routeOk
+}
+
+PlayForegroundViewRoute(expectedGeneration, route) {
+    global State, Config
+    if !IsCurrentRun(expectedGeneration) || !IsValidRoute(route, false)
+        || !State.targetHwnd || !WinActive("ahk_id " State.targetHwnd)
+        return false
+
+    ; A held ox_target cursor consumes relative mouse input.  Close only the
+    ; target session owned by this run before applying physical camera motion.
+    if !ReleaseBackgroundTarget(false) || !WaitWhileReady(60, expectedGeneration)
+        return false
+
+    totalSent := 0
+    for routeStep in StrSplit(route, ",") {
+        if !RegExMatch(routeStep, "^(\d+):(\d+)$", &parts)
+            return false
+        durationMs := parts[1] + 0
+        mask := parts[2] + 0
+        if mask & 15 {
+            ; Storage view routes must never smuggle walking input through the
+            ; global foreground keyboard. Walking stays on the cancellable DevCon
+            ; path so switching tabs cannot type W/A/S/D into another app.
+            WriteDiagnostic("STORAGE_VIEW_ROUTE_REJECTED reason=movement_mask route="
+                . DiagnosticToken(route))
+            return false
+        }
+
+        horizontalDirection := (mask & 64) ? -1 : (mask & 128) ? 1 : 0
+        ; MouseDirection is the empirically selected GTA downward axis. Logical
+        ; look-up is its inverse; logical look-down uses it directly.
+        verticalDirection := (mask & 16) ? -Config.workViewMouseDirection
+            : (mask & 32) ? Config.workViewMouseDirection : 0
+        deadline := MonotonicMs() + durationMs
+        while MonotonicMs() < deadline {
+            Critical "On"
+            if !IsTargetForeground(expectedGeneration) {
+                Critical "Off"
+                return false
+            }
+            sent := SendRelativeMouseDelta(
+                horizontalDirection * Config.workViewMouseStep,
+                verticalDirection * Config.workViewMouseStep)
+            Critical "Off"
+            if !sent
+                return false
+            totalSent += 1
+            if !WaitWhileReady(16, expectedGeneration)
+                return false
+        }
+    }
+    WriteDiagnostic("STORAGE_CAMERA_INPUT adapter=sendinput-relative route="
+        . DiagnosticToken(route) " packets=" totalSent " verified=0")
+    return totalSent > 0 && IsTargetForeground(expectedGeneration)
 }
 
 ReverseLocalRoute(route) {
