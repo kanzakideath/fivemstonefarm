@@ -1,6 +1,6 @@
 {
   "name": "ai-miner-web-ui",
-  "version": "9.1.3",
+  "version": "9.1.4",
   "private": true,
   "type": "module",
   "description": "Offline Framework7 UI for AI Miner",

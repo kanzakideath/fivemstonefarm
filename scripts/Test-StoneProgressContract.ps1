@@ -75,10 +75,10 @@ Assert-SourcePattern `
     'ParseVerifiedFarmRewardDiagnosticLine\(line, &record,[\s\S]{0,2200}FARM_REWARD_CONFIRMED[\s\S]{0,900}reason=\(weight_increase\|item_increase\|wash_exchange_raw_\[1-9\]\[0-9\]\*_output_\[1-9\]\[0-9\]\*\)' `
     'History migration must accept only verified inventory-reward diagnostics.'
 Assert-SourcePattern `
-    'RunLegacyFarmHistoryBackfill\(\)[\s\S]{0,4200}PersistMetagameOutbox\(candidate,[\s\S]{0,1800}WriteLegacyFarmHistoryBackfillMarker' `
+    'RunLegacyFarmHistoryBackfill\([^)]*\)[\s\S]{0,4200}PersistMetagameOutbox\(candidate,[\s\S]{0,1800}WriteLegacyFarmHistoryBackfillMarker' `
     'History migration must persist its durable FIFO before its completion marker.'
 Assert-SourcePattern `
-    'RunLegacyFarmHistoryBackfill\(\)[\s\S]{0,3500}if !selectedRecords\.Length && !supportPending\s+return true[\s\S]{0,2600}if normalPending && hasNormalRecords[\s\S]{0,800}WriteLegacyFarmHistoryBackfillMarker' `
+    'RunLegacyFarmHistoryBackfill\([^)]*\)[\s\S]{0,3500}if !selectedRecords\.Length && !supportPending\s+return true[\s\S]{0,2600}if normalPending && hasNormalRecords[\s\S]{0,800}WriteLegacyFarmHistoryBackfillMarker' `
     'An empty normal install must not consume its future history-import marker.'
 Assert-SourcePattern `
     'BuildLegacyFarmHistoryBatch\(baseOutbox,[\s\S]{0,1700}replayAt := Min\(record\.at, batchAtUnixMs\)[\s\S]{0,250}TryParseMetagameOutboxFields\("MINING_SUCCESS", eventId,\s*replayAt' `
@@ -108,7 +108,7 @@ Assert-SourcePattern `
     'metagameBackfillMarkerPath:[\s\S]{0,220}: A_ScriptDir "\\[^"\r\n]*_STONE[^"\r\n]*\.v1\.done"' `
     'The legacy-history marker must be scoped to the installation that owns the diagnostic log.'
 Assert-SourcePattern `
-    'paths := \[A_ScriptDir "\\[^"\r\n]*_STONE[^"\r\n]*\.log",[\s\S]{0,180}State\.diagnosticPath "\.2", State\.diagnosticPath "\.1",[\s\S]{0,80}State\.diagnosticPath\]' `
+    'supportPath := supportPathOverride[\s\S]{0,160}: A_ScriptDir "\\[^"\r\n]*_STONE[^"\r\n]*\.log"[\s\S]{0,1800}paths := \[supportPath,[\s\S]{0,180}State\.diagnosticPath "\.2", State\.diagnosticPath "\.1",[\s\S]{0,80}State\.diagnosticPath\]' `
     'The support recovery log must be imported through the strict history parser before diagnostic rotations.'
 Assert-SourcePattern `
     'ParseDiagnosticSessionStartLine\(line, &versionCode\)[\s\S]{0,900}\| [^"\r\n]+ v\(\[0-9\]\{1,4\}\)' `
@@ -129,8 +129,14 @@ Assert-SourcePattern `
     'testRunId := processId "-" \(A_TickCount & 0xFFFFFFFF\) "-" Random\(100000, 999999\)[\s\S]{0,420}persistentDataRoot :=[\s\S]{0,160}testRunId' `
     'Updater validation artifacts must not be keyed only by a reusable Windows process ID.'
 Assert-SourcePattern `
+    'testRewardBlockerPath :=[\s\S]{0,120}reward-blocker-selftest-" testRunId[\s\S]{0,220}reward-wal-selftest-" testRunId' `
+    'Reward durability self-tests must use the unique validation run ID.'
+Assert-SourcePattern `
     'TestLegacyFarmHistoryBackfillIntegration\(fixture, expectedOutboxLength\)[\s\S]{0,850}supportReceiptPath: State\.metagameSupportBackfillReceiptPath[\s\S]{0,900}State\.metagameSupportBackfillReceiptPath := testSupportReceiptPath[\s\S]{0,1700}State\.metagameSupportBackfillReceiptPath := saved\.supportReceiptPath' `
     'The history integration test must isolate and restore its support-receipt path.'
+Assert-SourcePattern `
+    'TestLegacyFarmHistoryBackfillIntegration\(fixture, expectedOutboxLength\)[\s\S]{0,500}testSupportLogPath := testRoot "\\support-history\.log"[\s\S]{0,1500}RunLegacyFarmHistoryBackfill\(testSupportLogPath\)[\s\S]{0,900}RunLegacyFarmHistoryBackfill\(testSupportLogPath\)' `
+    'The deterministic history integration test must not read the real install support log.'
 Assert-SourcePattern `
     'TryClaimStartOperation\(&startToken\)\s*\{[\s\S]{0,220}EnterMetagameOutboxCritical\(\)[\s\S]{0,500}AutomationStartAllowed\(State\.running, State\.registrationActive,[\s\S]{0,220}State\.activeFarmCallbacks\)[\s\S]{0,500}State\.startInProgress := true' `
     'A Start request does not atomically claim ownership before blocking preflight.'

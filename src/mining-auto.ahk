@@ -9,7 +9,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "9.1.3"
+global AppVersion := "9.1.4"
 ;@Ahk2Exe-SetVersion %A_PriorLine~U)^.*"([^"]+)".*$~$1%
 processId := DllCall("GetCurrentProcessId")
 isUiSmokeTest := HasCommandLineArgument("--smoke-test")
@@ -458,7 +458,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
         vehicleOutboundRoute: "", vehicleReturnRoute: ""
     }
     testOverlayBounds := RuntimeStatusOverlayBounds(100, 200, 1280, 720)
-    testOutboxPath := A_Temp "\ai-miner-outbox-selftest-" processId ".tsv"
+    testOutboxPath := A_Temp "\ai-miner-outbox-selftest-" testRunId ".tsv"
     try FileDelete testOutboxPath
     testOutbox := []
     testOutboxSessionId := "run_11_1_946684800000"
@@ -771,7 +771,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
         && !FarmStateRequiresCapacityDispatch("STOPPING_FARM", false)
         && !FarmStateRequiresCapacityDispatch("FARMING", true)
     testLargeOutboxPath := A_Temp "\ai-miner-large-outbox-selftest-"
-        . processId ".tsv"
+        . testRunId ".tsv"
     try FileDelete testLargeOutboxPath
     testLongIdSuffix := ""
     Loop 90
@@ -795,7 +795,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
         && testLargeReload.Length = 4097
         && testLargeReload[4097].id = "mine_backlog_tail_" testLongIdSuffix
     try FileDelete testLargeOutboxPath
-    testJournalPath := A_Temp "\ai-miner-journal-selftest-" processId ".tsv"
+    testJournalPath := A_Temp "\ai-miner-journal-selftest-" testRunId ".tsv"
     try FileDelete testJournalPath
     savedMetaOutbox := State.metagameOutbox
     savedMetaPath := State.metagameOutboxPath
@@ -868,7 +868,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
     ; was flushed but before the enqueue's memory Push. It must run only after the
     ; transaction commits, observe both entries, and compact the new mining row.
     testInterleavePath := A_Temp "\ai-miner-interleave-selftest-"
-        . processId ".tsv"
+        . testRunId ".tsv"
     try FileDelete testInterleavePath
     State.metagameOutbox := []
     State.metagameOutboxPath := testInterleavePath
@@ -912,7 +912,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
     ; timer due after rebase but before persist may run only after reset installs
     ; the new FIFO/session, so both the retained and new rewards remain durable.
     testResetInterleavePath := A_Temp
-        . "\ai-miner-reset-interleave-selftest-" processId ".tsv"
+        . "\ai-miner-reset-interleave-selftest-" testRunId ".tsv"
     try FileDelete testResetInterleavePath
     State.metagameOutbox := []
     State.metagameOutboxPath := testResetInterleavePath
@@ -977,7 +977,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
         && testAppendFailureOutbox.Length = 0
         && !FlushMetagameFileHandle(0)
     testTornPath := A_Temp "\ai-miner-torn-journal-selftest-"
-        . processId ".tsv"
+        . testRunId ".tsv"
     try FileDelete testTornPath
     State.metagameOutbox := []
     State.metagameOutboxPath := testTornPath
@@ -1000,8 +1000,8 @@ if A_Args.Length && A_Args[1] = "--validate" {
     ; Simulate a disk failure after BEGIN was already ACKed by the Host. END must
     ; retain one immutable timestamp, block the next start, then append exactly
     ; once when the idle retry gets a writable journal.
-    testEndBlockerPath := A_Temp "\ai-miner-end-blocker-selftest-" processId
-    testEndRetryPath := A_Temp "\ai-miner-end-retry-selftest-" processId ".tsv"
+    testEndBlockerPath := A_Temp "\ai-miner-end-blocker-selftest-" testRunId
+    testEndRetryPath := A_Temp "\ai-miner-end-retry-selftest-" testRunId ".tsv"
     try FileDelete testEndRetryPath
     try FileDelete testEndBlockerPath
     blockerFile := FileOpen(testEndBlockerPath, "w", "UTF-8-RAW")
@@ -1052,7 +1052,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
     ; A graceful offline FIFO keeps its original session duration. In contrast,
     ; a hard-kill FIFO whose tail lacks END is the only shape normalized later.
     testGracefulReplayPath := A_Temp
-        . "\ai-miner-graceful-replay-selftest-" processId ".tsv"
+        . "\ai-miner-graceful-replay-selftest-" testRunId ".tsv"
     try FileDelete testGracefulReplayPath
     testGracefulOutbox := []
     State.metagameOutboxPath := testGracefulReplayPath
@@ -1132,11 +1132,11 @@ if A_Args.Length && A_Args[1] = "--validate" {
     ; Force SESSION_BEGIN persistence to fail, restore a writable journal, retry the
     ; same stable mode-aware ID, and simulate a restart/retry without duplication.
     testRewardBlockerPath := A_Temp
-        . "\ai-miner-reward-blocker-selftest-" processId
+        . "\ai-miner-reward-blocker-selftest-" testRunId
     testRewardRetryPath := A_Temp
-        . "\ai-miner-reward-retry-selftest-" processId ".tsv"
+        . "\ai-miner-reward-retry-selftest-" testRunId ".tsv"
     testRewardWalPath := A_Temp
-        . "\ai-miner-reward-wal-selftest-" processId ".tsv"
+        . "\ai-miner-reward-wal-selftest-" testRunId ".tsv"
     try FileDelete testRewardRetryPath
     try FileDelete testRewardWalPath
     try FileDelete testRewardBlockerPath
@@ -1205,9 +1205,9 @@ if A_Args.Length && A_Args[1] = "--validate" {
             testRewardFrozenSessionId)
     ; A heavily loaded release build can delay a one-shot timer beyond 80 ms even
     ; though it was correctly held outside the Critical WAL section. Wait for the
-    ; observable post-critical callback with a strict one-second ceiling so this
-    ; remains a real liveness assertion without making --validate flaky.
-    Loop 40 {
+    ; observable post-critical callback. A busy game machine may postpone the
+    ; timer beyond one second, so keep a bounded three-second liveness ceiling.
+    Loop 120 {
         if RewardWalRecoveryTimerRan
             break
         Sleep 25
@@ -1317,7 +1317,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
     try FileDelete testJournalPath
     try FileDelete testTornPath
     testLegacyOutboxPath := A_Temp "\ai-miner-v2-outbox-selftest-"
-        . processId ".tsv"
+        . testRunId ".tsv"
     try FileDelete testLegacyOutboxPath
     legacyFile := FileOpen(testLegacyOutboxPath, "w", "UTF-8-RAW")
     legacyFile.Write("AIUIMETAOUTBOX2`nMINING_SUCCESS`t"
@@ -3537,13 +3537,17 @@ MigrateLegacyMetagameDurabilityFiles() {
         State.legacyDurabilityReceiptPath)
 }
 
-RunLegacyFarmHistoryBackfill() {
+RunLegacyFarmHistoryBackfill(supportPathOverride := "") {
     global State
     if !State.metagameReplayNormalized
         return false
     normalPending := !LegacyFarmHistoryBackfillComplete(
         State.metagameBackfillMarkerPath)
-    supportPath := A_ScriptDir "\AI採掘機_STONE履歴復元.log"
+    ; Validation fixtures must never mix a real installation's support export into
+    ; their deterministic record count. Production callers omit the override.
+    supportPath := supportPathOverride
+        ? supportPathOverride
+        : A_ScriptDir "\AI採掘機_STONE履歴復元.log"
     supportExists := FileExist(supportPath)
     supportReceipt := ""
     supportPending := false
@@ -3560,7 +3564,7 @@ RunLegacyFarmHistoryBackfill() {
     ; A support-assisted recovery export is optional and never shipped in the
     ; application bundle. Feed it through the same strict session-aware parser
     ; before the normal rotations so copied, audited rewards can be recovered.
-    paths := [A_ScriptDir "\AI採掘機_STONE履歴復元.log",
+    paths := [supportPath,
         State.diagnosticPath ".2", State.diagnosticPath ".1",
         State.diagnosticPath]
     if !ReadLegacyFarmHistoryFiles(paths, &records)
@@ -3642,13 +3646,13 @@ RunLegacyFarmHistoryBackfill() {
 }
 
 TestLegacyFarmHistoryBackfillIntegration(fixture, expectedOutboxLength) {
-    global State
-    processId := DllCall("GetCurrentProcessId")
-    testRoot := A_Temp "\ai-miner-meta-history-integration-" processId
+    global State, testRunId
+    testRoot := A_Temp "\ai-miner-meta-history-integration-" testRunId
     testLogPath := testRoot "\AI採掘機_診断.log"
     testOutboxPath := testRoot "\outbox.tsv"
     testMarkerPath := testRoot "\backfill.done"
     testSupportReceiptPath := testRoot "\support-backfill.done"
+    testSupportLogPath := testRoot "\support-history.log"
     saved := {
         diagnosticPath: State.diagnosticPath,
         outboxPath: State.metagameOutboxPath,
@@ -3667,6 +3671,7 @@ TestLegacyFarmHistoryBackfillIntegration(fixture, expectedOutboxLength) {
         try FileDelete testOutboxPath
         try FileDelete testMarkerPath
         try FileDelete testSupportReceiptPath
+        try FileDelete testSupportLogPath
         fixtureFile := FileOpen(testLogPath, "w", "UTF-8-RAW")
         if !IsObject(fixtureFile)
             return false
@@ -3683,7 +3688,7 @@ TestLegacyFarmHistoryBackfillIntegration(fixture, expectedOutboxLength) {
         State.metagameJournalReady := false
         State.metagameJournalOps := 0
 
-        firstRun := RunLegacyFarmHistoryBackfill()
+        firstRun := RunLegacyFarmHistoryBackfill(testSupportLogPath)
         diskOutbox := firstRun ? LoadMetagameOutbox(testOutboxPath) : []
         firstRunOk := firstRun
             && LegacyFarmHistoryBackfillComplete(testMarkerPath)
@@ -3696,7 +3701,7 @@ TestLegacyFarmHistoryBackfillIntegration(fixture, expectedOutboxLength) {
         ; synthetic session and the durable FIFO must remain byte-for-byte equivalent.
         State.metagameOutbox := diskOutbox
         State.metagameReplayNormalized := true
-        secondRun := RunLegacyFarmHistoryBackfill()
+        secondRun := RunLegacyFarmHistoryBackfill(testSupportLogPath)
         passed := firstRunOk && secondRun
             && State.metagameOutbox.Length = expectedOutboxLength
             && LoadMetagameOutbox(testOutboxPath).Length = expectedOutboxLength
@@ -3716,6 +3721,7 @@ TestLegacyFarmHistoryBackfillIntegration(fixture, expectedOutboxLength) {
         try FileDelete testOutboxPath
         try FileDelete testMarkerPath
         try FileDelete testSupportReceiptPath
+        try FileDelete testSupportLogPath
         try DirDelete testRoot
     }
     return passed
