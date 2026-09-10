@@ -1,8 +1,8 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidatePattern('^\d+\.\d+\.\d+$')]
+    [ValidatePattern('^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')]
     [string]$Version,
 
     [switch]$SkipToolBootstrap
@@ -109,10 +109,10 @@ foreach ($catalogName in $stoneCatalogNames) {
         -IntegratedPath (Join-Path $integratedMetaRoot (Join-Path 'data' $catalogName))
 }
 
-$mainText = Get-Content -LiteralPath $mainSource -Raw
+$mainText = Get-Content -LiteralPath $mainSource -Raw -Encoding UTF8
 $versionMatch = [regex]::Match(
     $mainText,
-    '(?m)^\s*(?:global\s+)?AppVersion\s*:?=\s*["''](?<version>\d+\.\d+\.\d+)["'']'
+        '(?m)^\s*(?:global\s+)?AppVersion\s*:?=\s*["''](?<version>(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))["'']'
 )
 if (-not $versionMatch.Success) {
     throw 'AppVersion was not found in src/mining-auto.ahk.'
@@ -124,10 +124,11 @@ if ($versionMatch.Groups['version'].Value -ne $Version) {
 function Assert-EmbeddedReleaseVersion {
     param(
         [Parameter(Mandatory)] [string]$Path,
-        [Parameter(Mandatory)] [string]$ExpectedVersion
+        [Parameter(Mandatory)] [string]$ExpectedVersion,
+        [hashtable]$AllowedHistoricalContextPatterns = @{}
     )
 
-    $text = Get-Content -LiteralPath $Path -Raw
+    $text = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
     $matches = [regex]::Matches(
         $text,
         '(?<![0-9])(?<version>[0-9]+\.[0-9]+\.[0-9]+)(?![0-9])'
@@ -136,10 +137,31 @@ function Assert-EmbeddedReleaseVersion {
         throw "Release version marker was not found: $Path"
     }
 
+    $approvedHistoricalIndexes = [Collections.Generic.HashSet[int]]::new()
+    foreach ($historicalVersion in $AllowedHistoricalContextPatterns.Keys) {
+        foreach ($contextPattern in @($AllowedHistoricalContextPatterns[$historicalVersion])) {
+            $contextMatches = [regex]::Matches($text, [string]$contextPattern)
+            if ($contextMatches.Count -ne 1) {
+                throw "Expected one approved '$historicalVersion' history context in '$Path', found $($contextMatches.Count): $contextPattern"
+            }
+            $context = $contextMatches[0]
+            foreach ($candidate in $matches) {
+                if ($candidate.Groups['version'].Value -eq $historicalVersion -and
+                    $candidate.Index -ge $context.Index -and
+                    $candidate.Index -lt ($context.Index + $context.Length)) {
+                    [void]$approvedHistoricalIndexes.Add($candidate.Index)
+                }
+            }
+        }
+    }
+
     $mismatches = @(
         $matches |
+            Where-Object {
+                $_.Groups['version'].Value -ne $ExpectedVersion -and
+                -not $approvedHistoricalIndexes.Contains($_.Index)
+            } |
             ForEach-Object { $_.Groups['version'].Value } |
-            Where-Object { $_ -ne $ExpectedVersion } |
             Sort-Object -Unique
     )
     if ($mismatches.Count -ne 0) {
@@ -147,9 +169,23 @@ function Assert-EmbeddedReleaseVersion {
     }
 }
 
-foreach ($versionedDocument in @($rootReadme, $sourceReadme, $usageGuide, $configTemplate)) {
-    Assert-EmbeddedReleaseVersion -Path $versionedDocument -ExpectedVersion $Version
-}
+# v9.0.2 introduced the one-time verified-reward history migration. Its version
+# is part of the durable compatibility contract and must remain documented even
+# after later releases. Keep the exception narrow: every other embedded version
+# still has to match this build exactly.
+Assert-EmbeddedReleaseVersion -Path $rootReadme -ExpectedVersion $Version `
+    -AllowedHistoricalContextPatterns @{
+        '9.0.2' = @('v9\.0\.2への初回更新時')
+    }
+Assert-EmbeddedReleaseVersion -Path $sourceReadme -ExpectedVersion $Version `
+    -AllowedHistoricalContextPatterns @{
+        '9.0.2' = @('v9\.0\.2以降の意味', 'v9\.0\.2への初回更新時')
+    }
+Assert-EmbeddedReleaseVersion -Path $usageGuide -ExpectedVersion $Version `
+    -AllowedHistoricalContextPatterns @{
+        '9.0.2' = @('v9\.0\.2への初回更新時')
+    }
+Assert-EmbeddedReleaseVersion -Path $configTemplate -ExpectedVersion $Version
 
 $node = Get-Command node.exe -ErrorAction Stop
 $nodeVersionText = (& $node.Source --version).Trim().TrimStart('v')
@@ -159,7 +195,7 @@ if ($LASTEXITCODE -ne 0 -or -not [Version]::TryParse($nodeVersionText, [ref]$nod
     throw "Node.js 20 or newer is required; found '$nodeVersionText'."
 }
 
-$uiPackage = Get-Content -LiteralPath $uiWebPackage -Raw | ConvertFrom-Json
+$uiPackage = Get-Content -LiteralPath $uiWebPackage -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($uiPackage.version -ne $Version) {
     throw "Web UI version '$($uiPackage.version)' does not match requested version '$Version'."
 }
@@ -184,7 +220,7 @@ if ($LASTEXITCODE -ne 0) {
     throw 'package-lock.json does not contain the expected locked Framework7 9.1.3 dependency.'
 }
 
-[xml]$uiHostProjectXml = Get-Content -LiteralPath $uiHostProject -Raw
+[xml]$uiHostProjectXml = Get-Content -LiteralPath $uiHostProject -Raw -Encoding UTF8
 $uiHostProperties = $uiHostProjectXml.Project.PropertyGroup |
     Where-Object { $_.TargetFramework } | Select-Object -First 1
 $webViewReference = $uiHostProjectXml.SelectNodes('/Project/ItemGroup/PackageReference') |
@@ -196,7 +232,7 @@ if ($uiHostProperties.TargetFramework -cne 'net48' -or
     throw 'The UI host must remain a win-x64 net48 application locked to WebView2 SDK 1.0.4191.47.'
 }
 
-$uiHostLockData = Get-Content -LiteralPath $uiHostLock -Raw | ConvertFrom-Json
+$uiHostLockData = Get-Content -LiteralPath $uiHostLock -Raw -Encoding UTF8 | ConvertFrom-Json
 $uiHostNet48 = $uiHostLockData.dependencies.PSObject.Properties['.NETFramework,Version=v4.8'].Value
 $lockedWebView = $uiHostNet48.PSObject.Properties['Microsoft.Web.WebView2'].Value
 $uiHostX64 = $uiHostLockData.dependencies.PSObject.Properties['.NETFramework,Version=v4.8/win-x64'].Value
@@ -288,7 +324,7 @@ function Invoke-CapabilitySmokeTest {
         throw "Capability smoke test failed: $Executable (exit $($process.ExitCode))"
     }
 
-    $actual = (Get-Content -LiteralPath $resultPath -Raw).Trim()
+    $actual = (Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8).Trim()
     if ($actual -ne $Expected) {
         throw "Unexpected capability response from $Executable. Expected '$Expected', got '$actual'."
     }
@@ -300,9 +336,12 @@ Invoke-CSharpBuild -Source $bridgeSource -Output $bridgeOutput
 Invoke-CSharpBuild -Source $updaterSource -Output $updaterOutput
 & (Join-Path $PSScriptRoot 'Test-CameraRecoveryContract.ps1') -SourcePath $mainSource
 & (Join-Path $PSScriptRoot 'Test-WashRecoveryContract.ps1') -SourcePath $mainSource
+& (Join-Path $PSScriptRoot 'Test-FarmRecoverySafetyContract.ps1') -SourcePath $mainSource
+& (Join-Path $PSScriptRoot 'Test-StorageClosedLoopContract.ps1') `
+    -SourcePath $mainSource -BridgeSourcePath $bridgeSource
 & (Join-Path $PSScriptRoot 'Test-StoneProgressContract.ps1') -SourcePath $mainSource
 & (Join-Path $PSScriptRoot 'Test-WashDomExpressions.ps1') -Bridge $bridgeOutput
-Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'CAPS 11 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HOTBAR INVENTORYKEY HEALTH COMPANION ACTIONWAIT'
+Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'CAPS 12 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HOTBAR INVENTORYKEY HEALTH COMPANION ACTIONWAIT REFILL'
 Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'SELFTEST OK' -Mode 'self-test'
 & (Join-Path $PSScriptRoot 'Test-BackgroundBridge.ps1') -Bridge $bridgeOutput
 Invoke-CapabilitySmokeTest -Executable $updaterOutput -Expected 'UPDATE_CAPS 1 CHECK DOWNLOAD APPLY'
@@ -406,7 +445,7 @@ if ($actualUiFiles.Count -ne $expectedUiFiles.Count -or
     throw 'Offline UI output contains missing or unexpected files.'
 }
 
-$uiBuildInfo = Get-Content -LiteralPath (Join-Path $uiWebOutput 'build-info.json') -Raw |
+$uiBuildInfo = Get-Content -LiteralPath (Join-Path $uiWebOutput 'build-info.json') -Raw -Encoding UTF8 |
     ConvertFrom-Json
 if ([int]$uiBuildInfo.schema -ne 1 -or $uiBuildInfo.version -ne $Version -or
     $uiBuildInfo.framework -cne 'Framework7' -or
@@ -445,7 +484,7 @@ if (-not $uiTestProcess.WaitForExit(20000)) {
 }
 $uiTestFailed = $uiTestProcess.ExitCode -ne 0 `
     -or -not (Test-Path -LiteralPath $uiTestResult -PathType Leaf) `
-    -or (Get-Content -LiteralPath $uiTestResult -Raw).Trim() -ne 'SELFTEST OK'
+    -or (Get-Content -LiteralPath $uiTestResult -Raw -Encoding UTF8).Trim() -ne 'SELFTEST OK'
 if ($uiTestFailed) {
     throw 'UI host self-test failed.'
 }
@@ -483,8 +522,17 @@ try {
         if ($null -eq $compilerProcess) {
             throw 'Ahk2Exe did not return a process handle.'
         }
+        # Windows PowerShell 5.1 can lose the native process handle when a very
+        # short-lived Start-Process child exits before ExitCode is queried. Force
+        # handle materialisation while the compiler is alive so ExitCode remains
+        # available after WaitForExit, including when stdout/stderr are redirected.
+        $compilerHandle = $compilerProcess.Handle
+        if ($compilerHandle -eq [IntPtr]::Zero) {
+            throw 'Ahk2Exe returned an invalid native process handle.'
+        }
         Write-Host "Ahk2Exe started (PID $($compilerProcess.Id))."
         $compilerTimedOut = -not $compilerProcess.WaitForExit(120000)
+        $compilerExitCode = $null
         if ($compilerTimedOut) {
             $compilerPid = $compilerProcess.Id
             try { $compilerProcess.Kill($true) }
@@ -499,18 +547,25 @@ try {
             }
             try { [void]$compilerProcess.WaitForExit(5000) } catch { }
         } else {
-            Write-Host "Ahk2Exe exited with code $($compilerProcess.ExitCode)."
+            # On Windows PowerShell 5.1, Start-Process with redirected streams can
+            # leave ExitCode unpopulated after only WaitForExit(Int32). The second
+            # parameterless wait drains the async stream handlers, and Refresh
+            # makes the native process result available deterministically.
+            $compilerProcess.WaitForExit()
+            $compilerProcess.Refresh()
+            $compilerExitCode = $compilerProcess.ExitCode
+            Write-Host "Ahk2Exe exited with code $compilerExitCode."
         }
 
         $compilerStdoutText = ''
         $compilerStderrText = ''
         if (Test-Path -LiteralPath $compilerStdout -PathType Leaf) {
             $compilerStdoutText = [Convert]::ToString(
-                (Get-Content -LiteralPath $compilerStdout -Raw))
+        (Get-Content -LiteralPath $compilerStdout -Raw -Encoding UTF8))
         }
         if (Test-Path -LiteralPath $compilerStderr -PathType Leaf) {
             $compilerStderrText = [Convert]::ToString(
-                (Get-Content -LiteralPath $compilerStderr -Raw))
+        (Get-Content -LiteralPath $compilerStderr -Raw -Encoding UTF8))
         }
         $compilerOutput = @($compilerStdoutText, $compilerStderrText) |
             Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
@@ -527,9 +582,9 @@ try {
             }
             throw 'Ahk2Exe compilation timed out twice after 120 seconds per attempt.'
         }
-        if ($compilerProcess.ExitCode -ne 0 -or
+        if ($null -eq $compilerExitCode -or $compilerExitCode -ne 0 -or
             -not (Test-Path -LiteralPath $outputExe -PathType Leaf)) {
-            throw "Ahk2Exe compilation failed with exit code $($compilerProcess.ExitCode)."
+            throw "Ahk2Exe compilation failed with exit code $compilerExitCode."
         }
         $compilerSucceeded = $true
         break
@@ -579,6 +634,18 @@ finally {
 }
 
 Assert-X64PortableExecutable -Path $outputExe
+$expectedPeVersion = [Version]::Parse($Version)
+$peVersionInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo($outputExe)
+foreach ($versionField in @('FileVersion', 'ProductVersion')) {
+    $rawVersion = [string]$peVersionInfo.$versionField
+    $parsedVersion = $null
+    if (-not [Version]::TryParse($rawVersion, [ref]$parsedVersion) -or
+        $parsedVersion.Major -ne $expectedPeVersion.Major -or
+        $parsedVersion.Minor -ne $expectedPeVersion.Minor -or
+        $parsedVersion.Build -ne $expectedPeVersion.Build) {
+        throw "Compiled executable $versionField '$rawVersion' does not match '$Version'."
+    }
+}
 $distFiles = @(Get-ChildItem -LiteralPath $distRoot -Recurse -File)
 if ($distFiles.Count -ne 1 -or $distFiles[0].FullName -cne $outputExe) {
     throw 'The build output must contain one self-contained application executable only.'

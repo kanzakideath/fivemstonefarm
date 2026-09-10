@@ -21,7 +21,7 @@ internal static class CdpBridge
     private const string CompanionFramePart = "cfx-nui-ai_miner_companion/ui/index.html";
     private const string CompanionProtocol = "ai-miner-companion";
     private const string CompanionResource = "ai_miner_companion";
-    private const string Capabilities = "CAPS 11 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HOTBAR INVENTORYKEY HEALTH COMPANION ACTIONWAIT";
+    private const string Capabilities = "CAPS 12 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HOTBAR INVENTORYKEY HEALTH COMPANION ACTIONWAIT REFILL";
     private const int WorkProgressPollMilliseconds = 70;
     private const int WorkProgressStableAbsentMilliseconds = 280;
     private const int BundledProgressSessionMilliseconds = 40000;
@@ -47,6 +47,9 @@ internal static class CdpBridge
     private static readonly Regex JsonNumberPattern = new Regex("^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$", RegexOptions.CultureInvariant);
     private static readonly Regex BaselineEntryPattern = new Regex(
         "^(?<slot>[0-9]{4})\\.(?<name>[A-Za-z0-9_-]{1,64})\\.(?<meta>[A-Za-z0-9_-]{2," + MaximumMetadataTokenLength + "})=(?<count>[0-9]{1,10})$",
+        RegexOptions.CultureInvariant);
+    private static readonly Regex ExactCountEntryPattern = new Regex(
+        "^(?<name>[A-Za-z0-9_-]{1,64})\\.(?<meta>[A-Za-z0-9_-]{2," + MaximumMetadataTokenLength + "})=(?<count>[0-9]{1,10})$",
         RegexOptions.CultureInvariant);
     private static int _nextId = 1;
 
@@ -80,14 +83,15 @@ internal static class CdpBridge
         bool hotbarMode = (args.Length == 5 || args.Length == 6) && mode == "press-hotbar";
         bool inventoryKeyMode = (args.Length == 4 || args.Length == 5) && mode == "press-inventory";
         bool testDeactivateMode = args.Length == 4 && mode == "deactivate-test";
-        bool depositMode = args.Length == 6 && mode == "deposit-delta";
+        bool depositMode = args.Length == 7 && mode == "deposit-delta";
+        bool withdrawMode = args.Length == 9 && mode == "withdraw-item";
         bool cancelOperationMode = args.Length == 3 && mode == "cancel-operation";
         bool companionCommandMode = (args.Length == 3 || args.Length == 4)
             && mode == "companion-command";
         if (!twoArgumentMode && !actionTryMode && !actionCompletionMode && !washCompletionMode
             && !nudgeMode && !routeMode && !routeHealthMode && !viewMode
             && !hotbarMode && !inventoryKeyMode
-            && !testDeactivateMode && !depositMode && !cancelOperationMode
+            && !testDeactivateMode && !depositMode && !withdrawMode && !cancelOperationMode
             && !companionCommandMode)
             return 64;
 
@@ -181,10 +185,37 @@ internal static class CdpBridge
                 if (storageType != "trunk")
                     throw new ArgumentException();
                 Dictionary<string, int> baseline = ParseBaseline(args[4]);
-                string operationToken = args[5];
+                Dictionary<string, int> authorized = ParseExactCounts(args[5]);
+                string operationToken = args[6];
                 if (!OperationTokenPattern.IsMatch(operationToken))
                     throw new ArgumentException();
-                result = DepositDeltaAsync(storageId, storageType, baseline, operationToken).GetAwaiter().GetResult();
+                result = DepositDeltaAsync(storageId, storageType, baseline,
+                    authorized, operationToken).GetAwaiter().GetResult();
+            }
+            else if (withdrawMode)
+            {
+                string storageId = DecodeIdentifier(args[2]);
+                string storageType = DecodeIdentifier(args[3]).ToLowerInvariant();
+                string itemName = args[4];
+                int maximumCount;
+                int reserveWeight;
+                int reserveSlots;
+                string operationToken = args[8];
+                if (storageType != "trunk" || !ItemNamePattern.IsMatch(itemName)
+                    || !Int32.TryParse(args[5], NumberStyles.None,
+                        CultureInfo.InvariantCulture, out maximumCount)
+                    || maximumCount < 1 || maximumCount > 1000000
+                    || !Int32.TryParse(args[6], NumberStyles.None,
+                        CultureInfo.InvariantCulture, out reserveWeight)
+                    || reserveWeight < 0 || reserveWeight > 1000000000
+                    || !Int32.TryParse(args[7], NumberStyles.None,
+                        CultureInfo.InvariantCulture, out reserveSlots)
+                    || reserveSlots < 0 || reserveSlots > 1000
+                    || !OperationTokenPattern.IsMatch(operationToken))
+                    throw new ArgumentException();
+                result = WithdrawItemAsync(storageId, storageType, itemName,
+                    maximumCount, reserveWeight, reserveSlots,
+                    operationToken).GetAwaiter().GetResult();
             }
             else if (cancelOperationMode)
             {
@@ -310,6 +341,8 @@ internal static class CdpBridge
             || result.StartsWith("SNAPSHOT ", StringComparison.Ordinal)
             || result.StartsWith("STORAGE ", StringComparison.Ordinal)
             || result.StartsWith("DEPOSITED ", StringComparison.Ordinal)
+            || result.StartsWith("WITHDRAWN ", StringComparison.Ordinal)
+            || result.StartsWith("WITHDRAWN_PARTIAL ", StringComparison.Ordinal)
             || result == "CLOSED" || result == "RELEASED" || result == "CANCELLED";
     }
 
@@ -418,6 +451,7 @@ internal static class CdpBridge
     {
         List<RouteStep> route = ParseRoute("150:65,25:0,150:136");
         Dictionary<string, int> baseline = ParseBaseline("0001.ore.e30=10");
+        Dictionary<string, int> authorized = ParseExactCounts("ore.e30=2");
         const string canonicalMetadata = "{\"a\":1,\"nested\":{\"a\":true,\"b\":2},\"z\":[3,null,\"x\"]}";
         string canonicalToken = EncodeBase64Url(canonicalMetadata);
         Dictionary<string, int> canonicalBaseline = ParseBaseline("0002.ore." + canonicalToken + "=3");
@@ -481,6 +515,18 @@ internal static class CdpBridge
             + "{\"weight\":42,\"max\":1000,\"used\":2,\"slots\":5,\"items\":["
             + "{\"slot\":1,\"name\":\"ore\",\"count\":3,\"meta\":\"{}\"},"
             + "{\"slot\":2,\"name\":\"washed_stone\",\"count\":1,\"meta\":\"{\\\"quality\\\":100}\"}]}");
+        string completeDepositReceipt = FormatDepositReceipt("DEPOSIT_DETAIL "
+            + "{\"storageId\":\"trunk123\",\"storageType\":\"trunk\","
+            + "\"operationToken\":\"123-7\",\"moved\":2,\"planned\":2,"
+            + "\"stacks\":1,\"status\":\"COMPLETE\",\"items\":["
+            + "{\"name\":\"ore\",\"meta\":\"{}\",\"count\":2}]}",
+            "trunk123", "trunk", "123-7");
+        string partialDepositReceipt = FormatDepositReceipt("DEPOSIT_DETAIL "
+            + "{\"storageId\":\"trunk123\",\"storageType\":\"trunk\","
+            + "\"operationToken\":\"123-8\",\"moved\":1,\"planned\":2,"
+            + "\"stacks\":1,\"status\":\"PARTIAL_NO_PROGRESS\",\"items\":["
+            + "{\"name\":\"ore\",\"meta\":\"{}\",\"count\":1}]}",
+            "trunk123", "trunk", "123-8");
         const string companionJson = "{\"protocol\":\"ai-miner-companion\",\"protocolVersion\":1,"
             + "\"resource\":\"ai_miner_companion\",\"resourceVersion\":\"1.0.0\","
             + "\"epoch\":\"ame_0123456789abcdef0123456789abcdef\",\"sequence\":7,"
@@ -638,7 +684,10 @@ internal static class CdpBridge
             || IsSuccess("ERROR WASH_NOT_STARTED")
             || staleWeightSnapshot != "SNAPSHOT 42 1000 2 5 0001.ore.e30=3,0002.washed_stone."
                 + EncodeBase64Url("{\"quality\":100}") + "=1"
+            || completeDepositReceipt != "DEPOSITED 2 2 1 dHJ1bmsxMjM= dHJ1bms= 123-7 COMPLETE ore.e30=2"
+            || partialDepositReceipt != "DEPOSITED 1 2 1 dHJ1bmsxMjM= dHJ1bms= 123-8 PARTIAL_NO_PROGRESS ore.e30=1"
             || !baseline.TryGetValue("1\nore\n{}", out count) || count != 10
+            || !authorized.TryGetValue("ore\n{}", out count) || count != 2
             || !canonicalBaseline.TryGetValue("2\nore\n" + canonicalMetadata, out count) || count != 3
             || largeToken.Length <= 8192 || largeToken.Length > MaximumMetadataTokenLength
             || !largeBaseline.TryGetValue("3\nore\n" + largeMetadata, out count) || count != 7
@@ -682,6 +731,8 @@ internal static class CdpBridge
                 "target\r\ntarget-loader\ninventory\ninventory-loader\nprogress\nprogress-loader"))
             || IsValidServerEpoch("invalid+epoch")
             || !BaselineMetadataIsRejected("not-json")
+            || !ExactCountsIsRejected("0001.ore.e30=2")
+            || !ExactCountsIsRejected("ore.e30=1,ore.e30=2")
             || DecodeIdentifier(EncodeIdentifier("trunk-test")) != "trunk-test"
             || DecodeBase64Url(EncodeBase64Url("{\"quality\":100}")) != "{\"quality\":100}"
             || companion.OpenCargo || !directCargoCompanion.OpenCargo || !companion.Registered
@@ -804,6 +855,19 @@ internal static class CdpBridge
         try
         {
             ParseBaseline("0001.ore." + EncodeBase64Url(metadata) + "=1");
+            return false;
+        }
+        catch (ArgumentException)
+        {
+            return true;
+        }
+    }
+
+    private static bool ExactCountsIsRejected(string exactCounts)
+    {
+        try
+        {
+            ParseExactCounts(exactCounts);
             return false;
         }
         catch (ArgumentException)
@@ -1855,7 +1919,7 @@ internal static class CdpBridge
 
     private static async Task<string> DepositDeltaAsync(
         string storageId, string storageType, Dictionary<string, int> baseline,
-        string operationToken)
+        Dictionary<string, int> authorized, string operationToken)
     {
         string expectedId = Json.Serialize(storageId);
         string expectedType = Json.Serialize(storageType);
@@ -1863,10 +1927,12 @@ internal static class CdpBridge
         // Parse JSON text inside the NUI and copy it into null-prototype maps so even
         // syntactically valid item names such as "constructor" cannot touch object prototypes.
         string expectedCounts = Json.Serialize(Json.Serialize(baseline));
+        string expectedAuthorizedCounts = Json.Serialize(Json.Serialize(authorized));
         string expression = "(async () => {" + InventoryPrelude()
             + "const expectedId=" + expectedId + ",expectedType=" + expectedType
             + ",operationToken=" + expectedOperationToken
-            + ",baselineRaw=JSON.parse(" + expectedCounts + "),baselineBySlot=Object.create(null),baselineTotals=Object.create(null),baselineNames=Object.create(null);"
+            + ",baselineRaw=JSON.parse(" + expectedCounts + "),authorizedRaw=JSON.parse("
+            + expectedAuthorizedCounts + "),baselineBySlot=Object.create(null),baselineTotals=Object.create(null),baselineNames=Object.create(null),authorized=Object.create(null);"
             + "const cancelled=()=>{try{return !!(globalThis.__aiMinerCancelledOperations&&globalThis.__aiMinerCancelledOperations[operationToken]);}catch(e){return true;}};if(cancelled())return 'ERROR CANCELLED';"
             + "const meta=v=>{if(v===undefined||v===null)return '{}';try{if(typeof v!=='object')return JSON.stringify(v);"
             + "const clean=x=>{if(x===null||typeof x!=='object')return x;if(Array.isArray(x))return x.map(clean);const o=Object.create(null);for(const k of Object.keys(x).sort())o[k]=clean(x[k]);return o;};return JSON.stringify(clean(v));}catch(e){return ''}};"
@@ -1875,6 +1941,7 @@ internal static class CdpBridge
             + "if(first<1||second<=first+1||slot<1||slot>1000||!/^[A-Za-z0-9_-]{1,64}$/.test(name)||!metadata||count<=0||baselineBySlot[slot])return 'ERROR INVALID_BASELINE';"
             + "let parsedMetadata;try{parsedMetadata=JSON.parse(metadata);}catch(e){return 'ERROR INVALID_BASELINE';}if(meta(parsedMetadata)!==metadata)return 'ERROR INVALID_BASELINE';"
             + "const key=name+'\\n'+metadata;baselineBySlot[slot]={key:key,name:name,count:count};baselineTotals[key]=(baselineTotals[key]||0)+count;baselineNames[name]=(baselineNames[name]||0)+count;}"
+            + "let authorizedUnits=0;for(const key of Object.keys(authorizedRaw)){const count=Math.trunc(num(authorizedRaw[key]));if(!key||count<=0||authorized[key])return 'ERROR INVALID_AUTHORIZATION';authorized[key]=count;authorizedUnits+=count;if(authorizedUnits>2147483647)return 'ERROR INVALID_AUTHORIZATION';}if(authorizedUnits<=0)return 'ERROR INVALID_AUTHORIZATION';"
             + "if(!inventoryVisible())return 'ERROR INVENTORY_CLOSED';const store=findStore();if(!store)return 'ERROR INVENTORY_UNAVAILABLE';"
             + "const read=()=>{try{return store.getState().inventory;}catch(e){return null;}};"
             + "const validState=()=>{const inv=read(),r=inv&&inv.rightInventory,t=String(r&&r.type||'').toLowerCase();"
@@ -1897,6 +1964,7 @@ internal static class CdpBridge
             + "const sources=[];let totalUnits=0;for(const row of rows){const take=row.count-row.protected;if(take<=0)continue;"
             + "if(row.metadata&&row.metadata.container!==undefined)return 'ERROR UNSAFE_ITEM';const per=row.count>0?row.weight/row.count:0;addWeight+=per*take;"
             + "sources.push({slot:row.slot,name:row.name,count:take,stackable:row.stackable,metadata:row.metadata,meta:row.meta});totalUnits+=take;}if(totalUnits<=0)return 'ERROR NO_DELTA';"
+            + "const planned=Object.create(null);for(const source of sources){const key=source.name+'\\n'+source.meta;planned[key]=(planned[key]||0)+source.count;}const plannedKeys=Object.keys(planned),authorizedKeys=Object.keys(authorized);if(totalUnits!==authorizedUnits||plannedKeys.length!==authorizedKeys.length||plannedKeys.some(key=>planned[key]!==authorized[key]))return 'ERROR UNAUTHORIZED_DELTA';"
             + "const maxWeight=Math.max(0,num(right.maxWeight));if(maxWeight>0&&rightWeight+addWeight>maxWeight+.001)return 'ERROR STORAGE_FULL';"
             + "const slots=whole(right.slots);if(slots<1||slots>1000)return 'ERROR STORAGE_UNAVAILABLE';"
             + "const bySlot=Object.create(null);for(const item of rightItems){if(!item||!item.name||num(item.count)<=0)continue;const slot=Math.trunc(num(item.slot));"
@@ -1906,18 +1974,184 @@ internal static class CdpBridge
             + "if(!target)target=virtual.find(v=>!v.name||v.count<=0);if(!target)return 'ERROR STORAGE_FULL';source.toSlot=target.slot;"
             + "if(!target.name){target.name=source.name;target.meta=source.meta;target.count=source.count;}else target.count+=source.count;}"
             + "const resource=typeof GetParentResourceName==='function'?String(GetParentResourceName()):'ox_inventory';"
-            + "if(!/^[A-Za-z0-9_-]{1,64}$/.test(resource))return 'ERROR CALLBACK_UNAVAILABLE';let moved=0,stacks=0;"
+            + "if(!/^[A-Za-z0-9_-]{1,64}$/.test(resource))return 'ERROR CALLBACK_UNAVAILABLE';let moved=0,stacks=0;const movedItems=[];"
+            + "const finish=reason=>'DEPOSIT_DETAIL '+JSON.stringify({storageId:expectedId,storageType:expectedType,operationToken:operationToken,moved:moved,planned:totalUnits,stacks:stacks,status:reason?('PARTIAL_'+reason):'COMPLETE',items:movedItems});const stop=reason=>moved>0?finish(reason):('ERROR '+reason);"
             + "const metaTotal=(items,name,key)=>{let total=0;for(const item of (Array.isArray(items)?items:[]))if(item&&String(item.name||'')===name&&meta(item.metadata)===key)total+=Math.max(0,Math.trunc(num(item.count)));return total;};"
             + "const slotCount=(items,slot,name,key)=>{const item=(Array.isArray(items)?items:[]).find(v=>v&&Math.trunc(num(v.slot))===slot);return item&&String(item.name||'')===name&&meta(item.metadata)===key?Math.max(0,Math.trunc(num(item.count))):0;};"
-            + "for(const source of sources){if(cancelled())return 'ERROR CANCELLED';inv=validState();if(!inv)return 'ERROR WRONG_STORAGE';if(!inventoryVisible())return 'ERROR INVENTORY_CLOSED';"
+            + "for(const source of sources){if(cancelled())return stop('CANCELLED');inv=validState();if(!inv)return stop('WRONG_STORAGE');if(!inventoryVisible())return stop('INVENTORY_CLOSED');"
             + "const beforeLeft=metaTotal(inv.leftInventory.items,source.name,source.meta),beforeRight=metaTotal(inv.rightInventory.items,source.name,source.meta),beforeSlot=slotCount(inv.leftInventory.items,source.slot,source.name,source.meta);"
-            + "if(beforeLeft<source.count||beforeSlot<source.count)return 'ERROR NO_PROGRESS';const payload={fromSlot:source.slot,toSlot:source.toSlot,fromType:inv.leftInventory.type,toType:inv.rightInventory.type,count:source.count};"
-            + "let response;try{response=await Promise.race([fetch('https://'+resource+'/swapItems',{method:'post',headers:{'Content-Type':'application/json; charset=UTF-8'},body:JSON.stringify(payload)}).then(async r=>{if(!r.ok)throw new Error('http');return await r.json();}),new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout')),2500))]);}catch(e){return 'ERROR NO_PROGRESS';}"
-            + "if(response===false)return 'ERROR MOVE_REJECTED';if(cancelled())return 'ERROR CANCELLED';let confirmed=false,deadline=Date.now()+2500;while(Date.now()<deadline){if(cancelled())return 'ERROR CANCELLED';await new Promise(resolve=>setTimeout(resolve,50));"
-            + "inv=validState();if(!inv)return 'ERROR WRONG_STORAGE';const afterLeft=metaTotal(inv.leftInventory.items,source.name,source.meta),afterRight=metaTotal(inv.rightInventory.items,source.name,source.meta),afterSlot=slotCount(inv.leftInventory.items,source.slot,source.name,source.meta);"
-            + "if(beforeLeft-afterLeft>=source.count&&beforeSlot-afterSlot>=source.count&&afterRight-beforeRight>=source.count){confirmed=true;break;}}if(!confirmed)return 'ERROR NO_PROGRESS';moved+=source.count;stacks++;}"
-            + "try{if(globalThis.__aiMinerCancelledOperations)delete globalThis.__aiMinerCancelledOperations[operationToken];}catch(e){}return 'DEPOSITED '+moved+' '+stacks;})()";
-        return await EvaluateInventoryStringAsync(expression, TimeSpan.FromSeconds(45), true).ConfigureAwait(false);
+            + "if(beforeLeft<source.count||beforeSlot<source.count)return stop('NO_PROGRESS');const payload={fromSlot:source.slot,toSlot:source.toSlot,fromType:inv.leftInventory.type,toType:inv.rightInventory.type,count:source.count};"
+            // Once swapItems is dispatched, a timeout, cancellation, lost NUI
+            // state, or missing paired delta cannot prove that the server did
+            // nothing. Return a plain terminal error even when earlier stacks
+            // were confirmed. A partial receipt would let the caller retire the
+            // confirmed subset and resend this in-flight stack, duplicating a
+            // transfer that arrives late.
+            + "let response;try{response=await Promise.race([fetch('https://'+resource+'/swapItems',{method:'post',headers:{'Content-Type':'application/json; charset=UTF-8'},body:JSON.stringify(payload)}).then(async r=>{if(!r.ok)throw new Error('http');return await r.json();}),new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout')),2500))]);}catch(e){return 'ERROR AMBIGUOUS_TRANSFER';}"
+            + "if(response===false)return stop('MOVE_REJECTED');if(cancelled())return 'ERROR AMBIGUOUS_TRANSFER';let confirmed=false,deadline=Date.now()+2500;while(Date.now()<deadline){if(cancelled())return 'ERROR AMBIGUOUS_TRANSFER';await new Promise(resolve=>setTimeout(resolve,50));"
+            + "inv=validState();if(!inv)return 'ERROR AMBIGUOUS_TRANSFER';const afterLeft=metaTotal(inv.leftInventory.items,source.name,source.meta),afterRight=metaTotal(inv.rightInventory.items,source.name,source.meta),afterSlot=slotCount(inv.leftInventory.items,source.slot,source.name,source.meta);"
+            + "if(beforeLeft-afterLeft===source.count&&beforeSlot-afterSlot===source.count&&afterRight-beforeRight===source.count){confirmed=true;break;}}if(!confirmed)return 'ERROR AMBIGUOUS_TRANSFER';moved+=source.count;stacks++;movedItems.push({name:source.name,meta:source.meta,count:source.count});}"
+            + "try{if(globalThis.__aiMinerCancelledOperations)delete globalThis.__aiMinerCancelledOperations[operationToken];}catch(e){}return finish('');})()";
+        string raw = await EvaluateInventoryStringAsync(expression, TimeSpan.FromSeconds(45), true).ConfigureAwait(false);
+        return FormatDepositReceipt(raw, storageId, storageType, operationToken);
+    }
+
+    private static string FormatDepositReceipt(string raw, string expectedStorageId,
+        string expectedStorageType, string expectedOperationToken)
+    {
+        if (!raw.StartsWith("DEPOSIT_DETAIL ", StringComparison.Ordinal))
+            return raw;
+        try
+        {
+            var detail = Json.DeserializeObject(raw.Substring(15)) as Dictionary<string, object>;
+            if (detail == null
+                || !String.Equals(GetString(detail, "storageId"), expectedStorageId,
+                    StringComparison.Ordinal)
+                || !String.Equals(GetString(detail, "storageType"), expectedStorageType,
+                    StringComparison.Ordinal)
+                || !String.Equals(GetString(detail, "operationToken"), expectedOperationToken,
+                    StringComparison.Ordinal))
+                return "ERROR INVALID_DEPOSIT_RECEIPT";
+
+            int moved;
+            int planned;
+            int stacks;
+            if (!Int32.TryParse(IntegerField(detail, "moved"), NumberStyles.None,
+                    CultureInfo.InvariantCulture, out moved) || moved < 1
+                || !Int32.TryParse(IntegerField(detail, "planned"), NumberStyles.None,
+                    CultureInfo.InvariantCulture, out planned) || planned < moved
+                || !Int32.TryParse(IntegerField(detail, "stacks"), NumberStyles.None,
+                    CultureInfo.InvariantCulture, out stacks) || stacks < 1)
+                return "ERROR INVALID_DEPOSIT_RECEIPT";
+            string status = GetString(detail, "status");
+            bool complete = status == "COMPLETE";
+            if ((!complete && !Regex.IsMatch(status,
+                    "^PARTIAL_[A-Z_]{2,48}$", RegexOptions.CultureInvariant))
+                || (complete && moved != planned) || (!complete && moved >= planned))
+                return "ERROR INVALID_DEPOSIT_RECEIPT";
+            object itemsValue;
+            var items = detail.TryGetValue("items", out itemsValue)
+                ? itemsValue as object[] : null;
+            if (items == null || items.Length != stacks)
+                return "ERROR INVALID_DEPOSIT_RECEIPT";
+
+            var exactCounts = new SortedDictionary<string, long>(StringComparer.Ordinal);
+            long total = 0;
+            foreach (object value in items)
+            {
+                var item = value as Dictionary<string, object>;
+                if (item == null)
+                    return "ERROR INVALID_DEPOSIT_RECEIPT";
+                string name = GetString(item, "name");
+                string metadata = GetString(item, "meta");
+                int count;
+                if (!ItemNamePattern.IsMatch(name) || String.IsNullOrEmpty(metadata)
+                    || Encoding.UTF8.GetByteCount(metadata) > MaximumMetadataBytes
+                    || !Int32.TryParse(IntegerField(item, "count"), NumberStyles.None,
+                        CultureInfo.InvariantCulture, out count) || count < 1)
+                    return "ERROR INVALID_DEPOSIT_RECEIPT";
+                RequireValidMetadata(metadata);
+                string key = name + "." + EncodeBase64Url(metadata);
+                long previous;
+                exactCounts.TryGetValue(key, out previous);
+                long combined = previous + count;
+                if (combined > Int32.MaxValue)
+                    return "ERROR INVALID_DEPOSIT_RECEIPT";
+                exactCounts[key] = combined;
+                total += count;
+                if (total > Int32.MaxValue)
+                    return "ERROR INVALID_DEPOSIT_RECEIPT";
+            }
+            if (total != moved)
+                return "ERROR INVALID_DEPOSIT_RECEIPT";
+
+            var parts = new List<string>(exactCounts.Count);
+            foreach (KeyValuePair<string, long> pair in exactCounts)
+                parts.Add(pair.Key + "=" + pair.Value.ToString(CultureInfo.InvariantCulture));
+            string exactSpec = String.Join(",", parts.ToArray());
+            if (String.IsNullOrEmpty(exactSpec) || exactSpec.Length > 24000)
+                return "ERROR INVALID_DEPOSIT_RECEIPT";
+            return "DEPOSITED " + moved.ToString(CultureInfo.InvariantCulture) + " "
+                + planned.ToString(CultureInfo.InvariantCulture) + " "
+                + stacks.ToString(CultureInfo.InvariantCulture) + " "
+                + EncodeIdentifier(expectedStorageId) + " "
+                + EncodeIdentifier(expectedStorageType) + " "
+                + expectedOperationToken + " " + status + " " + exactSpec;
+        }
+        catch
+        {
+            return "ERROR INVALID_DEPOSIT_RECEIPT";
+        }
+    }
+
+    private static async Task<string> WithdrawItemAsync(
+        string storageId, string storageType, string itemName, int maximumCount,
+        int reserveWeight, int reserveSlots, string operationToken)
+    {
+        string expectedId = Json.Serialize(storageId);
+        string expectedType = Json.Serialize(storageType);
+        string expectedName = Json.Serialize(itemName);
+        string expectedOperationToken = Json.Serialize(operationToken);
+        string expectedStorageToken = Json.Serialize(EncodeIdentifier(storageId));
+        string expectedTypeToken = Json.Serialize(EncodeIdentifier(storageType));
+        string expression = "(async () => {" + InventoryPrelude()
+            + "const expectedId=" + expectedId + ",expectedType=" + expectedType
+            + ",expectedName=" + expectedName + ",maximumCount="
+            + maximumCount.ToString(CultureInfo.InvariantCulture)
+            + ",reserveWeight=" + reserveWeight.ToString(CultureInfo.InvariantCulture)
+            + ",reserveSlots=" + reserveSlots.ToString(CultureInfo.InvariantCulture)
+            + ",operationToken=" + expectedOperationToken
+            + ",expectedStorageToken=" + expectedStorageToken
+            + ",expectedTypeToken=" + expectedTypeToken + ";"
+            + "const cancelled=()=>{try{return !!(globalThis.__aiMinerCancelledOperations&&globalThis.__aiMinerCancelledOperations[operationToken]);}catch(e){return true;}};if(cancelled())return 'ERROR CANCELLED';"
+            + "const meta=v=>{if(v===undefined||v===null)return '{}';try{if(typeof v!=='object')return JSON.stringify(v);"
+            + "const clean=x=>{if(x===null||typeof x!=='object')return x;if(Array.isArray(x))return x.map(clean);const o=Object.create(null);for(const k of Object.keys(x).sort())o[k]=clean(x[k]);return o;};return JSON.stringify(clean(v));}catch(e){return ''}};"
+            + "if(!inventoryVisible())return 'ERROR INVENTORY_CLOSED';const store=findStore();if(!store)return 'ERROR INVENTORY_UNAVAILABLE';"
+            + "const read=()=>{try{return store.getState().inventory;}catch(e){return null;}};"
+            + "const validState=()=>{const inv=read(),l=inv&&inv.leftInventory,r=inv&&inv.rightInventory,t=String(r&&r.type||'').toLowerCase();"
+            + "return l&&String(l.type||'').toLowerCase()==='player'&&r&&String(r.id)===expectedId&&t===expectedType?inv:null;};"
+            + "let inv=validState();if(!inv){const raw=read(),r=raw&&raw.rightInventory,t=String(r&&r.type||'').toLowerCase();"
+            + "if(r&&(String(r.id)!==expectedId||t!==expectedType))return 'ERROR WRONG_STORAGE';return 'ERROR INVENTORY_UNAVAILABLE';}"
+            + "const rightSlots=whole(inv.rightInventory.slots),seenRight=new Set();if(rightSlots<1||rightSlots>1000)return 'ERROR STORAGE_UNAVAILABLE';"
+            + "const sourceSlots=[];for(const item of (Array.isArray(inv.rightInventory.items)?inv.rightInventory.items:[])){"
+            + "if(!item||String(item.name||'')!==expectedName||num(item.count)<=0)continue;const count=Math.trunc(num(item.count)),slot=Math.trunc(num(item.slot)),metadata=meta(item.metadata);"
+            + "if(count<=0||num(item.count)!==count||slot<1||slot>rightSlots||seenRight.has(slot)||!metadata)return 'ERROR INVALID_INVENTORY';seenRight.add(slot);"
+            + "if(item.metadata&&item.metadata.container!==undefined)return 'ERROR UNSAFE_ITEM';sourceSlots.push({slot:slot,meta:metadata});}"
+            + "if(!sourceSlots.length)return 'ERROR RAW_STONE_NOT_FOUND';"
+            + "const total=(items,name,key)=>{let value=0;for(const item of (Array.isArray(items)?items:[]))if(item&&String(item.name||'')===name&&meta(item.metadata)===key)value+=Math.max(0,Math.trunc(num(item.count)));return value;};"
+            + "const nameTotal=(items,name)=>{let value=0;for(const item of (Array.isArray(items)?items:[]))if(item&&String(item.name||'')===name)value+=Math.max(0,Math.trunc(num(item.count)));return value;};"
+            + "const weight=items=>{let value=0;for(const item of (Array.isArray(items)?items:[]))if(item&&item.name&&num(item.count)>0)value+=Math.max(0,num(item.weight));return value;};"
+            + "const slotItem=(items,slot)=>{for(const item of (Array.isArray(items)?items:[]))if(item&&Math.trunc(num(item.slot))===slot&&num(item.count)>0)return item;return null;};"
+            + "const validSlots=(items,limit)=>{const seen=new Set();for(const item of (Array.isArray(items)?items:[])){if(!item||num(item.count)<=0)continue;const slot=Math.trunc(num(item.slot));if(slot<1||slot>limit||seen.has(slot))return false;seen.add(slot);}return true;};"
+            + "const resource=typeof GetParentResourceName==='function'?String(GetParentResourceName()):'ox_inventory';"
+            + "if(!/^[A-Za-z0-9_-]{1,64}$/.test(resource))return 'ERROR CALLBACK_UNAVAILABLE';let moved=0,stacks=0;"
+            + "const receipt=(prefix,status)=>prefix+' '+moved+' '+stacks+' '+expectedStorageToken+' '+expectedTypeToken+' '+operationToken+' '+status;"
+            + "const fail=code=>moved>0?receipt('WITHDRAWN_PARTIAL','PARTIAL_'+code):'ERROR '+code;"
+            + "for(const sourceRef of sourceSlots){if(cancelled())return fail('CANCELLED');inv=validState();if(!inv)return fail('WRONG_STORAGE');if(!inventoryVisible())return fail('INVENTORY_CLOSED');"
+            + "const left=inv.leftInventory,right=inv.rightInventory,rightItems=Array.isArray(right.items)?right.items:[],leftItems=Array.isArray(left.items)?left.items:[];"
+            + "const leftSlotLimit=whole(left.slots),rightSlotLimit=whole(right.slots);if(leftSlotLimit<1||leftSlotLimit>1000||rightSlotLimit!==rightSlots||!validSlots(leftItems,leftSlotLimit)||!validSlots(rightItems,rightSlotLimit))return fail('INVALID_INVENTORY');"
+            + "const source=slotItem(rightItems,sourceRef.slot);if(!source||String(source.name||'')!==expectedName||meta(source.metadata)!==sourceRef.meta)continue;"
+            + "const available=Math.max(0,Math.trunc(num(source.count))),remainingTarget=Math.max(0,maximumCount-nameTotal(leftItems,expectedName));if(remainingTarget<=0)break;if(available<=0)continue;const sourceWeight=Math.max(0,num(source.weight));if(sourceWeight<=0)return fail('RAW_STONE_WEIGHT_UNAVAILABLE');const per=sourceWeight/available;"
+            + "const maxWeight=Math.max(0,num(left.maxWeight)),usedWeight=weight(leftItems),freeWeight=Math.max(0,maxWeight-usedWeight-reserveWeight);"
+            + "if(maxWeight<=0)return fail('INVALID_INVENTORY');let take=Math.min(available,remainingTarget,Math.floor((freeWeight+.000001)/per));if(take<=0)continue;"
+            + "const slots=leftSlotLimit;let target=null;"
+            + "const occupied=leftItems.filter(v=>v&&v.name&&num(v.count)>0).length,currentFreeSlots=Math.max(0,slots-occupied);if(currentFreeSlots<reserveSlots)return fail('INVENTORY_CAPACITY');"
+            + "if(source.stack===true)target=leftItems.find(v=>v&&String(v.name||'')===expectedName&&meta(v.metadata)===sourceRef.meta&&num(v.count)>0);"
+            + "if(!target&&currentFreeSlots>reserveSlots){for(let slot=1;slot<=slots;slot++)if(!slotItem(leftItems,slot)){target={slot:slot};break;}}if(!target)continue;"
+            + "const toSlot=Math.trunc(num(target.slot)),beforeLeft=total(leftItems,expectedName,sourceRef.meta),beforeRight=total(rightItems,expectedName,sourceRef.meta);"
+            + "const payload={fromSlot:sourceRef.slot,toSlot:toSlot,fromType:right.type,toType:left.type,count:take};let response;"
+            // The operation token is local cancellation/receipt metadata; the
+            // server swap endpoint has no idempotency key. Therefore every
+            // unconfirmed post-dispatch exit is terminal and must never be
+            // represented as a retryable zero/partial result.
+            + "try{response=await Promise.race([fetch('https://'+resource+'/swapItems',{method:'post',headers:{'Content-Type':'application/json; charset=UTF-8'},body:JSON.stringify(payload)}).then(async r=>{if(!r.ok)throw new Error('http');return await r.json();}),new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout')),2500))]);}catch(e){return 'ERROR AMBIGUOUS_TRANSFER';}"
+            + "if(response===false)return fail('MOVE_REJECTED');if(cancelled())return 'ERROR AMBIGUOUS_TRANSFER';let confirmed=false,deadline=Date.now()+2500;while(Date.now()<deadline){if(cancelled())return 'ERROR AMBIGUOUS_TRANSFER';await new Promise(resolve=>setTimeout(resolve,50));"
+            + "inv=validState();if(!inv)return 'ERROR AMBIGUOUS_TRANSFER';const afterLeft=total(inv.leftInventory.items,expectedName,sourceRef.meta),afterRight=total(inv.rightInventory.items,expectedName,sourceRef.meta);"
+            + "if(afterLeft-beforeLeft===take&&beforeRight-afterRight===take){confirmed=true;break;}}if(!confirmed)return 'ERROR AMBIGUOUS_TRANSFER';moved+=take;stacks++;}"
+            + "try{if(globalThis.__aiMinerCancelledOperations)delete globalThis.__aiMinerCancelledOperations[operationToken];}catch(e){}"
+            + "return moved>0?receipt('WITHDRAWN','COMPLETE'):'ERROR INVENTORY_CAPACITY';})()";
+        return await EvaluateInventoryStringAsync(expression,
+            TimeSpan.FromSeconds(45), true).ConfigureAwait(false);
     }
 
     private static async Task<string> CancelOperationAsync(string operationToken)
@@ -2385,6 +2619,36 @@ internal static class CdpBridge
             result.Add(slot.ToString(CultureInfo.InvariantCulture) + "\n"
                 + match.Groups["name"].Value + "\n" + metadata, count);
         }
+        return result;
+    }
+
+    private static Dictionary<string, int> ParseExactCounts(string input)
+    {
+        if (String.IsNullOrEmpty(input) || input.Length > 24000)
+            throw new ArgumentException();
+        var result = new Dictionary<string, int>(StringComparer.Ordinal);
+        long total = 0;
+        foreach (string pair in input.Split(','))
+        {
+            Match match = ExactCountEntryPattern.Match(pair);
+            int count;
+            if (!match.Success
+                || !Int32.TryParse(match.Groups["count"].Value, NumberStyles.None,
+                    CultureInfo.InvariantCulture, out count)
+                || count <= 0)
+                throw new ArgumentException();
+            string metadata = RequireValidMetadata(
+                DecodeBase64Url(match.Groups["meta"].Value));
+            string key = match.Groups["name"].Value + "\n" + metadata;
+            if (result.ContainsKey(key))
+                throw new ArgumentException();
+            result.Add(key, count);
+            total += count;
+            if (total > Int32.MaxValue)
+                throw new ArgumentException();
+        }
+        if (result.Count == 0)
+            throw new ArgumentException();
         return result;
     }
 

@@ -9,7 +9,8 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "9.0.2"
+global AppVersion := "9.1.0"
+;@Ahk2Exe-SetVersion %A_PriorLine~U)^.*"([^"]+)".*$~$1%
 processId := DllCall("GetCurrentProcessId")
 isUiSmokeTest := HasCommandLineArgument("--smoke-test")
 isVisualTest := HasCommandLineArgument("--visual-test")
@@ -91,6 +92,8 @@ global Config := {
     washForwardPulseMs: ReadIntegerSetting(settingsPath, "Washing", "ForwardPulseMs", 100, 50, 250),
     washForwardSettleMs: ReadIntegerSetting(settingsPath, "Washing", "ForwardSettleMs", 250, 50, 3000),
     washPostCompletionSettleMs: ReadIntegerSetting(settingsPath, "Washing", "PostCompletionSettleMs", 1200, 900, 4000),
+    rawStoneItemName: ReadTextSetting(settingsPath, "Washing", "RawStoneItem", ""),
+    washRefillMaximum: ReadIntegerSetting(settingsPath, "Washing", "RefillMaximum", 1000000, 1, 1000000),
     goldCycleMs: ReadIntegerSetting(settingsPath, "GoldPanning", "CycleMs", 6000, 4000, 15000),
     goldRecoveryEnabled: ReadIntegerSetting(settingsPath, "GoldPanning", "RecoveryEnabled", 1, 0, 1),
     goldRecoveryAfterMs: ReadIntegerSetting(settingsPath, "GoldPanning", "RecoveryAfterMs", 12000, 8000, 60000),
@@ -126,6 +129,9 @@ global Config := {
 
 if StrLen(Config.vehicleName) > 40
     Config.vehicleName := SubStr(Config.vehicleName, 1, 40)
+if Config.rawStoneItemName
+    && !RegExMatch(Config.rawStoneItemName, "^[A-Za-z0-9_-]{1,64}$")
+    Config.rawStoneItemName := ""
 if !IsValidVehicleProfile(Config)
     Config.vehicleStorageEnabled := 0
 
@@ -142,9 +148,16 @@ global State := {
     startRequestSequence: 0,
     startRequestToken: 0,
     stopInProgress: false,
+    ; A timer callback can be suspended by F9.  Keep its ownership until the
+    ; complete stack has unwound so F8 cannot install a new run underneath an
+    ; old recovery/storage finally block.
+    activeFarmCallbacks: 0,
     runMode: "mining",
     generation: 0,
     timerFn: 0,
+    pendingFarmTimerGeneration: 0,
+    pendingFarmTimerTaskId: 0,
+    pendingFarmTimerDueAt: 0,
     targetHwnd: 0,
     targetPid: 0,
     buttonTemplates: [
@@ -236,6 +249,9 @@ global State := {
     watchdogRecoveryCount: 0,
     targetLostSince: 0,
     targetRecoveryAttempts: 0,
+    recoveryPreflightFailures: 0,
+    recoveryRestartCount: 0,
+    recoveryRestartPending: false,
     recoveryReturnState: "FARMING",
     recoveryReason: "",
     inventorySnapshotRevision: 0,
@@ -287,12 +303,22 @@ global State := {
     verifiedRewardWalPending: Map(),
     verifiedRewardWalOps: 0,
     verifiedRewardWalReady: false,
+    ; Exact name+metadata quantities observed only at a finalized Farm reward.
+    ; This ledger, rather than an elapsed-run inventory delta, is the authority
+    ; for every player -> vehicle transfer.
+    farmOutputLedger: Map(),
+    storageDepositCheckpoint: 0,
+    storageDepositSequence: 0,
     inventoryBaseline: "",
+    inventoryBaselineWeight: -1,
     nextCapacityCheckAt: 0,
     nextActionAt: 0,
     storagePending: false,
     storageStartPending: false,
     storageRecoveryAttempted: false,
+    storageReason: "",
+    storageOutputsVerified: false,
+    storageRefillVerified: false,
     capacityProbeFailures: 0,
     workpointProbeFailures: 0,
     serverEpoch: "",
@@ -302,7 +328,11 @@ global State := {
     lastInventoryMaxWeight: 0,
     lastInventoryFreeWeight: 0,
     lastCapacityReason: "未確認",
+    lastAlertKind: "",
+    lastAlertAt: 0,
     storageTrips: 0,
+    washRefillTrips: 0,
+    lastRawStoneCount: -1,
     lastStorageResult: "未実行",
     lastStorageProbeResult: "",
     lastTargetProbeResult: "",
@@ -563,6 +593,120 @@ if A_Args.Length && A_Args[1] = "--validate" {
         && !StorageDeltaBaselineIsSafe("-", testInventoryAfterMining)
         && !StorageDeltaBaselineIsSafe(testProtectedInventoryBaseline,
             testProtectedInventoryBaseline)
+    ; The production selector is stricter than the legacy run baseline above.
+    ; Only exact name+metadata growth from a finalized reward enters the ledger;
+    ; unrelated food acquired later is synthesized into the protected baseline.
+    testLedgerBefore :=
+        "0001.food.e30=2,0002.tool.e30=1,0003.ore.e30=1"
+    testLedgerRewardAfter :=
+        "0001.food.e30=2,0002.tool.e30=1,0003.ore.e30=3"
+    ; Five unrelated food units and one same-exact-key ore unit arrive after the
+    ; verified reward. Both must remain protected; the ledger still authorizes
+    ; exactly the two reward units and never expands from later live growth.
+    testLedgerCurrent :=
+        "0001.food.e30=7,0002.tool.e30=1,0003.ore.e30=4"
+    testLedger := NewExactInventoryCountMap()
+    testLedgerAccumulated := AccumulateVerifiedFarmOutputLedger(testLedger,
+        testLedgerBefore, testLedgerRewardAfter, &testLedgerAdded)
+    testLedgerBaselineBuilt := BuildFarmOutputProtectedBaseline(
+        testLedgerCurrent, testLedger, &testLedgerProtected,
+        &testLedgerEligible, &testLedgerBaselineFailure)
+    testLedgerCheckpoint := CreateStorageDepositCheckpoint(1, 1,
+        testLedgerCurrent, testLedger)
+    testLedgerPartial :=
+        "0001.food.e30=7,0002.tool.e30=1,0003.ore.e30=3"
+    testLedgerLate :=
+        "0001.food.e30=7,0002.tool.e30=1,0003.ore.e30=2"
+    testUnboundLedger := ClonePositiveInventoryCounts(testLedger)
+    testUnboundCheckpoint := CreateStorageDepositCheckpoint(1, 99,
+        testLedgerCurrent, testUnboundLedger)
+    testUnboundReceiptFailsClosed := IsObject(testUnboundCheckpoint)
+        && !ReconcileStorageDepositCheckpoint(testUnboundCheckpoint,
+            testLedgerPartial, testUnboundLedger, &testUnboundApplied)
+        && testUnboundApplied = 0
+        && PositiveInventoryCountTotal(testUnboundLedger) = 2
+    testPartialReceiptResult := "DEPOSITED 1 2 1 dHJ1bmsxMjM= "
+        . "dHJ1bms= 123-7 PARTIAL_MOVE_REJECTED ore.e30=1"
+    testPartialReceiptParsed := ParseVerifiedStorageDepositReceipt(
+        testPartialReceiptResult, "dHJ1bmsxMjM=", "dHJ1bms=",
+        &testPartialReceipt)
+    testPartialReceiptBound := testPartialReceiptParsed
+        && StorageDepositReceiptOperationMatches(testPartialReceipt, "123-7")
+        && !StorageDepositReceiptOperationMatches(testPartialReceipt, "123-8")
+        && BindStorageDepositReceipt(testLedgerCheckpoint,
+            testPartialReceipt, testLedger, 2)
+    testAmbiguousReceiptResult := "DEPOSITED 1 2 1 dHJ1bmsxMjM= "
+        . "dHJ1bms= 123-amb PARTIAL_AMBIGUOUS_TRANSFER ore.e30=1"
+    testAmbiguousReceiptRejected := ParseVerifiedStorageDepositReceipt(
+        testAmbiguousReceiptResult, "dHJ1bmsxMjM=", "dHJ1bms=",
+        &testAmbiguousReceipt)
+        && !BindStorageDepositReceipt(testLedgerCheckpoint,
+            testAmbiguousReceipt, testLedger, 2)
+    testLedgerPartialOk := IsObject(testLedgerCheckpoint)
+        && testPartialReceiptBound
+        && ReconcileStorageDepositCheckpoint(testLedgerCheckpoint,
+            testLedgerPartial, testLedger, &testLedgerPartialApplied)
+        && testLedgerPartialApplied = 1
+        && PositiveInventoryCountTotal(testLedger) = 1
+        && StorageDepositCheckpointReceiptRemaining(testLedgerCheckpoint) = 0
+        && ReconcileStorageDepositCheckpoint(testLedgerCheckpoint,
+            testLedgerPartial, testLedger, &testLedgerDuplicateApplied)
+        && testLedgerDuplicateApplied = 0
+        && PositiveInventoryCountTotal(testLedger) = 1
+    testLedgerRetryCheckpoint := CreateStorageDepositCheckpoint(1, 2,
+        testLedgerPartial, testLedger)
+    testRetryReceiptResult := "DEPOSITED 1 1 1 dHJ1bmsxMjM= "
+        . "dHJ1bms= 123-8 COMPLETE ore.e30=1"
+    testRetryReceiptOk := ParseVerifiedStorageDepositReceipt(
+        testRetryReceiptResult, "dHJ1bmsxMjM=", "dHJ1bms=",
+        &testRetryReceipt)
+        && BindStorageDepositReceipt(testLedgerRetryCheckpoint,
+            testRetryReceipt, testLedger, 1)
+        && ReconcileStorageDepositCheckpoint(testLedgerRetryCheckpoint,
+            testLedgerLate, testLedger, &testLedgerLateApplied)
+        && testLedgerLateApplied = 1
+        && PositiveInventoryCountTotal(testLedger) = 0
+        && ReconcileStorageDepositCheckpoint(testLedgerRetryCheckpoint,
+            testLedgerLate, testLedger, &testLedgerLateDuplicateApplied)
+        && testLedgerLateDuplicateApplied = 0
+        && !ParseVerifiedStorageDepositReceipt("DEPOSITED 1 1",
+            "dHJ1bmsxMjM=", "dHJ1bms=", &testLegacyReceipt)
+    testNoLedger := NewExactInventoryCountMap()
+    testNoLedgerFailsClosed := !BuildFarmOutputProtectedBaseline(
+        testLedgerCurrent, testNoLedger, &testNoLedgerBaseline,
+        &testNoLedgerEligible, &testNoLedgerReason)
+        && testNoLedgerReason = "empty_ledger"
+    testMetadataMutationLedger := NewExactInventoryCountMap()
+    testMetadataMutationOk := AccumulateVerifiedFarmOutputLedger(
+        testMetadataMutationLedger, "0001.tool.e30=1",
+        "0001.tool.eyJxIjoxfQ=1", &testMetadataMutationAdded)
+        && testMetadataMutationAdded = 0
+        && !FarmOutputLedgerHasPending(testMetadataMutationLedger)
+    testWashOutputLedger := NewExactInventoryCountMap()
+    testWashOutputOnlyOk := AccumulateVerifiedFarmOutputLedger(
+        testWashOutputLedger, "0001.raw_stone.e30=2",
+        "0001.raw_stone.e30=1,0002.washed_stone.e30=1",
+        &testWashOutputAdded)
+        && testWashOutputAdded = 1
+        && !testWashOutputLedger.Has("raw_stone.e30")
+        && testWashOutputLedger.Has("washed_stone.e30")
+        && testWashOutputLedger["washed_stone.e30"] = 1
+    testFarmOutputLedgerOk := testLedgerAccumulated && testLedgerAdded = 2
+        && testLedgerBaselineBuilt && testLedgerEligible = 2
+        && IsObject(testLedgerCheckpoint)
+        && testLedgerCheckpoint.authorizedSpec = "ore.e30=2"
+        && testLedgerCheckpoint.authorizedUnits = 2
+        && InventorySpecDeltaUnitCount(testLedgerCurrent,
+            testLedgerProtected) = 2
+        && InStr(testLedgerProtected, "0001.food.e30=7")
+        && InStr(testLedgerProtected, "0003.ore.e30=2")
+        && testUnboundReceiptFailsClosed && testAmbiguousReceiptRejected
+        && testLedgerPartialOk
+        && testRetryReceiptOk && testNoLedgerFailsClosed
+        && testMetadataMutationOk && testWashOutputOnlyOk
+    testStaleStorageCleanupGuardOk := StorageCycleCleanupAllowed(7, 7, true)
+        && !StorageCycleCleanupAllowed(7, 8, true)
+        && !StorageCycleCleanupAllowed(7, 7, false)
     testStopResetSource := []
     testStopResetOldId := "run_44_4_1893456002000"
     testStopResetMiningId := "mine_run_44_4_1893456002000_4_8"
@@ -1040,7 +1184,15 @@ if A_Args.Length && A_Args[1] = "--validate" {
         && EmitVerifiedFarmReward(191, "washing", 5, 17,
             testRewardCompletedAt + 86400000, testRewardEventId,
             testRewardFrozenSessionId)
-    Sleep 80
+    ; A heavily loaded release build can delay a one-shot timer beyond 80 ms even
+    ; though it was correctly held outside the Critical WAL section. Wait for the
+    ; observable post-critical callback with a strict one-second ceiling so this
+    ; remains a real liveness assertion without making --validate flaky.
+    Loop 40 {
+        if RewardWalRecoveryTimerRan
+            break
+        Sleep 25
+    }
     SetTimer RunRewardWalRecoveryCriticalSelfTestTimer, 0
     testRewardRetryOk := testRewardRetryOk
         && RewardWalRecoveryCriticalObserved
@@ -1209,6 +1361,12 @@ if A_Args.Length && A_Args[1] = "--validate" {
         && !ParseVerifiedFarmRewardDiagnosticLine(
             "2026-09-10 12:00:05.000 | FARM_REWARD_CONFIRMED id=5 mode=storage reason=weight_increase beforeWeight=1 afterWeight=2 revision=12",
             &testRejectedRecord)
+        && ParseVerifiedFarmRewardDiagnosticLine(
+            "2026-09-10 12:00:05.000 | FARM_REWARD_CONFIRMED id=5 mode=washing reason=wash_exchange_raw_1_output_2 beforeWeight=2 afterWeight=1 revision=12",
+            &testWashExchangeRecord)
+        && !ParseVerifiedFarmRewardDiagnosticLine(
+            "2026-09-10 12:00:05.000 | FARM_REWARD_CONFIRMED id=5 mode=washing reason=wash_exchange_raw_0_output_2 beforeWeight=2 afterWeight=1 revision=12",
+            &testRejectedRecord)
     testCurrentHistoryId := "mine_run_71_8_1893456008000_washing_5_12"
     testCurrentHistoryFixture := "2026-09-10 12:30:00.000 | AI採掘機 v9.0.2 診断開始`n"
         . "2026-09-10 12:30:01.000 | FARM_REWARD_CONFIRMED id=5 mode=washing reason=weight_increase beforeWeight=1 afterWeight=2 revision=12 eventId="
@@ -1283,6 +1441,181 @@ if A_Args.Length && A_Args[1] = "--validate" {
         && RewardReconcileDecision(false, true, 999, 100, true)
             = "DURABILITY_HOLD"
     testStartOperationOwnershipOk := TestStartOperationOwnership()
+    testFarmTimerHandoffPolicyOk := FarmTimerScheduleAction(1, true, false,
+        true) = "DEFER"
+        && FarmTimerScheduleAction(0, true, false, true) = "ARM"
+        && FarmTimerScheduleAction(0, false, false, true) = "DROP"
+        && FarmTimerScheduleAction(0, true, true, true) = "DROP"
+        && FarmTimerScheduleAction(0, true, false, false) = "DROP"
+        && RunFarmTimerHandoffMockTest(100)
+    testRecoveryRestartPolicyOk := RecoveryRestartAllowed(0, false)
+        && !RecoveryRestartAllowed(1, false)
+        && !RecoveryRestartAllowed(0, true)
+    testRecoveryPreflightPolicyOk := RecoveryPreflightAction(1, 0, false)
+        = "RETRY"
+        && RecoveryPreflightAction(2, 0, false) = "RETRY"
+        && RecoveryPreflightAction(3, 0, false) = "RESTART"
+        && RecoveryPreflightAction(3, 1, false) = "STOP"
+        && RecoveryPreflightAction(3, 0, true) = "STOP"
+    testCompleteRefillReceiptParsed := ParseVerifiedWashingRefillReceipt(
+        "WITHDRAWN 8 2 dHJ1bmsxMjM= dHJ1bms= 123-9 COMPLETE",
+        "dHJ1bmsxMjM=", "dHJ1bms=", &testCompleteRefillReceipt)
+    testPartialRefillReceiptParsed := ParseVerifiedWashingRefillReceipt(
+        "WITHDRAWN_PARTIAL 1 1 dHJ1bmsxMjM= dHJ1bms= 123-10 PARTIAL_NO_PROGRESS",
+        "dHJ1bmsxMjM=", "dHJ1bms=", &testPartialRefillReceipt)
+    testWashingRefillReceiptPolicyOk := testCompleteRefillReceiptParsed
+        && testCompleteRefillReceipt.moved = 8
+        && testCompleteRefillReceipt.stacks = 2
+        && testCompleteRefillReceipt.status = "COMPLETE"
+        && WashingRefillReceiptOperationMatches(testCompleteRefillReceipt,
+            "123-9")
+        && testPartialRefillReceiptParsed
+        && testPartialRefillReceipt.moved = 1
+        && testPartialRefillReceipt.status = "PARTIAL_NO_PROGRESS"
+        && StorageTransferReceiptAction(testPartialRefillReceipt.status, true)
+            = "STOP"
+        && StorageTransferReceiptAction("PARTIAL_AMBIGUOUS_TRANSFER", true)
+            = "STOP"
+        && StorageTransferReceiptAction("PARTIAL_MOVE_REJECTED", true)
+            = "RETRY_EXACT"
+        && StorageTransferReceiptAction("PARTIAL_INVENTORY_CAPACITY", true)
+            = "COMMIT_EXACT"
+        && WashingRefillFailureAction("ERROR AMBIGUOUS_TRANSFER")
+            = "STOP_AMBIGUOUS"
+        && WashingRefillFailureAction("ERROR NO_PROGRESS")
+            = "STOP_AMBIGUOUS"
+        && WashingRefillFailureAction("ERROR MOVE_REJECTED") = "RETRY_ZERO"
+        && WashingRefillFailureAction("ERROR UNKNOWN") = "STOP_FATAL"
+        && !ParseVerifiedWashingRefillReceipt(
+            "WITHDRAWN_PARTIAL 1 1 dHJ1bmsxMjM= dHJ1bms= 123-10 COMPLETE",
+            "dHJ1bmsxMjM=", "dHJ1bms=", &testInvalidRefillReceipt)
+        && WashingRefillErrorKind("ERROR INVENTORY_CAPACITY") = "CAPACITY"
+        && WashingRefillErrorKind("ERROR RAW_STONE_NOT_FOUND")
+            = "SOURCE_EMPTY"
+        && WashingRefillReceiptDeltaStatus(5, 6, 1) = "MATCH"
+        && WashingRefillReceiptDeltaStatus(5, 5, 1) = "PENDING"
+        && WashingRefillReceiptDeltaStatus(5, 7, 1) = "UNPAIRED"
+        && WashingRefillAccountedTotalMatches(5, 8, 3)
+        && !WashingRefillAccountedTotalMatches(5, 8, 2)
+    testWorkViewDownPolicyOk := WorkViewDownModeSupported("washing")
+        && WorkViewDownModeSupported("gold")
+        && !WorkViewDownModeSupported("mining")
+    testProgressStatusOk := BuildFarmProgressStatus("復旧（", 3, 3)
+        = "復旧（3/3）"
+        && BuildFarmProgressStatus("再出現 ", 2, 4, "") = "再出現 2/4"
+    testAlertPolicyOk := AutomationAlertSoundType("capacity") = 0x30
+        && AutomationAlertSoundType("error") = 0x10
+        && AutomationAlertSoundType("other") = 0
+    testBackgroundViewRouteOk := BackgroundCameraDownRoute(450) = "450:32"
+        && BackgroundCameraDownRoute(1) = "100:32"
+        && BackgroundCameraDownRoute(2000) = "1500:32"
+    testVisualFixtureVersionOk := VisualFixtureNewerVersion("9.1.0") = "9.1.1"
+        && VisualFixtureNewerVersion("9.1.9") = "9.1.10"
+        && VisualFixtureNewerVersion("09.1.0") = ""
+    testConsumedSingleOk := DetectConsumedInventoryItem(
+        "0001.raw_stone.e30=6,0002.food.e30=2,0003.washed_stone.e30=1",
+        "0001.raw_stone.e30=5,0002.food.e30=2,0003.washed_stone.e30=2",
+        &testConsumedName, &testConsumedCount)
+        && testConsumedName = "raw_stone" && testConsumedCount = 1
+    testConsumedMultipleRejectedOk := !DetectConsumedInventoryItem(
+        "0001.raw_stone.e30=6,0002.food.e30=2",
+        "0001.raw_stone.e30=5,0002.food.e30=1",
+        &testAmbiguousConsumedName, &testAmbiguousConsumedCount)
+        && testAmbiguousConsumedName = ""
+        && testAmbiguousConsumedCount = 0
+    testWashingRewardEvidenceOk := WashingSnapshotHasExchangeReward(
+        {items: "0001.raw_stone.e30=1,0002.food.e30=1,0003.washed_stone.e30=1"},
+        {items: "0001.raw_stone.e30=2,0002.food.e30=1"},
+        "raw_stone", &testWashRawName, &testWashRawUnits,
+        &testWashOutputUnits)
+        && testWashRawName = "raw_stone" && testWashRawUnits = 1
+        && testWashOutputUnits = 1
+        && WashingSnapshotHasExchangeReward(
+            {items: "0001.raw_stone.e30=1,0002.washed_stone.e30=1"},
+            {items: "0001.raw_stone.e30=2"}, "",
+            &testLearnedWashRawName, &testLearnedWashRawUnits,
+            &testLearnedWashOutputUnits)
+        && testLearnedWashRawName = "raw_stone"
+        && !WashingSnapshotHasExchangeReward(
+            {items: "0001.raw_stone.e30=2,0002.washed_stone.e30=1"},
+            {items: "0001.raw_stone.e30=2"}, "raw_stone",
+            &testWashOutputOnlyName, &testWashOutputOnlyRaw,
+            &testWashOutputOnlyGain)
+        && !WashingSnapshotHasExchangeReward(
+            {items: "0001.raw_stone.e30=1"},
+            {items: "0001.raw_stone.e30=2"}, "raw_stone",
+            &testWashRawOnlyName, &testWashRawOnlyCount,
+            &testWashRawOnlyOutput)
+    testMiningWorkflowOk := RunFarmStorageResumeModeMockTest("mining", 100,
+        &testMiningWorkflowStats)
+    testGoldWorkflowOk := RunFarmStorageResumeModeMockTest("gold", 100,
+        &testGoldWorkflowStats)
+    testWashingWorkflowOk := RunWashingStorageRefillResumeMockTest(100,
+        &testWashingWorkflowStats)
+    testWorkflowFaultCoverageOk := testMiningWorkflowOk && testGoldWorkflowOk
+        && testWashingWorkflowOk
+        && FarmWorkflowMockFaultCoverage(testMiningWorkflowStats)
+        && FarmWorkflowMockFaultCoverage(testGoldWorkflowStats)
+        && FarmWorkflowMockFaultCoverage(testWashingWorkflowStats)
+    testWorkflowOwnershipOk := testMiningWorkflowOk && testGoldWorkflowOk
+        && testWashingWorkflowOk
+        && testMiningWorkflowStats.clean && testGoldWorkflowStats.clean
+        && testWashingWorkflowStats.clean
+        && testMiningWorkflowStats.blockedDuplicateTasks >= 200
+        && testGoldWorkflowStats.blockedDuplicateTasks >= 200
+        && testWashingWorkflowStats.blockedDuplicateTasks >= 200
+        && testMiningWorkflowStats.blockedConcurrentInputs >= 200
+        && testGoldWorkflowStats.blockedConcurrentInputs >= 200
+        && testWashingWorkflowStats.blockedConcurrentInputs >= 200
+    testHeadingIndependentOk := FarmMockStorageDepartureGate(
+        "0001.food.e30=2", "0001.food.e30=2,0002.ore.e30=1", 90)
+        && FarmMockStorageDepartureGate("0001.food.e30=2",
+            "0001.food.e30=2,0002.ore.e30=1", 180)
+        && FarmMockStorageDepartureGate("0001.food.e30=2",
+            "0001.food.e30=2,0002.ore.e30=1", 317)
+        && !FarmMockStorageDepartureGate("0001.food.e30=2",
+            "0001.food.e30=2", 90)
+    testColdStartWashInfo := BuildWorkflowMockInventory("washing", 0, 0,
+        5000)
+    testColdStartNeedsStorage := FarmModeNeedsStorage("washing",
+        testColdStartWashInfo, "raw_stone", testColdStartWashInfo.weight,
+        &testColdStartReason, &testColdStartFreeWeight,
+        &testColdStartRawCount)
+    testRefillOnlyDepartureOk := testColdStartNeedsStorage
+        && testColdStartReason = "raw_stone_empty"
+        && testColdStartRawCount = 0
+        && !StorageDeltaBaselineIsSafe(testColdStartWashInfo.items,
+            testColdStartWashInfo.items)
+        && IsVerifiedWashingRefillOnlyDeparture("washing", true, true,
+            "raw_stone_empty", 0)
+        && !IsVerifiedWashingRefillOnlyDeparture("mining", true, true,
+            "raw_stone_empty", 0)
+        && !IsVerifiedWashingRefillOnlyDeparture("washing", false, true,
+            "raw_stone_empty", 0)
+        && !IsVerifiedWashingRefillOnlyDeparture("washing", true, false,
+            "raw_stone_empty", 0)
+        && !IsVerifiedWashingRefillOnlyDeparture("washing", true, true,
+            "weight_percent", 0)
+        && !IsVerifiedWashingRefillOnlyDeparture("washing", true, true,
+            "raw_stone_empty", 1)
+    testLateDepositRecoveryOk := StorageRecoverySnapshotAction(true, true,
+        false, false, "washing", true) = "REFILL"
+        && StorageRecoverySnapshotAction(true, true, false, true,
+            "washing", true) = "REFILL"
+        && StorageRecoverySnapshotAction(true, true, false, false,
+            "mining", false) = "RETURN"
+        && StorageRecoverySnapshotAction(true, true, false, true,
+            "mining", false) = "RETRY"
+        && StorageRecoverySnapshotAction(false, true, false, false,
+            "washing", true) = "RETRY"
+        && StorageRecoverySnapshotAction(true, true, true, false,
+            "washing", true) = "RETRY"
+    testBoundedStorageRecoveryOk := RunBoundedStorageRecoveryPolicyMockTest(100)
+    testAmbiguousTransferNoRetryOk := RunAmbiguousTransferNoRetryMockTest(100)
+    testVerifiedRefillReturnGateOk := !StorageReturnAllowed("washing", true,
+        false) && StorageReturnAllowed("washing", true, true)
+        && StorageReturnAllowed("washing", false, false)
+        && StorageReturnAllowed("mining", true, false)
     exitCode := !FileExist(State.buttonTemplates[1].path) ? 11
         : !FileExist(State.buttonTemplates[2].path) ? 12
         : !FileExist(State.hungerTemplatePath) ? 13
@@ -1290,7 +1623,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
         : !FileExist(State.backgroundBridgePath) ? 15
         : !FileExist(State.updaterPath) ? 16
         : MonotonicMs() <= 0 ? 17
-        : RunBackgroundBridge("capabilities") != "CAPS 11 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HOTBAR INVENTORYKEY HEALTH COMPANION ACTIONWAIT" ? 18
+        : RunBackgroundBridge("capabilities") != "CAPS 12 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HOTBAR INVENTORYKEY HEALTH COMPANION ACTIONWAIT REFILL" ? 18
         : updaterCapabilities != "UPDATE_CAPS 1 CHECK DOWNLOAD APPLY" ? 19
         : !IsSafeConfiguredHotkey("F8") ? 20
         : IsSafeConfiguredHotkey("A") ? 21
@@ -1320,6 +1653,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
         : RouteTotalMs("150:64", false) != 150 ? 68
         : AutomationStartAllowed(false, true) ? 45
         : !AutomationStartAllowed(false, false) ? 46
+        : AutomationStartAllowed(false, false, false, true) ? 69
         : !ParseServerHealth("HEALTH READY YWJjZGVmZ2g", &testEpoch) ? 47
         : testEpoch != "YWJjZGVmZ2g" ? 48
         : !testCompanionParsed ? 49
@@ -1455,7 +1789,32 @@ if A_Args.Length && A_Args[1] = "--validate" {
         : !testRewardRetryOk ? 145
         : !testRuntimeFutureClampOk ? 146
         : !testDurabilityHoldOk ? 147
-        : !testStartOperationOwnershipOk ? 148 : 0
+        : !testStartOperationOwnershipOk ? 148
+        : !testRecoveryRestartPolicyOk ? 149
+        : !testWorkViewDownPolicyOk ? 150
+        : !testProgressStatusOk ? 151
+        : !testAlertPolicyOk ? 152
+        : !testBackgroundViewRouteOk ? 153
+        : !testConsumedSingleOk ? 154
+        : !testConsumedMultipleRejectedOk ? 155
+        : !testMiningWorkflowOk ? 156
+        : !testGoldWorkflowOk ? 157
+        : !testWashingWorkflowOk ? 158
+        : !testWorkflowFaultCoverageOk ? 159
+        : !testWorkflowOwnershipOk ? 160
+        : !testHeadingIndependentOk ? 161
+        : !testRefillOnlyDepartureOk ? 162
+        : !testLateDepositRecoveryOk ? 163
+        : !testBoundedStorageRecoveryOk ? 164
+        : !testVerifiedRefillReturnGateOk ? 165
+        : !testFarmOutputLedgerOk ? 166
+        : !testStaleStorageCleanupGuardOk ? 167
+        : !testVisualFixtureVersionOk ? 168
+        : !testRecoveryPreflightPolicyOk ? 169
+        : !testWashingRefillReceiptPolicyOk ? 170
+        : !testFarmTimerHandoffPolicyOk ? 171
+        : !testWashingRewardEvidenceOk ? 172
+        : !testAmbiguousTransferNoRetryOk ? 173 : 0
     if exitCode = 19
         try FileAppend "UPDATER_CAPS=" updaterCapabilities "`r`n",
             State.diagnosticPath, "UTF-8"
@@ -1869,7 +2228,7 @@ MonitorWebUiHost(*) {
 }
 
 ReceiveWebUiCopyData(wParam, lParam, *) {
-    global State
+    global State, AppVersion
     try {
         if NumGet(lParam, 0, "Ptr") != 0x31495541
             return false
@@ -1966,7 +2325,8 @@ ProcessWebUiActions(*) {
                 ApplyWebUiSettings(parts)
             } else if action = "update.check" && parts.Length = 3 {
                 if State.visualTest {
-                    State.updatePageStatus.Text := "新しいバージョン v9.1.0 があります"
+                    State.updatePageStatus.Text := "新しいバージョン v"
+                        . VisualFixtureNewerVersion(AppVersion) . " があります"
                     State.updateButton.Text := "ダウンロードして更新"
                     State.ui.navUpdate.Text := "アップデート •"
                 } else
@@ -2051,6 +2411,16 @@ ToggleVisualTestRun() {
         State.countLabel.Text := "砂金採り回数`n22"
         State.mealLabel.Text := "位置補正`n2"
     }
+}
+
+VisualFixtureNewerVersion(version) {
+    if !RegExMatch(String(version),
+        "^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$", &parts)
+        return ""
+    try nextPatch := Integer(parts[3]) + 1
+    catch
+        return ""
+    return parts[1] "." parts[2] "." nextPatch
 }
 
 ApplyVisualTestFixture() {
@@ -2307,13 +2677,13 @@ ParseVerifiedFarmRewardDiagnosticLine(line, &record,
     allowLegacyWithoutEventSuffix := true) {
     record := 0
     currentFormat := RegExMatch(line,
-        "^([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}) \| FARM_REWARD_CONFIRMED id=([1-9][0-9]{0,17}) mode=(mining|washing|gold) reason=(weight_increase|item_increase) beforeWeight=([0-9]{1,18}) afterWeight=([0-9]{1,18}) revision=([1-9][0-9]{0,17}) eventId=([A-Za-z0-9._:-]{8,128}) eventAt=([1-9][0-9]{0,12})$",
+        "^([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}) \| FARM_REWARD_CONFIRMED id=([1-9][0-9]{0,17}) mode=(mining|washing|gold) reason=(weight_increase|item_increase|wash_exchange_raw_[1-9][0-9]*_output_[1-9][0-9]*) beforeWeight=([0-9]{1,18}) afterWeight=([0-9]{1,18}) revision=([1-9][0-9]{0,17}) eventId=([A-Za-z0-9._:-]{8,128}) eventAt=([1-9][0-9]{0,12})$",
         &parts)
     if !currentFormat {
         if !allowLegacyWithoutEventSuffix
             return false
         if !RegExMatch(line,
-            "^([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}) \| FARM_REWARD_CONFIRMED id=([1-9][0-9]{0,17}) mode=(mining|washing|gold) reason=(weight_increase|item_increase) beforeWeight=([0-9]{1,18}) afterWeight=([0-9]{1,18}) revision=([1-9][0-9]{0,17})$",
+            "^([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}) \| FARM_REWARD_CONFIRMED id=([1-9][0-9]{0,17}) mode=(mining|washing|gold) reason=(weight_increase|item_increase|wash_exchange_raw_[1-9][0-9]*_output_[1-9][0-9]*) beforeWeight=([0-9]{1,18}) afterWeight=([0-9]{1,18}) revision=([1-9][0-9]{0,17})$",
             &parts)
             return false
     }
@@ -3177,7 +3547,7 @@ RecoverVerifiedRewardWal(beforeMemoryCommit := 0) {
             if !persisted
                 return false
         }
-        if IsObject(beforeMemoryCommit)
+        if IsObject(beforeMemoryCommit) && HasMethod(beforeMemoryCommit, "Call")
             beforeMemoryCommit.Call()
         ; ACK/reset callbacks cannot interleave with this copy-on-write transaction.
         ; Disk replacement precedes memory replacement, which precedes every WAL A.
@@ -3727,7 +4097,7 @@ ResetFarmMetagameSession(reason, beforePersist := 0) {
         if !RebaseMetagameOutboxForSession(&outbox, sessionId, startedAt,
             includeEnd, includeEnd ? startedAt + 1 : 0)
             return false
-        if IsObject(beforePersist)
+        if IsObject(beforePersist) && HasMethod(beforePersist, "Call")
             beforePersist.Call()
         ; Reset is copy-on-write too: the Host keeps reset pending while this returns
         ; false, so neither the in-memory session nor its generation may advance until
@@ -3934,7 +4304,7 @@ DurablyEnqueueMetagameEvent(command, eventId, eventAtUnixMs,
             return false
         ; Validation injects a one-shot timer here to prove that an ACK/compact
         ; cannot observe the journal E before its matching memory entry exists.
-        if IsObject(beforeMemoryCommit)
+        if IsObject(beforeMemoryCommit) && HasMethod(beforeMemoryCommit, "Call")
             beforeMemoryCommit.Call()
         CommitDurableMetagameEntry(State.metagameOutbox, entry, true)
         State.metagameOutboxDirty := false
@@ -4288,14 +4658,17 @@ ToggleMining(*) {
 CanStartFromHotkey(*) {
     global State
     if !AutomationStartAllowed(State.running, State.registrationActive,
-        State.startInProgress)
+        State.startInProgress, State.stopInProgress,
+        State.activeFarmCallbacks)
         return false
     activeHwnd := WinExist("A")
     return activeHwnd && IsFiveMWindow(activeHwnd)
 }
 
-AutomationStartAllowed(running, registrationActive, startInProgress := false) {
+AutomationStartAllowed(running, registrationActive, startInProgress := false,
+    stopInProgress := false, activeFarmCallbacks := 0) {
     return !running && !registrationActive && !startInProgress
+        && !stopInProgress && activeFarmCallbacks = 0
 }
 
 TryClaimStartOperation(&startToken) {
@@ -4304,7 +4677,8 @@ TryClaimStartOperation(&startToken) {
     criticalWasOn := EnterMetagameOutboxCritical()
     try {
         if !AutomationStartAllowed(State.running, State.registrationActive,
-            State.startInProgress)
+            State.startInProgress, State.stopInProgress,
+            State.activeFarmCallbacks)
             return false
         State.startRequestSequence += 1
         if State.startRequestSequence < 1
@@ -4321,6 +4695,7 @@ IsStartOperationCurrent(startToken) {
     return startToken > 0 && State.startInProgress
         && State.startRequestToken = startToken
         && !State.running && !State.registrationActive
+        && !State.stopInProgress && State.activeFarmCallbacks = 0
 }
 
 ReleaseStartOperation(startToken) {
@@ -4381,6 +4756,8 @@ TestStartOperationOwnership() {
     savedRunning := State.running
     savedRegistrationActive := State.registrationActive
     savedStartInProgress := State.startInProgress
+    savedStopInProgress := State.stopInProgress
+    savedActiveFarmCallbacks := State.activeFarmCallbacks
     savedStartRequestSequence := State.startRequestSequence
     savedStartRequestToken := State.startRequestToken
     passed := false
@@ -4388,11 +4765,18 @@ TestStartOperationOwnership() {
         State.running := false
         State.registrationActive := false
         State.startInProgress := false
+        State.stopInProgress := true
+        State.activeFarmCallbacks := 0
         State.startRequestSequence := 40
         State.startRequestToken := 0
         firstToken := 0
         duplicateToken := 0
         nextToken := 0
+        stopOwnerBlocked := !TryClaimStartOperation(&firstToken)
+        State.stopInProgress := false
+        State.activeFarmCallbacks := 1
+        callbackOwnerBlocked := !TryClaimStartOperation(&firstToken)
+        callbackOwnerReleased := ReleaseFarmCallback()
         firstClaimed := TryClaimStartOperation(&firstToken)
         duplicateBlocked := !TryClaimStartOperation(&duplicateToken)
         stopCancelled := CancelStartOperation()
@@ -4400,7 +4784,9 @@ TestStartOperationOwnership() {
         nextClaimed := TryClaimStartOperation(&nextToken)
         staleReleaseBlocked := !ReleaseStartOperation(firstToken)
         nextOwnerReleased := ReleaseStartOperation(nextToken)
-        passed := firstClaimed && firstToken = 41
+        passed := stopOwnerBlocked && callbackOwnerBlocked
+            && callbackOwnerReleased
+            && firstClaimed && firstToken = 41
             && duplicateBlocked && duplicateToken = 0
             && stopCancelled && oldOwnerInvalid
             && nextClaimed && nextToken = 42
@@ -4410,6 +4796,8 @@ TestStartOperationOwnership() {
         State.running := savedRunning
         State.registrationActive := savedRegistrationActive
         State.startInProgress := savedStartInProgress
+        State.stopInProgress := savedStopInProgress
+        State.activeFarmCallbacks := savedActiveFarmCallbacks
         State.startRequestSequence := savedStartRequestSequence
         State.startRequestToken := savedStartRequestToken
     }
@@ -4421,19 +4809,30 @@ FarmStateTransitionAllowed(fromState, toState) {
         return true
     allowed := Map(
         "IDLE", "|FARMING|ERROR|",
-        "FARMING", "|WASH_SETTLING|INVENTORY_CHECK|RECOVERY|STOPPING_FARM|ERROR|",
+        "FARMING", "|WASH_SETTLING|CHECKING_INVENTORY|INVENTORY_CHECK|RECOVERY|STOPPING_FARM|ERROR|",
         "WASH_SETTLING", "|WASH_CORRECTING|WASH_VERIFYING|RECOVERY|STOPPING_FARM|ERROR|",
         "WASH_CORRECTING", "|WASH_VERIFYING|RECOVERY|STOPPING_FARM|ERROR|",
-        "WASH_VERIFYING", "|FARMING|RECOVERY|STOPPING_FARM|ERROR|",
-        "INVENTORY_CHECK", "|FARMING|INVENTORY_FULL|RECOVERY|STOPPING_FARM|ERROR|",
+        "WASH_VERIFYING", "|FARMING|CHECKING_INVENTORY|RECOVERY|STOPPING_FARM|ERROR|",
+        "CHECKING_INVENTORY", "|FARMING|NEED_STORAGE|RECOVERY|STOPPING_FARM|ERROR|",
+        "INVENTORY_CHECK", "|FARMING|INVENTORY_FULL|NEED_STORAGE|RECOVERY|STOPPING_FARM|ERROR|",
+        "NEED_STORAGE", "|STOPPING_FARM|RECOVERY|ERROR|",
         "INVENTORY_FULL", "|STOPPING_FARM|RECOVERY|ERROR|",
-        "STOPPING_FARM", "|OPENING_STORAGE|IDLE|RECOVERY|ERROR|",
-        "OPENING_STORAGE", "|STORING|RECOVERY|ERROR|",
+        "STOPPING_FARM", "|LOCATING_TRUCK|OPENING_STORAGE|IDLE|RECOVERY|ERROR|",
+        "LOCATING_TRUCK", "|MOVING_TO_TRUCK|VERIFY_TRUCK_REACHED|OPENING_STORAGE|RECOVERY|ERROR|",
+        "MOVING_TO_TRUCK", "|MOVING_TO_TRUCK|VERIFY_TRUCK_REACHED|LOCATING_TRUCK|RECOVERY|ERROR|",
+        "VERIFY_TRUCK_REACHED", "|OPENING_STORAGE|LOCATING_TRUCK|RECOVERY|ERROR|",
+        "OPENING_STORAGE", "|STORING_OUTPUTS|STORING|RECOVERY|ERROR|",
+        "STORING_OUTPUTS", "|VERIFY_STORAGE|RECOVERY|ERROR|",
         "STORING", "|VERIFY_STORAGE|RECOVERY|ERROR|",
-        "VERIFY_STORAGE", "|STORING|RETURNING_TO_FARM|RECOVERY|ERROR|",
-        "RETURNING_TO_FARM", "|RESUMING_FARM|RECOVERY|ERROR|",
-        "RESUMING_FARM", "|FARMING|INVENTORY_CHECK|RECOVERY|STOPPING_FARM|ERROR|",
-        "RECOVERY", "|FARMING|INVENTORY_CHECK|OPENING_STORAGE|STORING|RETURNING_TO_FARM|RESUMING_FARM|STOPPING_FARM|ERROR|",
+        "VERIFY_STORAGE", "|STORING_OUTPUTS|STORING|REFILLING_INPUT|LOCATING_FARM|RETURNING_TO_FARM|RECOVERY|ERROR|",
+        "REFILLING_INPUT", "|VERIFY_REFILL|RECOVERY|ERROR|",
+        "VERIFY_REFILL", "|REFILLING_INPUT|LOCATING_FARM|RETURNING_TO_FARM|RECOVERY|ERROR|",
+        "LOCATING_FARM", "|RETURNING_TO_FARM|RECOVERY|ERROR|",
+        "RETURNING_TO_FARM", "|VERIFY_FARM_REACHED|RESUMING_FARM|RECOVERY|ERROR|",
+        "VERIFY_FARM_REACHED", "|RESUMING_FARM|RECOVERY|ERROR|",
+        "RESUMING_FARM", "|VERIFY_FARM_RESUMED|FARMING|CHECKING_INVENTORY|INVENTORY_CHECK|RECOVERY|STOPPING_FARM|ERROR|",
+        "VERIFY_FARM_RESUMED", "|FARMING|RECOVERY|ERROR|",
+        "RECOVERY", "|FARMING|CHECKING_INVENTORY|INVENTORY_CHECK|LOCATING_TRUCK|OPENING_STORAGE|STORING_OUTPUTS|STORING|REFILLING_INPUT|LOCATING_FARM|RETURNING_TO_FARM|VERIFY_FARM_REACHED|RESUMING_FARM|STOPPING_FARM|ERROR|",
         "ERROR", "|IDLE|FARMING|")
     return allowed.Has(fromState) && InStr(allowed[fromState], "|" toState "|")
 }
@@ -4444,14 +4843,25 @@ FarmStateLegacyPhase(farmState) {
         : farmState = "WASH_SETTLING" ? "wash_settle"
         : farmState = "WASH_CORRECTING" ? "wash_correct"
         : farmState = "WASH_VERIFYING" ? "wash_verify"
+        : farmState = "CHECKING_INVENTORY" ? "capacity_check"
         : farmState = "INVENTORY_CHECK" ? "capacity_check"
+        : farmState = "NEED_STORAGE" ? "capacity_full"
         : farmState = "INVENTORY_FULL" ? "capacity_full"
         : farmState = "STOPPING_FARM" ? "stopping_work"
+        : farmState = "LOCATING_TRUCK" ? "find_registered_vehicle"
+        : farmState = "MOVING_TO_TRUCK" ? "move_to_registered_vehicle"
+        : farmState = "VERIFY_TRUCK_REACHED" ? "verify_registered_vehicle"
         : farmState = "OPENING_STORAGE" ? "find_registered_vehicle"
+        : farmState = "STORING_OUTPUTS" ? "depositing"
         : farmState = "STORING" ? "depositing"
         : farmState = "VERIFY_STORAGE" ? "verify_storage"
+        : farmState = "REFILLING_INPUT" ? "refilling_input"
+        : farmState = "VERIFY_REFILL" ? "verify_refill"
+        : farmState = "LOCATING_FARM" ? "locate_work"
         : farmState = "RETURNING_TO_FARM" ? "return_to_work"
+        : farmState = "VERIFY_FARM_REACHED" ? "verify_workpoint"
         : farmState = "RESUMING_FARM" ? "verify_workpoint"
+        : farmState = "VERIFY_FARM_RESUMED" ? "verify_reward"
         : farmState = "RECOVERY" ? "recovery"
         : farmState = "ERROR" ? "error" : "unknown"
 }
@@ -4504,7 +4914,37 @@ TransitionFarmState(nextState, reason, expectedGeneration := 0,
         " revision=" State.inventorySnapshotRevision
         " weight=" snapshotWeight " used=" snapshotUsed
         " targetLostMs=" targetLostAge " watchdogMs=" watchdogAge)
+    if previousState != nextState
+        && (nextState = "INVENTORY_FULL" || nextState = "NEED_STORAGE")
+        EmitAutomationAlert("capacity", reason)
+    else if previousState != nextState && nextState = "ERROR"
+        EmitAutomationAlert("error", reason)
     return true
+}
+
+EmitAutomationAlert(kind, message := "") {
+    global State, isUiTestRun
+    soundType := AutomationAlertSoundType(kind)
+    if !soundType
+        return false
+    now := MonotonicMs()
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        ; A repeated transition or stale callback must not produce an alarm loop.
+        if State.lastAlertKind = kind && State.lastAlertAt
+            && now - State.lastAlertAt < 1500
+            return true
+        State.lastAlertKind := kind
+        State.lastAlertAt := now
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+
+    if isUiTestRun || HasCommandLineArgument("--validate")
+        return true
+    played := false
+    try played := DllCall("user32\MessageBeep", "UInt", soundType, "Int") != 0
+    WriteDiagnostic("ALERT kind=" kind " played=" (played ? 1 : 0)
+        " message=" DiagnosticToken(message))
+    return played
 }
 
 DiagnosticToken(value) {
@@ -4520,22 +4960,170 @@ IsCurrentFarmTask(expectedGeneration, expectedTaskId := 0,
         && (!expectedState || expectedState = State.farmState)
 }
 
+TryClaimFarmCallback(expectedGeneration, expectedTaskId) {
+    global State
+    criticalWasOn := A_IsCritical
+    if !criticalWasOn
+        Critical "On"
+    try {
+        if State.stopInProgress || State.activeFarmCallbacks != 0
+            return false
+        if !IsCurrentFarmTask(expectedGeneration, expectedTaskId)
+            return false
+        if IsObject(State.timerFn)
+            try SetTimer(State.timerFn, 0)
+        State.timerFn := 0
+        State.activeFarmCallbacks += 1
+        return true
+    } finally {
+        if !criticalWasOn
+            Critical "Off"
+    }
+}
+
+ReleaseFarmCallback() {
+    global State
+    criticalWasOn := A_IsCritical
+    if !criticalWasOn
+        Critical "On"
+    try {
+        if State.activeFarmCallbacks <= 0 {
+            WriteDiagnostic("FARM_CALLBACK_RELEASE_WITHOUT_OWNER")
+            State.activeFarmCallbacks := 0
+            return false
+        }
+        State.activeFarmCallbacks -= 1
+        if State.activeFarmCallbacks = 0
+            ArmPendingFarmTimerAfterOwnerRelease()
+        return true
+    } finally {
+        if !criticalWasOn
+            Critical "Off"
+    }
+}
+
+FarmTimerScheduleAction(activeCallbacks, running, stopInProgress,
+    generationMatches) {
+    return !running || stopInProgress || !generationMatches ? "DROP"
+        : activeCallbacks > 0 ? "DEFER" : "ARM"
+}
+
+RunFarmTimerHandoffMockTest(iterations := 100) {
+    ; Deterministically model repeated one-shot requests made by one callback.
+    ; The last request must win, owner release must arm exactly once, and a
+    ; concurrent stop must make every later request fail closed.
+    if iterations < 1
+        return false
+    Loop iterations {
+        generation := A_Index
+        activeCallbacks := 1
+        running := true
+        stopInProgress := false
+        pendingGeneration := 0
+        pendingTaskId := 0
+        pendingDue := 0
+        armedCount := 0
+        for request in [{taskId: 11, due: 40}, {taskId: 12, due: 15},
+            {taskId: 13, due: 25}] {
+            if FarmTimerScheduleAction(activeCallbacks, running,
+                stopInProgress, true) != "DEFER"
+                return false
+            pendingGeneration := generation
+            pendingTaskId := request.taskId
+            pendingDue := request.due
+        }
+        if pendingGeneration != generation || pendingTaskId != 13
+            || pendingDue != 25
+            return false
+        activeCallbacks -= 1
+        if activeCallbacks != 0 || FarmTimerScheduleAction(activeCallbacks,
+            running, stopInProgress, pendingGeneration = generation) != "ARM"
+            return false
+        armedCount += 1
+        pendingGeneration := 0
+        pendingTaskId := 0
+        pendingDue := 0
+        if pendingGeneration || pendingTaskId || pendingDue || armedCount != 1
+            return false
+        stopInProgress := true
+        if FarmTimerScheduleAction(activeCallbacks, running,
+            stopInProgress, true) != "DROP"
+            return false
+    }
+    return true
+}
+
+ArmFarmTimerOwned(expectedGeneration, expectedTaskId, delayMs) {
+    global State
+    if IsObject(State.timerFn)
+        try SetTimer(State.timerFn, 0)
+    nextFn := AutomationCycle.Bind(expectedGeneration, expectedTaskId)
+    State.timerFn := nextFn
+    SetTimer(nextFn, -Max(1, Round(delayMs)))
+    return true
+}
+
+ArmPendingFarmTimerAfterOwnerRelease() {
+    global State
+    expectedGeneration := State.pendingFarmTimerGeneration
+    expectedTaskId := State.pendingFarmTimerTaskId
+    dueAt := State.pendingFarmTimerDueAt
+    State.pendingFarmTimerGeneration := 0
+    State.pendingFarmTimerTaskId := 0
+    State.pendingFarmTimerDueAt := 0
+    if FarmTimerScheduleAction(State.activeFarmCallbacks, State.running,
+        State.stopInProgress, expectedGeneration > 0
+            && expectedGeneration = State.generation) != "ARM"
+        return false
+    if !IsCurrentFarmTask(expectedGeneration, expectedTaskId)
+        return false
+    return ArmFarmTimerOwned(expectedGeneration, expectedTaskId,
+        Max(1, dueAt - MonotonicMs()))
+}
+
 FarmStateDisplayName(farmState) {
     return farmState = "IDLE" ? "停止中"
         : farmState = "FARMING" ? "作業中"
         : farmState = "WASH_SETTLING" ? "洗浄後の静止待ち"
         : farmState = "WASH_CORRECTING" ? "洗浄位置を補正"
         : farmState = "WASH_VERIFYING" ? "洗浄位置を再確認"
+        : farmState = "CHECKING_INVENTORY" ? "所持品確認"
         : farmState = "INVENTORY_CHECK" ? "所持品確認"
+        : farmState = "NEED_STORAGE" ? "収納が必要"
         : farmState = "INVENTORY_FULL" ? "容量不足"
         : farmState = "STOPPING_FARM" ? "作業停止"
+        : farmState = "LOCATING_TRUCK" ? "登録車両を探索"
+        : farmState = "MOVING_TO_TRUCK" ? "登録車両へ移動"
+        : farmState = "VERIFY_TRUCK_REACHED" ? "荷台への到達確認"
         : farmState = "OPENING_STORAGE" ? "荷台探索"
+        : farmState = "STORING_OUTPUTS" ? "作業結果を収納"
         : farmState = "STORING" ? "収納中"
         : farmState = "VERIFY_STORAGE" ? "収納確認"
+        : farmState = "REFILLING_INPUT" ? "未洗浄石を補充"
+        : farmState = "VERIFY_REFILL" ? "補充確認"
+        : farmState = "LOCATING_FARM" ? "作業地点を探索"
         : farmState = "RETURNING_TO_FARM" ? "作業地点へ復帰"
+        : farmState = "VERIFY_FARM_REACHED" ? "作業地点への到達確認"
         : farmState = "RESUMING_FARM" ? "再開確認"
+        : farmState = "VERIFY_FARM_RESUMED" ? "実報酬で再開確認"
         : farmState = "RECOVERY" ? "自動復旧"
         : farmState = "ERROR" ? "要確認" : farmState
+}
+
+BuildFarmProgressStatus(prefix, current, total, suffix := "）") {
+    return String(prefix) . String(current) . "/" . String(total) . String(suffix)
+}
+
+WorkViewDownModeSupported(mode) {
+    return mode = "washing" || mode = "gold"
+}
+
+AutomationAlertSoundType(kind) {
+    return kind = "error" ? 0x10 : kind = "capacity" ? 0x30 : 0
+}
+
+BackgroundCameraDownRoute(durationMs) {
+    return Max(100, Min(1500, Round(durationMs))) . ":32"
 }
 
 FarmMockStep(&stateName, nextState) {
@@ -4699,6 +5287,418 @@ RunFarmStateMachineMockTest(cycleCount := 100) {
         && stats.resumeFailures = 1 && stats.delayedRewards > 0
         && !FarmStateTransitionAllowed("STORING", "RETURNING_TO_FARM")
         && !FarmStateTransitionAllowed("VERIFY_STORAGE", "RESUMING_FARM")
+}
+
+BuildWorkflowMockInventory(mode, rawCount, outputCount, weight) {
+    outputName := mode = "mining" ? "ore"
+        : mode = "gold" ? "gold_flake" : "washed_stone"
+    items := "0001.food.e30=2"
+    used := 1
+    if rawCount > 0 {
+        items .= ",0002.raw_stone.e30=" rawCount
+        used += 1
+    }
+    if outputCount > 0 {
+        items .= ",0003." outputName ".e30=" outputCount
+        used += 1
+    }
+    return {weight: weight, maxWeight: 100000, used: used,
+        slots: 50, items: items}
+}
+
+FarmMockWalk(&stateName, nextStates*) {
+    for nextState in nextStates {
+        if !FarmMockStep(&stateName, nextState)
+            return false
+    }
+    return true
+}
+
+CreateFarmWorkflowMockRuntime() {
+    return {activeTask: "", inputMask: 0, taskSequence: 0,
+        blockedDuplicateTasks: 0, blockedConcurrentInputs: 0,
+        leakedTasks: 0, leakedInputs: 0}
+}
+
+FarmWorkflowMockAcquireTask(runtime, taskName) {
+    if runtime.activeTask {
+        runtime.blockedDuplicateTasks += 1
+        return false
+    }
+    runtime.taskSequence += 1
+    runtime.activeTask := taskName ":" runtime.taskSequence
+    return true
+}
+
+FarmWorkflowMockReleaseTask(runtime) {
+    if !runtime.activeTask {
+        runtime.leakedTasks += 1
+        return false
+    }
+    runtime.activeTask := ""
+    return true
+}
+
+FarmWorkflowMockBeginInput(runtime, inputMask) {
+    if runtime.inputMask {
+        runtime.blockedConcurrentInputs += 1
+        return false
+    }
+    if inputMask < 1 || inputMask > 255
+        return false
+    runtime.inputMask := inputMask
+    return true
+}
+
+FarmWorkflowMockReleaseInput(runtime) {
+    if !runtime.inputMask {
+        runtime.leakedInputs += 1
+        return false
+    }
+    runtime.inputMask := 0
+    return true
+}
+
+FarmWorkflowMockOwnedRoute(runtime, taskName, inputMask) {
+    if !FarmWorkflowMockAcquireTask(runtime, taskName)
+        return false
+    ; Deterministically inject both forbidden races while the owner is live. The
+    ; mock gate must reject them and the finally-equivalent cleanup below must leave
+    ; neither a task nor a pressed key behind.
+    duplicateBlocked := !FarmWorkflowMockAcquireTask(runtime,
+        taskName "-duplicate")
+    inputStarted := FarmWorkflowMockBeginInput(runtime, inputMask)
+    concurrentBlocked := inputStarted
+        && !FarmWorkflowMockBeginInput(runtime, 1)
+    inputReleased := inputStarted && FarmWorkflowMockReleaseInput(runtime)
+    taskReleased := FarmWorkflowMockReleaseTask(runtime)
+    return duplicateBlocked && concurrentBlocked && inputReleased && taskReleased
+}
+
+FarmWorkflowMockReacquireMovedTruck(stats, cycleNumber) {
+    ; This models the production local search re-acquiring the registered trunk
+    ; from fresh visual/storage identity on every trip. It is deliberately not a
+    ; claim of world-coordinate access: the small signed offset only proves that
+    ; the fixture never relies on the vehicle remaining at one recorded position.
+    stats.truckReacquisitions += 1
+    signedOffset := Mod(cycleNumber * 5, 7) - 3
+    if signedOffset = 0
+        signedOffset := 1
+    if Abs(signedOffset) > 3
+        return false
+    stats.truckSmallPositionChanges += 1
+    return true
+}
+
+FarmWorkflowMockRouteWithBoundedPause(runtime, taskName, inputMask,
+    injectPause, stats) {
+    if !injectPause
+        return FarmWorkflowMockOwnedRoute(runtime, taskName, inputMask)
+    ; The first owner is interrupted but still releases task/input state. Exactly
+    ; one clean reacquisition is then allowed; no third owner or leaked key exists.
+    if !FarmWorkflowMockOwnedRoute(runtime, taskName "-paused", inputMask)
+        return false
+    stats.routePauses += 1
+    if !FarmWorkflowMockIsClean(runtime)
+        || !FarmWorkflowMockOwnedRoute(runtime, taskName "-recovery", inputMask)
+        return false
+    stats.routeRecoveries += 1
+    return true
+}
+
+FarmWorkflowMockIsClean(runtime) {
+    return !runtime.activeTask && !runtime.inputMask
+        && runtime.leakedTasks = 0 && runtime.leakedInputs = 0
+        && runtime.blockedDuplicateTasks > 0
+        && runtime.blockedConcurrentInputs > 0
+}
+
+FarmMockCameraHeading(&seed, cycleNumber) {
+    if Mod(cycleNumber, 3) = 1
+        return 90
+    if Mod(cycleNumber, 3) = 2
+        return 180
+    seed := Mod(seed * 48271, 2147483647)
+    return Mod(seed, 360)
+}
+
+FarmMockStorageDepartureGate(baselineSpec, currentSpec, cameraHeading) {
+    ; The heading is intentionally observational only. Production departure is
+    ; authorized by a trusted baseline plus positive inventory delta, not camera
+    ; direction or a Farm button that can disappear at full capacity.
+    ignoredHeading := cameraHeading
+    return StorageDeltaBaselineIsSafe(baselineSpec, currentSpec)
+        && InventorySpecDeltaUnitCount(currentSpec, baselineSpec) > 0
+}
+
+RecordFarmMockHeading(stats, heading) {
+    if heading = 90
+        stats.heading90 += 1
+    else if heading = 180
+        stats.heading180 += 1
+    else
+        stats.headingRandom += 1
+}
+
+RunFarmStorageResumeModeMockTest(mode, cycleCount, &stats) {
+    stats := {cycles: 0, verifiedRewards: 0, storageUiFirstFailures: 0,
+        inventoryDelays: 0, resumeFirstFailures: 0, targetLosses: 0,
+        truckReacquisitions: 0, truckSmallPositionChanges: 0,
+        routePauses: 0, routeRecoveries: 0,
+        heading90: 0, heading180: 0, headingRandom: 0, clean: false,
+        blockedDuplicateTasks: 0, blockedConcurrentInputs: 0}
+    if (mode != "mining" && mode != "gold") || cycleCount < 1
+        return false
+    runtime := CreateFarmWorkflowMockRuntime()
+    stateName := "FARMING"
+    headingSeed := mode = "mining" ? 9072026 : 10092026
+    Loop cycleCount {
+        cycleNumber := A_Index
+        if Mod(cycleNumber, 9) = 0 {
+            if !FarmMockWalk(&stateName, "RECOVERY", "FARMING")
+                return false
+            stats.targetLosses += 1
+        }
+
+        baseline := BuildWorkflowMockInventory(mode, 0, 0, 5000)
+        current := BuildWorkflowMockInventory(mode, 0, 1, 100000)
+        if !CapacityNeedsStorage(current, &capacityReason, &freeWeight)
+            || !FarmMockWalk(&stateName, "CHECKING_INVENTORY", "NEED_STORAGE",
+                "STOPPING_FARM")
+            return false
+        heading := FarmMockCameraHeading(&headingSeed, cycleNumber)
+        RecordFarmMockHeading(stats, heading)
+        if !FarmWorkflowMockReacquireMovedTruck(stats, cycleNumber)
+            return false
+        if !FarmMockStorageDepartureGate(baseline.items, current.items, heading)
+            || !FarmMockWalk(&stateName, "LOCATING_TRUCK", "MOVING_TO_TRUCK")
+            || !FarmWorkflowMockRouteWithBoundedPause(runtime,
+                mode "-to-truck", 1, cycleNumber = 2, stats)
+            || !FarmMockWalk(&stateName, "VERIFY_TRUCK_REACHED",
+                "OPENING_STORAGE")
+            return false
+
+        if cycleNumber = 1 {
+            ; The first UI open fails after every route input is already released.
+            if !FarmWorkflowMockIsClean(runtime)
+                || !FarmMockWalk(&stateName, "RECOVERY", "OPENING_STORAGE")
+                return false
+            stats.storageUiFirstFailures += 1
+        }
+        if !FarmMockWalk(&stateName, "STORING_OUTPUTS", "VERIFY_STORAGE")
+            return false
+        if Mod(cycleNumber, 4) = 0 {
+            if InventorySnapshotWasReduced(current, current)
+                || !FarmMockStep(&stateName, "VERIFY_STORAGE")
+                return false
+            stats.inventoryDelays += 1
+        }
+        afterDeposit := BuildWorkflowMockInventory(mode, 0, 0, 5000)
+        if !InventorySnapshotWasReduced(afterDeposit, current)
+            || CapacityNeedsStorage(afterDeposit, &afterReason, &afterFree)
+            || !FarmMockWalk(&stateName, "LOCATING_FARM", "RETURNING_TO_FARM")
+            || !FarmWorkflowMockOwnedRoute(runtime, mode "-to-farm", 2)
+            || !FarmMockWalk(&stateName, "VERIFY_FARM_REACHED",
+                "RESUMING_FARM")
+            return false
+        if cycleNumber = 1 {
+            if !FarmMockWalk(&stateName, "RECOVERY", "RESUMING_FARM")
+                return false
+            stats.resumeFirstFailures += 1
+        }
+        rewardAfter := BuildWorkflowMockInventory(mode, 0, 1, 17000)
+        if !InventorySnapshotHasReward(rewardAfter, afterDeposit)
+            || !FarmMockWalk(&stateName, "VERIFY_FARM_RESUMED", "FARMING")
+            return false
+        stats.cycles += 1
+        stats.verifiedRewards += 1
+    }
+    stats.clean := FarmWorkflowMockIsClean(runtime)
+    stats.blockedDuplicateTasks := runtime.blockedDuplicateTasks
+    stats.blockedConcurrentInputs := runtime.blockedConcurrentInputs
+    return stateName = "FARMING" && stats.cycles = cycleCount
+        && stats.verifiedRewards = cycleCount && stats.clean
+}
+
+RunWashingStorageRefillResumeMockTest(cycleCount, &stats) {
+    stats := {cycles: 0, outputsDeposited: 0, rawRefills: 0,
+        rawConsumptions: 0, verifiedRewards: 0,
+        storageUiFirstFailures: 0, inventoryDelays: 0,
+        resumeFirstFailures: 0, targetLosses: 0,
+        truckReacquisitions: 0, truckSmallPositionChanges: 0,
+        routePauses: 0, routeRecoveries: 0,
+        heading90: 0, heading180: 0, headingRandom: 0, clean: false,
+        blockedDuplicateTasks: 0, blockedConcurrentInputs: 0}
+    if cycleCount < 1
+        return false
+    runtime := CreateFarmWorkflowMockRuntime()
+    stateName := "FARMING"
+    headingSeed := 22092026
+    refillBaseline := BuildWorkflowMockInventory("washing", 6, 0, 10000)
+    current := BuildWorkflowMockInventory("washing", 5, 1, 100000)
+    Loop cycleCount {
+        cycleNumber := A_Index
+        if Mod(cycleNumber, 8) = 0 {
+            if !FarmMockWalk(&stateName, "RECOVERY", "FARMING")
+                return false
+            stats.targetLosses += 1
+        }
+        if !CapacityNeedsStorage(current, &capacityReason, &freeWeight)
+            || !FarmMockWalk(&stateName, "CHECKING_INVENTORY", "NEED_STORAGE",
+                "STOPPING_FARM")
+            return false
+        heading := FarmMockCameraHeading(&headingSeed, cycleNumber)
+        RecordFarmMockHeading(stats, heading)
+        if !FarmWorkflowMockReacquireMovedTruck(stats, cycleNumber)
+            return false
+        if !FarmMockStorageDepartureGate(refillBaseline.items, current.items,
+            heading)
+            || !FarmMockWalk(&stateName, "LOCATING_TRUCK", "MOVING_TO_TRUCK")
+            || !FarmWorkflowMockRouteWithBoundedPause(runtime,
+                "washing-to-truck", 1, cycleNumber = 2, stats)
+            || !FarmMockWalk(&stateName, "VERIFY_TRUCK_REACHED",
+                "OPENING_STORAGE")
+            return false
+        if cycleNumber = 1 {
+            if !FarmWorkflowMockIsClean(runtime)
+                || !FarmMockWalk(&stateName, "RECOVERY", "OPENING_STORAGE")
+                return false
+            stats.storageUiFirstFailures += 1
+        }
+
+        if !FarmMockWalk(&stateName, "STORING_OUTPUTS", "VERIFY_STORAGE")
+            return false
+        if Mod(cycleNumber, 4) = 0 {
+            if InventorySnapshotWasReduced(current, current)
+                || !FarmMockStep(&stateName, "VERIFY_STORAGE")
+                return false
+            stats.inventoryDelays += 1
+        }
+        afterDeposit := BuildWorkflowMockInventory("washing", 5, 0, 5000)
+        if !InventorySnapshotWasReduced(afterDeposit, current)
+            || InventorySpecHasIncrease(afterDeposit.items,
+                refillBaseline.items)
+            || !FarmMockWalk(&stateName, "REFILLING_INPUT", "VERIFY_REFILL")
+            return false
+        stats.outputsDeposited += 1
+
+        if Mod(cycleNumber, 5) = 0 {
+            if InventorySpecNameCount(afterDeposit.items, "raw_stone") != 5
+                || !FarmMockStep(&stateName, "VERIFY_REFILL")
+                return false
+            stats.inventoryDelays += 1
+        }
+        refilled := BuildWorkflowMockInventory("washing", 6, 0, 10000)
+        if InventorySpecNameCount(refilled.items, "raw_stone")
+            <= InventorySpecNameCount(afterDeposit.items, "raw_stone")
+            || CapacityNeedsStorage(refilled, &refillReason, &refillFree)
+            || !FarmMockWalk(&stateName, "LOCATING_FARM", "RETURNING_TO_FARM")
+            || !FarmWorkflowMockOwnedRoute(runtime, "washing-to-farm", 2)
+            || !FarmMockWalk(&stateName, "VERIFY_FARM_REACHED",
+                "RESUMING_FARM")
+            return false
+        stats.rawRefills += 1
+        if cycleNumber = 1 {
+            if !FarmMockWalk(&stateName, "RECOVERY", "RESUMING_FARM")
+                return false
+            stats.resumeFirstFailures += 1
+        }
+
+        resumed := BuildWorkflowMockInventory("washing", 5, 1, 12000)
+        if !DetectConsumedInventoryItem(refilled.items, resumed.items,
+            &consumedName, &consumedCount)
+            || consumedName != "raw_stone" || consumedCount != 1
+            || !InventorySnapshotHasReward(resumed, refilled)
+            || !FarmMockWalk(&stateName, "VERIFY_FARM_RESUMED", "FARMING",
+                "WASH_SETTLING", "WASH_CORRECTING", "WASH_VERIFYING",
+                "FARMING")
+            return false
+        stats.rawConsumptions += 1
+        stats.verifiedRewards += 1
+        stats.cycles += 1
+        refillBaseline := refilled
+        ; Model the next verified output accumulation reaching the configured
+        ; storage threshold. The resume reward itself is observed above; this
+        ; deterministic snapshot represents the later full Farm state.
+        current := BuildWorkflowMockInventory("washing", 5, 1, 100000)
+    }
+    stats.clean := FarmWorkflowMockIsClean(runtime)
+    stats.blockedDuplicateTasks := runtime.blockedDuplicateTasks
+    stats.blockedConcurrentInputs := runtime.blockedConcurrentInputs
+    return stateName = "FARMING" && stats.cycles = cycleCount
+        && stats.outputsDeposited = cycleCount && stats.rawRefills = cycleCount
+        && stats.rawConsumptions = cycleCount
+        && stats.verifiedRewards = cycleCount && stats.clean
+}
+
+FarmWorkflowMockFaultCoverage(stats) {
+    return stats.storageUiFirstFailures = 1 && stats.inventoryDelays > 0
+        && stats.resumeFirstFailures = 1 && stats.targetLosses > 0
+        && stats.heading90 > 0 && stats.heading180 > 0
+        && stats.headingRandom > 0
+        && stats.truckReacquisitions = stats.cycles
+        && stats.truckSmallPositionChanges = stats.cycles
+        && stats.routePauses = 1 && stats.routeRecoveries = 1
+}
+
+RunBoundedStorageRecoveryPolicyMockTest(cycleCount := 100) {
+    if cycleCount < 1
+        return false
+    recoveryClaims := 0
+    terminalFailures := 0
+    Loop cycleCount {
+        storagePending := true
+        recoveryAttempted := false
+        if !StorageRecoveryRetryAllowed(storagePending, recoveryAttempted)
+            return false
+        recoveryAttempted := true
+        recoveryClaims += 1
+        ; The failed recovery may not schedule a third storage owner.
+        if StorageRecoveryRetryAllowed(storagePending, recoveryAttempted)
+            return false
+        terminalFailures += 1
+        storagePending := false
+        recoveryAttempted := false
+        if StorageRecoveryRetryAllowed(storagePending, recoveryAttempted)
+            return false
+    }
+    return recoveryClaims = cycleCount && terminalFailures = cycleCount
+}
+
+RunAmbiguousTransferNoRetryMockTest(cycleCount := 100) {
+    ; Model three late-server cases that previously caused a second swapItems:
+    ; a first withdraw with no confirmed units, and a delayed second stack after
+    ; one confirmed deposit/withdraw stack. The late mutation is deliberately
+    ; applied after the result is classified; a safe policy must not dispatch
+    ; again in any cycle.
+    if cycleCount < 1
+        return false
+    Loop cycleCount {
+        delayedFirstWithdrawDispatches := 1
+        if WashingRefillFailureAction("ERROR AMBIGUOUS_TRANSFER")
+            = "RETRY_ZERO"
+            delayedFirstWithdrawDispatches += 1
+        lateFirstWithdrawApplied := true
+        if !lateFirstWithdrawApplied || delayedFirstWithdrawDispatches != 1
+            return false
+
+        delayedDepositStackDispatches := 2
+        if StorageTransferReceiptAction("PARTIAL_AMBIGUOUS_TRANSFER")
+            = "RETRY_EXACT"
+            delayedDepositStackDispatches += 1
+        lateDepositStackApplied := true
+        if !lateDepositStackApplied || delayedDepositStackDispatches != 2
+            return false
+
+        delayedWithdrawStackDispatches := 2
+        if StorageTransferReceiptAction("PARTIAL_NO_PROGRESS", true)
+            = "RETRY_EXACT"
+            delayedWithdrawStackDispatches += 1
+        lateWithdrawStackApplied := true
+        if !lateWithdrawStackApplied || delayedWithdrawStackDispatches != 2
+            return false
+    }
+    return true
 }
 
 IsMiningActive(*) {
@@ -5228,6 +6228,8 @@ SaveAllSettingsAtomically() {
         IniWrite Config.autoCheckUpdates, temporarySettingsPath, "Updates", "AutoCheck"
         IniWrite Config.washForwardCorrection, temporarySettingsPath, "Washing", "ForwardCorrection"
         IniWrite Config.washPostCompletionSettleMs, temporarySettingsPath, "Washing", "PostCompletionSettleMs"
+        IniWrite Config.rawStoneItemName, temporarySettingsPath, "Washing", "RawStoneItem"
+        IniWrite Config.washRefillMaximum, temporarySettingsPath, "Washing", "RefillMaximum"
         IniWrite Config.goldRecoveryEnabled, temporarySettingsPath, "GoldPanning", "RecoveryEnabled"
         IniWrite Config.goldRecoveryAfterMs, temporarySettingsPath, "GoldPanning", "RecoveryAfterMs"
         IniWrite Config.goldRecoveryPulseMs, temporarySettingsPath, "GoldPanning", "RecoveryPulseMs"
@@ -5531,7 +6533,7 @@ ShowLocalRegistrationOverlay(targetHwnd) {
     overlay.AddText("w396 Center", "登録する車両のストレージを開いてください")
     overlay.SetFont("s9 w400 c6C6C70", "Segoe UI")
     countdown := overlay.AddText("y+7 w396 Center", "開くと自動で登録されます　·　"
-        Config.stopHotkey "で中止")
+        . Config.stopHotkey . "で中止")
     State.registrationOverlay := {gui: overlay, countdown: countdown}
     try WinGetPos(&windowX, &windowY, &windowW, &windowH, "ahk_id " targetHwnd)
     catch {
@@ -5819,8 +6821,8 @@ RefreshCapacityUi(*) {
             / State.lastInventoryMaxWeight)))
         State.capacityProgress.Value := percent
         State.capacityStatusLabel.Text := "所持重量　"
-            FormatInventoryWeight(State.lastInventoryWeight) " / "
-            FormatInventoryWeight(State.lastInventoryMaxWeight) "　" percent "%"
+            . FormatInventoryWeight(State.lastInventoryWeight) . " / "
+            . FormatInventoryWeight(State.lastInventoryMaxWeight) . "　" . percent . "%"
         State.capacityDetailLabel.Text := "残り "
             . FormatInventoryWeight(State.lastInventoryFreeWeight)
             . "　·　収納開始 " . FormatInventoryWeight(Config.minimumFreeWeight)
@@ -5828,7 +6830,7 @@ RefreshCapacityUi(*) {
         State.capacityProgress.Value := 0
         State.capacityStatusLabel.Text := "所持重量　自動操作の開始後に確認"
         State.capacityDetailLabel.Text := "残り "
-            FormatInventoryWeight(Config.minimumFreeWeight) " 以下で自動収納"
+            . FormatInventoryWeight(Config.minimumFreeWeight) . " 以下で自動収納"
     }
 }
 
@@ -6965,6 +7967,7 @@ StartMining(*) {
     ; 最初の開始がまだrunning=falseの間も必ず拒否されます。
     if !TryClaimStartOperation(&startToken)
         return
+    runInitializationOwned := false
     try {
     if !ShowStartPreparationState(startToken)
         return
@@ -7075,10 +8078,17 @@ StartMining(*) {
     State.running := true
     State.startInProgress := false
     State.startRequestToken := 0
-    State.stopInProgress := false
     State.runMode := Config.actionMode
     State.generation += 1
     runGeneration := State.generation
+    State.pendingFarmTimerGeneration := 0
+    State.pendingFarmTimerTaskId := 0
+    State.pendingFarmTimerDueAt := 0
+    ; Transfer ownership from the preflight token to the same callback-drain gate
+    ; used by timer work. F9 may interrupt any bridge/storage setup below; until
+    ; this StartMining stack fully unwinds, F8 cannot install a replacement run.
+    State.activeFarmCallbacks += 1
+    runInitializationOwned := true
     State.targetHwnd := targetHwnd
     State.targetPid := targetPid
     State.successes := 0
@@ -7121,6 +8131,9 @@ StartMining(*) {
     State.watchdogRecoveryCount := 0
     State.targetLostSince := 0
     State.targetRecoveryAttempts := 0
+    State.recoveryPreflightFailures := 0
+    State.recoveryRestartCount := 0
+    State.recoveryRestartPending := false
     State.lastTargetProbeResult := ""
     State.recoveryReturnState := "FARMING"
     State.recoveryReason := ""
@@ -7144,13 +8157,18 @@ StartMining(*) {
     State.farmSessionEndQueued := false
     State.farmSessionEndSent := false
     State.lastMiningEventId := ""
+    ResetFarmOutputLedger()
     State.inventoryBaseline := ""
+    State.inventoryBaselineWeight := -1
     State.nextActionAt := 0
     State.workpointProbeFailures := 0
     State.nextCapacityCheckAt := 0
     State.storagePending := false
     State.storageStartPending := false
     State.storageRecoveryAttempted := false
+    State.storageReason := ""
+    State.storageOutputsVerified := false
+    State.storageRefillVerified := false
     State.capacityProbeFailures := 0
     State.serverEpoch := serverEpoch
     State.serverHealthFailures := 0
@@ -7161,6 +8179,8 @@ StartMining(*) {
     State.lastInventoryMaxWeight := 0
     State.lastInventoryFreeWeight := 0
     State.lastCapacityReason := "監視中"
+    State.lastAlertKind := ""
+    State.lastAlertAt := 0
     State.mainButton.Text := "自動操作を停止"
     State.actionControl.Enabled := false
     SetConfigurationEnabled(false)
@@ -7238,7 +8258,10 @@ StartMining(*) {
             return
         }
         State.statusLabel.Text := "開始時の所持品を保護しています"
-        snapshotResult := RunBackgroundBridge("inventory-snapshot")
+        snapshotResult := RunBackgroundBridgeCancelable(runGeneration,
+            "inventory-snapshot")
+        if !IsCurrentRun(runGeneration)
+            return
         if !ParseInventorySnapshot(snapshotResult, &inventoryInfo) {
             WriteDiagnostic("INVENTORY_BASELINE_ERROR=" snapshotResult)
             StopMining()
@@ -7246,18 +8269,34 @@ StartMining(*) {
             ShowPage("vehicle")
             return
         }
-        State.inventoryBaseline := inventoryInfo.items
-        RecordConfirmedInventory(inventoryInfo, "start_companion")
-        if CapacityNeedsStorage(inventoryInfo, &startReason, &startFreeWeight) {
+        startCapacityBlocked := CapacityNeedsStorage(inventoryInfo,
+            &startReason, &startFreeWeight)
+        criticalWasOn := A_IsCritical
+        if !criticalWasOn
+            Critical "On"
+        try {
+            if !IsCurrentRun(runGeneration)
+                return
+            State.inventoryBaseline := inventoryInfo.items
+            State.inventoryBaselineWeight := inventoryInfo.weight
+            if !RecordConfirmedInventory(inventoryInfo, "start_companion",
+                runGeneration)
+                return
+            if !startCapacityBlocked {
+                State.nextCapacityCheckAt := MonotonicMs()
+                    + Config.capacityCheckIntervalMs
+            }
+        } finally {
+            if !criticalWasOn
+                Critical "Off"
+        }
+        if startCapacityBlocked {
             WriteDiagnostic("INVENTORY_START_CAPACITY_BLOCKED reason=" startReason
                 " free=" startFreeWeight " baseline=protected")
             StopAutomationWithFault(
                 "開始時点ですでに容量が不足しています。既存の食料や道具を保護するため自動収納は行いません。手動で空きを作ってから再開してください",
                 "vehicle", "UNTRUSTED_STORAGE_BASELINE")
             return
-        } else {
-            State.nextCapacityCheckAt := MonotonicMs()
-                + Config.capacityCheckIntervalMs
         }
         WriteDiagnostic("INVENTORY_BASELINE weight=" inventoryInfo.weight
             " max=" inventoryInfo.maxWeight " used=" inventoryInfo.used)
@@ -7283,20 +8322,43 @@ StartMining(*) {
             return
         }
         if State.storagePending {
-            TransitionFarmState("INVENTORY_FULL",
-                "開始時容量不足を確認", runGeneration, 0, true)
+            TransitionFarmState("NEED_STORAGE",
+                "開始時に補充が必要", runGeneration, 0, true)
             TransitionFarmState("STOPPING_FARM",
                 "開始時容量不足から自動収納", runGeneration)
         } else
             TransitionFarmState("FARMING", "開始準備完了", runGeneration, 0, true)
         ScheduleNext(runGeneration, State.storagePending ? 100 : 900)
     }
-    } finally FinishStartPreparation(startToken)
+    } finally {
+        FinishStartPreparation(startToken)
+        if runInitializationOwned
+            ReleaseFarmCallback()
+    }
 }
 
-StopMining(*) {
+StopMining(faultContext := 0, *) {
     global State, Config
 
+    criticalWasOn := A_IsCritical
+    if !criticalWasOn
+        Critical "On"
+    faultOwnerMismatch := IsObject(faultContext)
+        && faultContext.HasOwnProp("expectedGeneration")
+        && (!State.running
+            || State.generation != faultContext.expectedGeneration
+            || (faultContext.HasOwnProp("expectedTaskId")
+                && State.farmStateTaskId != faultContext.expectedTaskId))
+    if State.stopInProgress || faultOwnerMismatch {
+        if !criticalWasOn
+            Critical "Off"
+        return false
+    }
+    State.stopInProgress := true
+    if !criticalWasOn
+        Critical "Off"
+
+    try {
     startCancelled := CancelStartOperation()
     if startCancelled && !State.running {
         ; Preflight owns no Farm session or scheduled work yet. Invalidating its
@@ -7318,18 +8380,24 @@ StopMining(*) {
 
     previousPhase := State.automationPhase
     previousFarmState := State.farmState
+    faultRequested := IsObject(faultContext)
+        && faultContext.HasOwnProp("message")
+    if faultRequested {
+        WriteDiagnostic("FARM_STOP code="
+            . DiagnosticToken(faultContext.faultCode)
+            . " state=" . State.farmState . " reason="
+            . DiagnosticToken(faultContext.message))
+    }
     if State.running
         TransitionFarmState("STOPPING_FARM", "停止要求", State.generation, 0, true)
     ; Stop/ERRORは外部IPCより先に、所有する全入力と進行中helperを止めます。
     CancelActiveBridgeProcess()
     ReleaseAllInputs()
     ReleaseBackgroundTarget(true)
-    State.stopInProgress := true
     endDurable := EndFarmMetagameSession()
     cancelCompanion := Config.vehicleCompanionProtocol = 1
         && (State.companionReady || State.companionEpoch)
     State.running := false
-    State.stopInProgress := false
     if State.metagameOutbox.Length || !endDurable
         ScheduleMetagameOutboxReplay(1)
     State.generation += 1
@@ -7338,13 +8406,23 @@ StopMining(*) {
     ResetWashCompletionRecoveryState()
     DiscardPendingFarmAttempt("run_stopped")
     State.rewardReconcileAttempts := 0
+    State.targetLostSince := 0
+    State.targetRecoveryAttempts := 0
+    State.recoveryPreflightFailures := 0
+    State.recoveryRestartCount := 0
+    State.recoveryRestartPending := false
+    ResetFarmOutputLedger()
     State.inventoryBaseline := ""
+    State.inventoryBaselineWeight := -1
     State.nextActionAt := 0
     State.capacityProbeFailures := 0
     State.workpointProbeFailures := 0
     State.storagePending := false
     State.storageStartPending := false
     State.storageRecoveryAttempted := false
+    State.storageReason := ""
+    State.storageOutputsVerified := false
+    State.storageRefillVerified := false
     State.serverEpoch := ""
     State.serverHealthFailures := 0
     State.nextServerHealthAt := 0
@@ -7364,6 +8442,9 @@ StopMining(*) {
         try SetTimer(State.timerFn, 0)
     }
     State.timerFn := 0
+    State.pendingFarmTimerGeneration := 0
+    State.pendingFarmTimerTaskId := 0
+    State.pendingFarmTimerDueAt := 0
 
     CancelActiveBridgeProcess()
     ; route helperを止めた直後に、先にDevCon入力を解放します。補助リソースの
@@ -7385,14 +8466,33 @@ StopMining(*) {
     State.mainButton.Text := "自動操作を開始"
     State.actionControl.Enabled := true
     SetConfigurationEnabled(true)
-    State.statusLabel.Text := "●  停止中"
-    TransitionFarmState("IDLE", "停止完了 (from " previousFarmState ")", 0, 0, true)
+    if faultRequested {
+        State.lastStorageResult := faultContext.message
+        State.farmStateLastError := faultContext.message
+        TransitionFarmState("ERROR", faultContext.message, 0, 0, true)
+        State.statusLabel.Text := faultContext.message
+        ShowPage(faultContext.pageName)
+        ShowMainWindow()
+    } else {
+        State.statusLabel.Text := "●  停止中"
+        TransitionFarmState("IDLE", "停止完了 (from " previousFarmState ")",
+            0, 0, true)
+    }
     ; Keep session identity/endedAt while a durable END append is pending. The idle
     ; replay timer retries it, and StartMining refuses to replace it. Successful
     ; closure is reset atomically when the next run is installed above.
     UpdateActionUi()
     State.gui.Show("NoActivate")
     UpdateConnectionStatus()
+    return true
+    } finally {
+        criticalWasOn := A_IsCritical
+        if !criticalWasOn
+            Critical "On"
+        State.stopInProgress := false
+        if !criticalWasOn
+            Critical "Off"
+    }
 }
 
 SetConfigurationEnabled(enabled) {
@@ -7421,17 +8521,38 @@ SetConfigurationEnabled(enabled) {
 
 ScheduleNext(expectedGeneration, delayMs) {
     global State
-
-    if !IsCurrentRun(expectedGeneration)
-        return
-
-    if IsObject(State.timerFn) {
-        try SetTimer(State.timerFn, 0)
+    criticalWasOn := A_IsCritical
+    if !criticalWasOn
+        Critical "On"
+    try {
+        if !IsCurrentRun(expectedGeneration)
+            return false
+        expectedTaskId := State.farmStateTaskId
+        if IsObject(State.timerFn)
+            try SetTimer(State.timerFn, 0)
+        State.timerFn := 0
+        action := FarmTimerScheduleAction(State.activeFarmCallbacks,
+            State.running, State.stopInProgress,
+            expectedGeneration = State.generation)
+        if action = "DROP"
+            return false
+        if action = "DEFER" {
+            ; One-shot timers scheduled by the current callback must not fire and
+            ; disappear while that callback still owns the stack. Last request
+            ; wins; ReleaseFarmCallback arms exactly one successor.
+            State.pendingFarmTimerGeneration := expectedGeneration
+            State.pendingFarmTimerTaskId := expectedTaskId
+            State.pendingFarmTimerDueAt := MonotonicMs() + Max(1, Round(delayMs))
+            return true
+        }
+        State.pendingFarmTimerGeneration := 0
+        State.pendingFarmTimerTaskId := 0
+        State.pendingFarmTimerDueAt := 0
+        return ArmFarmTimerOwned(expectedGeneration, expectedTaskId, delayMs)
+    } finally {
+        if !criticalWasOn
+            Critical "Off"
     }
-
-    nextFn := AutomationCycle.Bind(expectedGeneration, State.farmStateTaskId)
-    State.timerFn := nextFn
-    SetTimer(nextFn, -Max(1, delayMs))
 }
 
 WorkCooldownWakeDelay(remainingMs) {
@@ -7443,11 +8564,20 @@ WorkCooldownWakeDelay(remainingMs) {
 
 ScheduleWorkCooldown(expectedGeneration, actionRequestedAt, cooldownMs) {
     global State
-    if !IsCurrentRun(expectedGeneration)
-        return
-    State.nextActionAt := actionRequestedAt + cooldownMs
-    remaining := State.nextActionAt - MonotonicMs()
-    ScheduleNext(expectedGeneration, Max(1, WorkCooldownWakeDelay(remaining)))
+    criticalWasOn := A_IsCritical
+    if !criticalWasOn
+        Critical "On"
+    try {
+        if !IsCurrentRun(expectedGeneration)
+            return false
+        State.nextActionAt := actionRequestedAt + cooldownMs
+        remaining := State.nextActionAt - MonotonicMs()
+        return ScheduleNext(expectedGeneration,
+            Max(1, WorkCooldownWakeDelay(remaining)))
+    } finally {
+        if !criticalWasOn
+            Critical "Off"
+    }
 }
 
 ParseServerHealth(result, &epoch) {
@@ -7548,8 +8678,8 @@ MaybeHandleServerHealth(expectedGeneration) {
                         "vehicle")
                     return true
                 }
-                State.statusLabel.Text := "ゲーム内連携を再確認中（"
-                    State.companionHealthFailures "/3）"
+                State.statusLabel.Text := BuildFarmProgressStatus(
+                    "ゲーム内連携を再確認中（", State.companionHealthFailures, 3)
                 ScheduleNext(expectedGeneration, 1000)
                 return true
             }
@@ -7602,24 +8732,42 @@ MaybeHandleVehicleCapacity(expectedGeneration) {
         return true
     }
     State.capacityProbeFailures := 0
-    RecordConfirmedInventory(inventoryInfo, "capacity_check")
-    needsStorage := CapacityNeedsStorage(inventoryInfo, &capacityReason, &freeWeight)
+    RecordConfirmedInventory(inventoryInfo, "capacity_check",
+        expectedGeneration)
+    needsStorage := FarmModeNeedsStorage(State.runMode, inventoryInfo,
+        Config.rawStoneItemName, State.inventoryBaselineWeight,
+        &capacityReason, &freeWeight, &rawStoneCount)
+    if rawStoneCount >= 0
+        State.lastRawStoneCount := rawStoneCount
     if !needsStorage {
         State.storagePending := false
         State.storageRecoveryAttempted := false
         TransitionFarmState("FARMING", "容量に余裕あり", expectedGeneration)
         return false
     }
-    ; deposit-delta may move only inventory proven to have appeared after this
-    ; run's baseline. An empty/unknown baseline would otherwise classify every
-    ; pre-existing food or tool as farm output, so fail closed before any movement.
-    if !StorageDeltaBaselineIsSafe(State.inventoryBaseline,
-        inventoryInfo.items) {
-        WriteDiagnostic("STORAGE_BASELINE_BLOCKED source=capacity baseline="
-            DiagnosticToken(State.inventoryBaseline) " current="
+    ; A transfer is authorized only by exact name+metadata quantities accumulated
+    ; from finalized Farm reward snapshots. A broad "anything since start" delta
+    ; would also include food picked up mid-run, so it is never a departure gate.
+    ; A cold-start washing run with zero raw stone has no output delta by design.
+    ; InitializeLocalVehicleRun already proved that exact refill-only objective from
+    ; a live snapshot. Preserve it only while the next live snapshot still reports
+    ; zero of the learned raw item; every ordinary/full-start case requires a
+    ; positive verified-output ledger below.
+    refillOnly := IsVerifiedWashingRefillOnlyDeparture(State.runMode,
+        State.storagePending, State.storageOutputsVerified, State.storageReason,
+        rawStoneCount)
+    ledgerUnits := PositiveInventoryCountTotal(State.farmOutputLedger)
+    ledgerReady := refillOnly || (ledgerUnits > 0
+        && BuildFarmOutputProtectedBaseline(inventoryInfo.items,
+            State.farmOutputLedger, &departureBaseline, &departureUnits,
+            &ledgerFailure))
+    if !ledgerReady {
+        WriteDiagnostic("STORAGE_LEDGER_BLOCKED source=capacity reason="
+            (ledgerUnits > 0 ? ledgerFailure : "empty_ledger")
+            " ledger=" ledgerUnits " current="
             DiagnosticToken(inventoryInfo.items))
         StopAutomationWithFault(
-            "開始後に増えた持ち物を安全に特定できないため、既存の食料や道具を保護して停止しました",
+            "確定した作業報酬だけを安全に特定できないため、食料や道具を保護して停止しました",
             "vehicle", "UNTRUSTED_STORAGE_BASELINE")
         return true
     }
@@ -7627,15 +8775,21 @@ MaybeHandleVehicleCapacity(expectedGeneration) {
         State.storagePending := true
         State.storageRecoveryAttempted := false
     }
+    State.storageReason := capacityReason
+    if !refillOnly
+        State.storageOutputsVerified := false
+    State.storageRefillVerified := false
     ; 一度容量不足になったら、収納完了または停止まで通常の採集へ戻しません。
     State.nextCapacityCheckAt := 0
     State.storagePreSnapshot := inventoryInfo
     if State.farmState != "STOPPING_FARM" {
         State.storageRetryCount := 0
-        TransitionFarmState("INVENTORY_FULL", "容量不足: " capacityReason,
+        TransitionFarmState("NEED_STORAGE", "収納条件: " capacityReason,
             expectedGeneration)
     }
-    State.lastCapacityReason := capacityReason = "weight_percent"
+    State.lastCapacityReason := InStr(capacityReason, "raw_stone_empty")
+        ? "未洗浄の石がなくなった"
+        : capacityReason = "weight_percent"
         ? "重量率がしきい値以上"
         : capacityReason = "next_reward_weight"
             ? "次の報酬重量を保持できない"
@@ -7643,8 +8797,11 @@ MaybeHandleVehicleCapacity(expectedGeneration) {
     WriteDiagnostic("VEHICLE_CAPACITY_TRIGGER reason=" capacityReason
         " weight=" inventoryInfo.weight " max=" inventoryInfo.maxWeight
         " free=" freeWeight " used=" inventoryInfo.used " slots=" inventoryInfo.slots)
-    ; 容量到達時も先に視点を作業方向へ戻します。通常cycleより前にreturnする
-    ; 経路なので、ここで強制しないと視点ずれを対象消失と誤認します。
+    ; Inventory truth and the positive verified-output ledger are the authoritative
+    ; departure gate. A full warning, finished resource, or shifted camera can hide the Farm
+    ; target; probing it here used to deadlock before any truck movement was sent.
+    ; The reversible route owns the departure pose, and the return path verifies the
+    ; actual Farm target and next real reward before FARMING is committed again.
     if State.farmState != "STOPPING_FARM"
         TransitionFarmState("STOPPING_FARM", "収納前に作業を停止",
             expectedGeneration)
@@ -7656,66 +8813,13 @@ MaybeHandleVehicleCapacity(expectedGeneration) {
             "storage_preflight_input_release")
         return true
     }
-    if State.storageStartPending {
-        ; The inventory itself is the authoritative startup guard. A full warning
-        ; may hide the work target, so waiting for that target here deadlocks the
-        ; exact run that most urgently needs storage. The reversible route still
-        ; records every movement and RETURNING_TO_FARM verifies the target later.
-        WriteDiagnostic("VEHICLE_START_FULL_DIRECT_STORAGE=1")
-    } else {
-        if !MaintainBackgroundWorkView(expectedGeneration, true)
-            return true
-        workTargetPresent := ProbeWorkTarget(State.runMode, expectedGeneration)
-        if !IsCurrentRun(expectedGeneration)
-            return true
-        if !workTargetPresent {
-            if State.lastTargetProbeFatal {
-                EnterFarmRecovery(expectedGeneration, "FARMING",
-                    "storage_preflight_target_probe")
-                return true
-            }
-            cooldownRemaining := WorkTargetCooldownRemainingMs()
-            if cooldownRemaining > 0 {
-                State.statusLabel.Text := "収納前に作業ボタンの再表示を待っています"
-                ScheduleNext(expectedGeneration, Min(850, cooldownRemaining))
-                return true
-            }
-            if !State.storageRecoveryAttempted {
-                State.storageRecoveryAttempted := true
-                workTargetPresent := RecoverLocalWorkTarget(expectedGeneration, true)
-                if !IsCurrentRun(expectedGeneration)
-                    return true
-                if !workTargetPresent && State.lastTargetProbeFatal {
-                    EnterFarmRecovery(expectedGeneration, "FARMING",
-                        "storage_preflight_recovery_probe")
-                    return true
-                }
-            }
-            if workTargetPresent {
-                State.workpointProbeFailures := 0
-            } else {
-                ; During respawn or a wash/gold drift, keep Farm stopped and wait
-                ; at the work point. Never start a vehicle trip from an unknown pose.
-                State.workpointProbeFailures += 1
-                State.nextCapacityCheckAt := 0
-                State.statusLabel.Text := "収納前に現在の作業位置を確認中（"
-                    State.workpointProbeFailures "/10）"
-                WriteDiagnostic("VEHICLE_WORKPOINT_PENDING attempt="
-                    State.workpointProbeFailures)
-                if State.workpointProbeFailures >= 10 {
-                    EnterFarmRecovery(expectedGeneration, "FARMING",
-                        "storage_preflight_target_lost")
-                    return true
-                }
-                ScheduleNext(expectedGeneration, 850)
-                return true
-            }
-        }
-    }
+    WriteDiagnostic("VEHICLE_STORAGE_DEPARTURE_DIRECT reason=" capacityReason
+        " target_gate=removed ledger_units=" ledgerUnits
+        " refill_only=" (refillOnly ? 1 : 0))
     State.workpointProbeFailures := 0
     State.storageRecoveryAttempted := false
     State.timerFn := 0
-    TransitionFarmState("OPENING_STORAGE", "登録車両の荷台を探索",
+    TransitionFarmState("LOCATING_TRUCK", "登録車両を現在位置から探索",
         expectedGeneration)
     RunVehicleStorageCycle(expectedGeneration)
     return true
@@ -7757,6 +8861,95 @@ CapacityNeedsStorage(inventoryInfo, &reason, &freeWeight) {
     return false
 }
 
+FarmModeNeedsStorage(mode, inventoryInfo, rawStoneItemName,
+    baselineWeight, &reason, &freeWeight, &rawStoneCount) {
+    global Config
+    rawStoneCount := -1
+    genericNeedsStorage := CapacityNeedsStorage(inventoryInfo, &reason,
+        &freeWeight)
+    if mode != "washing" || !rawStoneItemName
+        return genericNeedsStorage
+
+    rawStoneCount := InventorySpecNameCount(inventoryInfo.items,
+        rawStoneItemName)
+    if rawStoneCount = 0 {
+        reason := genericNeedsStorage
+            ? "raw_stone_empty_and_capacity" : "raw_stone_empty"
+        return true
+    }
+    if baselineWeight < 0
+        return genericNeedsStorage
+
+    ; Protected washing input may intentionally be heavy. Only newly accumulated
+    ; output weight or exhausted slots can trigger a trip before the input reaches
+    ; zero; this same policy is used by normal dispatch and Recovery.
+    freeSlots := Max(0, inventoryInfo.slots - inventoryInfo.used)
+    netFarmGrowth := Max(0, inventoryInfo.weight - baselineWeight)
+    predictedReserve := Max(Config.minimumFreeWeight,
+        Config.estimatedRewardWeight)
+    needsStorage := freeSlots <= Config.minimumFreeSlots
+        || (netFarmGrowth > 0 && freeWeight <= predictedReserve)
+    reason := needsStorage
+        ? (freeSlots <= Config.minimumFreeSlots
+            ? "free_slots" : "washing_output_capacity")
+        : ""
+    return needsStorage
+}
+
+IsVerifiedWashingRefillOnlyDeparture(mode, storagePending,
+    storageOutputsVerified, storageReason, rawStoneCount) {
+    return mode = "washing" && storagePending && storageOutputsVerified
+        && storageReason = "raw_stone_empty" && rawStoneCount = 0
+}
+
+StorageRecoverySnapshotAction(atStorage, reduced, remainingDelta, stillFull,
+    mode, rawStoneConfigured) {
+    if !atStorage || !reduced || remainingDelta
+        return "RETRY"
+    if mode = "washing" && rawStoneConfigured
+        return "REFILL"
+    return stillFull ? "RETRY" : "RETURN"
+}
+
+StorageRecoveryRetryAllowed(storagePending, recoveryAttempted) {
+    return storagePending && !recoveryAttempted
+}
+
+StorageReturnAllowed(mode, rawStoneConfigured, refillVerified) {
+    return mode != "washing" || !rawStoneConfigured || refillVerified
+}
+
+TryClaimStorageRecoveryAttempt(expectedGeneration, expectedTaskId) {
+    global State
+    criticalWasOn := A_IsCritical
+    if !criticalWasOn
+        Critical "On"
+    try {
+        if !IsCurrentFarmTask(expectedGeneration, expectedTaskId, "RECOVERY")
+            || !StorageRecoveryRetryAllowed(State.storagePending,
+                State.storageRecoveryAttempted)
+            return false
+        State.storageRecoveryAttempted := true
+        return true
+    } finally {
+        if !criticalWasOn
+            Critical "Off"
+    }
+}
+
+WashingRefillReserveWeight(maxWeight) {
+    global Config
+    reserveForPercent := Ceil(Max(0, maxWeight)
+        * (100 - Config.storageTriggerPercent) / 100) + 1
+    return Max(Config.minimumFreeWeight + 1,
+        Config.estimatedRewardWeight + 1, reserveForPercent)
+}
+
+WashingRefillReserveSlots(totalSlots) {
+    global Config
+    return Min(Max(0, totalSlots), Config.minimumFreeSlots + 1)
+}
+
 UpdateInventoryCapacityState(inventoryInfo) {
     global State, Config
     State.lastInventoryWeight := inventoryInfo.weight
@@ -7792,20 +8985,31 @@ ParseInventorySnapshot(result, &inventoryInfo) {
     return true
 }
 
-RecordConfirmedInventory(inventoryInfo, source := "snapshot") {
+RecordConfirmedInventory(inventoryInfo, source := "snapshot",
+    expectedGeneration := 0) {
     global State
     if !IsObject(inventoryInfo)
         return 0
-    State.inventorySnapshotRevision += 1
-    inventoryInfo.revision := State.inventorySnapshotRevision
-    inventoryInfo.confirmedAt := MonotonicMs()
-    State.confirmedInventory := inventoryInfo
-    UpdateInventoryCapacityState(inventoryInfo)
-    WriteDiagnostic("INVENTORY_CONFIRMED source=" source
-        " revision=" inventoryInfo.revision
-        " weight=" inventoryInfo.weight " max=" inventoryInfo.maxWeight
-        " used=" inventoryInfo.used " slots=" inventoryInfo.slots)
-    return inventoryInfo.revision
+    criticalWasOn := A_IsCritical
+    if !criticalWasOn
+        Critical "On"
+    try {
+        if expectedGeneration && !IsCurrentRun(expectedGeneration)
+            return 0
+        State.inventorySnapshotRevision += 1
+        inventoryInfo.revision := State.inventorySnapshotRevision
+        inventoryInfo.confirmedAt := MonotonicMs()
+        State.confirmedInventory := inventoryInfo
+        UpdateInventoryCapacityState(inventoryInfo)
+        WriteDiagnostic("INVENTORY_CONFIRMED source=" source
+            " revision=" inventoryInfo.revision
+            " weight=" inventoryInfo.weight " max=" inventoryInfo.maxWeight
+            " used=" inventoryInfo.used " slots=" inventoryInfo.slots)
+        return inventoryInfo.revision
+    } finally {
+        if !criticalWasOn
+            Critical "Off"
+    }
 }
 
 InventorySpecTotalCount(spec) {
@@ -7822,6 +9026,38 @@ InventorySnapshotHasReward(afterInfo, beforeInfo) {
         || InventorySpecHasIncrease(afterInfo.items, beforeInfo.items)
 }
 
+WashingSnapshotHasExchangeReward(afterInfo, beforeInfo, configuredRawName,
+    &consumedRawName, &consumedUnits, &outputUnits) {
+    consumedRawName := ""
+    consumedUnits := 0
+    outputUnits := 0
+    if !IsObject(afterInfo) || !IsObject(beforeInfo)
+        return false
+    if configuredRawName {
+        beforeRaw := InventorySpecNameCount(beforeInfo.items,
+            configuredRawName)
+        afterRaw := InventorySpecNameCount(afterInfo.items,
+            configuredRawName)
+        if beforeRaw <= afterRaw
+            return false
+        consumedRawName := configuredRawName
+        consumedUnits := beforeRaw - afterRaw
+    } else if !DetectConsumedInventoryItem(beforeInfo.items, afterInfo.items,
+        &consumedRawName, &consumedUnits) {
+        return false
+    }
+    beforeNames := InventorySpecNameTotals(beforeInfo.items)
+    afterNames := InventorySpecNameTotals(afterInfo.items)
+    for name, afterCount in afterNames {
+        if StrCompare(name, consumedRawName, true) = 0
+            continue
+        beforeCount := beforeNames.Has(name) ? beforeNames[name] : 0
+        if afterCount > beforeCount
+            outputUnits += afterCount - beforeCount
+    }
+    return consumedUnits > 0 && outputUnits > 0
+}
+
 InventorySnapshotWasReduced(afterInfo, beforeInfo) {
     if !IsObject(afterInfo) || !IsObject(beforeInfo)
         return false
@@ -7834,40 +9070,58 @@ CaptureFarmAttemptBaseline(expectedGeneration, actionMode) {
     global State
     if !IsCurrentRun(expectedGeneration)
         return false
+    expectedTaskId := State.farmStateTaskId
     snapshotResult := RunBackgroundBridgeCancelable(expectedGeneration,
         "inventory-snapshot")
-    if !IsCurrentRun(expectedGeneration)
+    if !IsCurrentFarmTask(expectedGeneration, expectedTaskId)
         return false
     if !ParseInventorySnapshot(snapshotResult, &beforeInfo) {
         WriteDiagnostic("FARM_REWARD_BASELINE_ERROR mode=" actionMode
             " result=" snapshotResult)
         return false
     }
-    revision := RecordConfirmedInventory(beforeInfo, "before_" actionMode)
-    State.miningAttemptId += 1
-    State.pendingFarmAttempt := {
-        generation: expectedGeneration,
-        attemptId: State.miningAttemptId,
-        actionMode: actionMode,
-        before: beforeInfo,
-        beforeRevision: revision,
-        clicked: false,
-        completed: false,
-        rewardSessionId: "",
-        rewardDurabilityPending: false,
-        rewardConfirmedAtUnixMs: 0,
-        rewardEventId: "",
-        rewardConfirmedInfo: 0,
-        rewardConfirmationReason: "",
-        rewardDiagnosticWritten: false,
-        progressCompleted: false,
-        completionAt: 0,
-        completionElapsedMs: 0,
-        completionWasBundled: false,
-        reconcileDeadline: 0,
-        reconcileAttempts: 0
+    criticalWasOn := A_IsCritical
+    if !criticalWasOn
+        Critical "On"
+    try {
+        if !IsCurrentFarmTask(expectedGeneration, expectedTaskId)
+            || State.runMode != actionMode
+            || (State.farmState != "FARMING"
+                && State.farmState != "RESUMING_FARM")
+            return false
+        revision := RecordConfirmedInventory(beforeInfo,
+            "before_" actionMode, expectedGeneration)
+        if !revision
+            return false
+        State.miningAttemptId += 1
+        State.pendingFarmAttempt := {
+            generation: expectedGeneration,
+            attemptId: State.miningAttemptId,
+            actionMode: actionMode,
+            before: beforeInfo,
+            beforeRevision: revision,
+            clicked: false,
+            completed: false,
+            rewardSessionId: "",
+            rewardDurabilityPending: false,
+            rewardConfirmedAtUnixMs: 0,
+            rewardEventId: "",
+            rewardConfirmedInfo: 0,
+            rewardConfirmationReason: "",
+            rewardDiagnosticWritten: false,
+            outputLedgerCommitted: false,
+            progressCompleted: false,
+            completionAt: 0,
+            completionElapsedMs: 0,
+            completionWasBundled: false,
+            reconcileDeadline: 0,
+            reconcileAttempts: 0
+        }
+        return true
+    } finally {
+        if !criticalWasOn
+            Critical "Off"
     }
-    return true
 }
 
 DiscardPendingFarmAttempt(reason := "discarded") {
@@ -7977,7 +9231,7 @@ ConfirmPendingFarmReward(expectedGeneration, actionMode, &confirmedInfo,
 
 TryConfirmPendingFarmRewardSnapshot(expectedGeneration, actionMode,
     &confirmedInfo, &confirmationReason, &snapshotResult) {
-    global State
+    global State, Config
     confirmedInfo := 0
     confirmationReason := ""
     snapshotResult := ""
@@ -8010,11 +9264,17 @@ TryConfirmPendingFarmRewardSnapshot(expectedGeneration, actionMode,
         if !FarmAttemptHasFrozenReward(attempt) {
             if !needsSnapshot || !ParseInventorySnapshot(snapshotResult, &afterInfo)
                 return "UNAVAILABLE"
-            if !InventorySnapshotHasReward(afterInfo, attempt.before)
+            if actionMode = "washing" {
+                if !WashingSnapshotHasExchangeReward(afterInfo, attempt.before,
+                    Config.rawStoneItemName, &consumedRawName,
+                    &consumedRawUnits, &washOutputUnits)
+                    return "UNCHANGED"
+            } else if !InventorySnapshotHasReward(afterInfo, attempt.before)
                 return "UNCHANGED"
             if !EnsureFarmMetagameSessionIdentity(expectedGeneration)
                 return "UNAVAILABLE"
-            RecordConfirmedInventory(afterInfo, "reward_" actionMode)
+            RecordConfirmedInventory(afterInfo, "reward_" actionMode,
+                expectedGeneration)
             frozenAt := UnixTimeMilliseconds()
             frozenSessionId := State.farmSessionId
             frozenEventId := BuildFarmRewardEventId(frozenSessionId,
@@ -8025,8 +9285,11 @@ TryConfirmPendingFarmRewardSnapshot(expectedGeneration, actionMode,
             attempt.rewardConfirmedAtUnixMs := frozenAt
             attempt.rewardEventId := frozenEventId
             attempt.rewardConfirmedInfo := afterInfo
-            attempt.rewardConfirmationReason := afterInfo.weight
-                > attempt.before.weight ? "weight_increase" : "item_increase"
+            attempt.rewardConfirmationReason := actionMode = "washing"
+                ? "wash_exchange_raw_" . consumedRawUnits
+                    . "_output_" . washOutputUnits
+                : afterInfo.weight > attempt.before.weight
+                    ? "weight_increase" : "item_increase"
             attempt.rewardDurabilityPending := true
         }
         if !FarmAttemptHasFrozenReward(attempt)
@@ -8303,10 +9566,588 @@ InventorySpecToRows(spec) {
         if !RegExMatch(entry,
             "^([0-9]{4})\.([A-Za-z0-9_-]{1,64})\.([A-Za-z0-9_-]{2,10923})=([0-9]{1,10})$", &parts)
             continue
-        rows.Push({slot: parts[1] + 0, name: parts[2], key: parts[2] "." parts[3],
-            count: parts[4] + 0, reserved: 0})
+        rows.Push({slot: parts[1] + 0, name: parts[2], metadata: parts[3],
+            key: parts[2] "." parts[3], count: parts[4] + 0, reserved: 0})
     }
     return rows
+}
+
+NewExactInventoryCountMap() {
+    counts := Map()
+    counts.CaseSense := "On"
+    return counts
+}
+
+InventorySpecExactTotals(spec) {
+    totals := NewExactInventoryCountMap()
+    for row in InventorySpecToRows(spec)
+        totals[row.key] := (totals.Has(row.key) ? totals[row.key] : 0)
+            + row.count
+    return totals
+}
+
+ClonePositiveInventoryCounts(source) {
+    clone := NewExactInventoryCountMap()
+    if Type(source) != "Map"
+        return clone
+    for key, count in source {
+        if IsInteger(count) && count > 0
+            clone[key] := count
+    }
+    return clone
+}
+
+PositiveInventoryCountTotal(counts) {
+    total := 0
+    if Type(counts) != "Map"
+        return 0
+    for key, count in counts {
+        if IsInteger(count) && count > 0
+            total += count
+    }
+    return total
+}
+
+FarmOutputLedgerHasPending(ledger) {
+    return PositiveInventoryCountTotal(ledger) > 0
+}
+
+AccumulateVerifiedFarmOutputLedger(ledger, beforeSpec, afterSpec,
+    &addedUnits) {
+    addedUnits := 0
+    if Type(ledger) != "Map" || !IsValidInventorySpec(beforeSpec)
+        || !IsValidInventorySpec(afterSpec)
+        return false
+    beforeTotals := InventorySpecExactTotals(beforeSpec)
+    afterTotals := InventorySpecExactTotals(afterSpec)
+    beforeNames := InventorySpecNameTotals(beforeSpec)
+    afterNames := InventorySpecNameTotals(afterSpec)
+    remainingNameGrowth := NewExactInventoryCountMap()
+    for name, afterNameCount in afterNames {
+        beforeNameCount := beforeNames.Has(name) ? beforeNames[name] : 0
+        if afterNameCount > beforeNameCount
+            remainingNameGrowth[name] := afterNameCount - beforeNameCount
+    }
+    for key, afterCount in afterTotals {
+        separator := InStr(key, ".")
+        name := separator > 1 ? SubStr(key, 1, separator - 1) : ""
+        if !name || !remainingNameGrowth.Has(name)
+            || remainingNameGrowth[name] <= 0
+            continue
+        beforeCount := beforeTotals.Has(key) ? beforeTotals[key] : 0
+        increase := Min(Max(0, afterCount - beforeCount),
+            remainingNameGrowth[name])
+        if increase <= 0
+            continue
+        ledger[key] := (ledger.Has(key) ? ledger[key] : 0) + increase
+        remainingNameGrowth[name] -= increase
+        addedUnits += increase
+    }
+    return true
+}
+
+BuildFarmOutputProtectedBaseline(currentSpec, ledger, &baselineSpec,
+    &eligibleUnits, &failureReason) {
+    baselineSpec := ""
+    eligibleUnits := 0
+    failureReason := ""
+    if !IsValidInventorySpec(currentSpec) {
+        failureReason := "invalid_inventory"
+        return false
+    }
+    pending := ClonePositiveInventoryCounts(ledger)
+    expectedUnits := PositiveInventoryCountTotal(pending)
+    if expectedUnits <= 0 {
+        failureReason := "empty_ledger"
+        return false
+    }
+    rows := InventorySpecToRows(currentSpec)
+    currentTotals := InventorySpecExactTotals(currentSpec)
+    for key, count in pending {
+        if !currentTotals.Has(key) || currentTotals[key] < count {
+            failureReason := "ledger_item_missing"
+            return false
+        }
+    }
+
+    ; Mark only exact name+canonical-metadata units from the verified-reward
+    ; ledger as transferable. Allocate from higher slots first because the bridge
+    ; processes sources in that same order. Every other live unit becomes the
+    ; synthetic protected baseline, including items acquired after Farm started.
+    Loop rows.Length {
+        row := rows[rows.Length - A_Index + 1]
+        row.ledgerEligible := 0
+        if !pending.Has(row.key) || pending[row.key] <= 0
+            continue
+        take := Min(row.count, pending[row.key])
+        row.ledgerEligible := take
+        pending[row.key] -= take
+        eligibleUnits += take
+    }
+    for key, count in pending {
+        if count != 0 {
+            failureReason := "ledger_allocation_failed"
+            return false
+        }
+    }
+    if eligibleUnits != expectedUnits {
+        failureReason := "ledger_count_mismatch"
+        return false
+    }
+
+    protectedParts := []
+    for row in rows {
+        protectedCount := row.count - row.ledgerEligible
+        if protectedCount <= 0
+            continue
+        protectedParts.Push(Format("{:04}", row.slot) "." row.name "."
+            . row.metadata "=" protectedCount)
+    }
+    baselineSpec := protectedParts.Length ? JoinInventorySpecParts(protectedParts)
+        : "-"
+    if !IsValidInventorySpec(baselineSpec)
+        || InventorySpecDeltaUnitCount(currentSpec, baselineSpec) != eligibleUnits {
+        failureReason := "synthetic_baseline_mismatch"
+        baselineSpec := ""
+        eligibleUnits := 0
+        return false
+    }
+    return true
+}
+
+JoinInventorySpecParts(parts) {
+    result := ""
+    for part in parts
+        result .= (result ? "," : "") part
+    return result
+}
+
+BuildFarmOutputAuthorizationSpec(ledger, &spec, &totalUnits) {
+    spec := ""
+    totalUnits := 0
+    if Type(ledger) != "Map"
+        return false
+    parts := []
+    for key, count in ledger {
+        if !RegExMatch(key,
+            "^[A-Za-z0-9_-]{1,64}\.[A-Za-z0-9_-]{2,10923}$")
+            || !IsInteger(count) || count <= 0
+            || count > 2147483647 - totalUnits
+            return false
+        parts.Push(key "=" count)
+        totalUnits += count
+    }
+    if !parts.Length
+        return false
+    spec := JoinInventorySpecParts(parts)
+    return StrLen(spec) <= 24000 && totalUnits > 0
+}
+
+CreateStorageDepositCheckpoint(expectedGeneration, checkpointId, currentSpec,
+    ledger) {
+    if expectedGeneration < 1 || checkpointId < 1
+        || !IsValidInventorySpec(currentSpec)
+        || !FarmOutputLedgerHasPending(ledger)
+        return 0
+    if !BuildFarmOutputAuthorizationSpec(ledger, &authorizedSpec,
+        &authorizedUnits)
+        return 0
+    return {
+        generation: expectedGeneration,
+        checkpointId: checkpointId,
+        observedItems: currentSpec,
+        authorizedByKey: ClonePositiveInventoryCounts(ledger),
+        authorizedSpec: authorizedSpec,
+        authorizedUnits: authorizedUnits,
+        receiptVerified: false,
+        receiptUnits: 0,
+        receiptAppliedUnits: 0,
+        receiptRemainingByKey: NewExactInventoryCountMap()
+    }
+}
+
+ParseExactFarmOutputReceiptSpec(spec, &exactCounts, &totalUnits) {
+    exactCounts := NewExactInventoryCountMap()
+    totalUnits := 0
+    spec := String(spec)
+    if !spec || StrLen(spec) > 24000
+        return false
+    previousKey := ""
+    for entry in StrSplit(spec, ",") {
+        if !RegExMatch(entry,
+            "^([A-Za-z0-9_-]{1,64})\.([A-Za-z0-9_-]{2,10923})=([1-9][0-9]{0,9})$",
+            &parts)
+            return false
+        key := parts[1] "." parts[2]
+        if previousKey && StrCompare(previousKey, key, true) >= 0
+            return false
+        count := parts[3] + 0
+        if count < 1 || count > 2147483647 - totalUnits
+            return false
+        exactCounts[key] := count
+        totalUnits += count
+        previousKey := key
+    }
+    return totalUnits > 0
+}
+
+ParseVerifiedStorageDepositReceipt(result, expectedStorageId,
+    expectedStorageType, &receipt) {
+    receipt := 0
+    result := String(result)
+    if !RegExMatch(result,
+        "^DEPOSITED ([1-9][0-9]{0,9}) ([1-9][0-9]{0,9}) "
+        . "([1-9][0-9]{0,9}) ([A-Za-z0-9+/]+={0,2}) "
+        . "([A-Za-z0-9+/]+={0,2}) ([A-Za-z0-9_-]{1,64}) "
+        . "(COMPLETE|PARTIAL_[A-Z_]{2,48}) (.{1,24000})$", &parts)
+        return false
+    if parts[4] != expectedStorageId || parts[5] != expectedStorageType
+        || !IsValidBase64Token(parts[4]) || !IsValidBase64Token(parts[5])
+        return false
+    if !ParseExactFarmOutputReceiptSpec(parts[8], &exactCounts, &totalUnits)
+        || totalUnits != parts[1] + 0
+        || parts[2] + 0 < totalUnits
+        || (parts[7] = "COMPLETE" && parts[1] + 0 != parts[2] + 0)
+        || (parts[7] != "COMPLETE" && parts[1] + 0 >= parts[2] + 0)
+        return false
+    receipt := {
+        moved: parts[1] + 0,
+        planned: parts[2] + 0,
+        stacks: parts[3] + 0,
+        storageId: parts[4],
+        storageType: parts[5],
+        operationToken: parts[6],
+        status: parts[7],
+        exactCounts: exactCounts
+    }
+    return true
+}
+
+StorageDepositReceiptOperationMatches(receipt, expectedOperationToken) {
+    return IsObject(receipt) && receipt.HasOwnProp("operationToken")
+        && RegExMatch(expectedOperationToken, "^[A-Za-z0-9_-]{1,64}$")
+        && receipt.operationToken = expectedOperationToken
+}
+
+StorageTransferResultIsAmbiguous(result) {
+    result := Trim(String(result))
+    return result = "ERROR AMBIGUOUS_TRANSFER"
+        || result = "ERROR NO_PROGRESS"
+        || result = "ERROR BRIDGE_TIMEOUT"
+        || result = "ERROR no bridge result"
+}
+
+StorageTransferReceiptAction(status, allowCapacityCommit := false) {
+    status := Trim(String(status))
+    if status = "COMPLETE"
+        return "COMPLETE"
+    if status = "PARTIAL_MOVE_REJECTED"
+        return "RETRY_EXACT"
+    if allowCapacityCommit && status = "PARTIAL_INVENTORY_CAPACITY"
+        return "COMMIT_EXACT"
+    ; NO_PROGRESS is retained for compatibility with older bridge binaries.
+    ; Historically it could mean that swapItems was already in flight. Every
+    ; other non-whitelisted partial status also stops closed by default.
+    return InStr(status, "PARTIAL_") = 1 ? "STOP" : "INVALID"
+}
+
+BindStorageDepositReceipt(checkpoint, receipt, ledger, expectedUnits) {
+    receiptAction := IsObject(receipt) && receipt.HasOwnProp("status")
+        ? StorageTransferReceiptAction(receipt.status) : "INVALID"
+    if !IsObject(checkpoint) || !IsObject(receipt)
+        || Type(ledger) != "Map" || expectedUnits < 1
+        || !checkpoint.HasOwnProp("authorizedByKey")
+        || Type(checkpoint.authorizedByKey) != "Map"
+        || !checkpoint.HasOwnProp("receiptVerified")
+        || checkpoint.receiptVerified
+        || (receiptAction != "COMPLETE" && receiptAction != "RETRY_EXACT")
+        || receipt.planned != expectedUnits || receipt.moved > expectedUnits
+        || (receipt.status = "COMPLETE" && receipt.moved != expectedUnits)
+        || (receipt.status != "COMPLETE" && receipt.moved >= expectedUnits)
+        || PositiveInventoryCountTotal(checkpoint.authorizedByKey)
+            != expectedUnits
+        || PositiveInventoryCountTotal(receipt.exactCounts) != receipt.moved
+        return false
+    ; The bridge receipt is produced only after the same registered trunk gained
+    ; each exact name+metadata quantity and the player lost it. A PARTIAL receipt
+    ; may authorize a strict positive subset after a later source failed; only that
+    ; proven subset can consume ledger before a fresh checkpoint retries the rest.
+    for key, receiptCount in receipt.exactCounts {
+        if !checkpoint.authorizedByKey.Has(key)
+            || checkpoint.authorizedByKey[key] < receiptCount
+            || !ledger.Has(key) || ledger[key] < receiptCount
+            return false
+    }
+    checkpoint.receiptRemainingByKey := ClonePositiveInventoryCounts(
+        receipt.exactCounts)
+    checkpoint.receiptVerified := true
+    checkpoint.receiptUnits := receipt.moved
+    checkpoint.receiptAppliedUnits := 0
+    checkpoint.receiptOperationToken := receipt.operationToken
+    return true
+}
+
+BindActiveStorageDepositReceipt(expectedGeneration, result, expectedUnits,
+    &receiptUnits, &failureReason) {
+    global State, Config
+    receiptUnits := 0
+    failureReason := ""
+    if !IsCurrentRun(expectedGeneration) {
+        failureReason := "stale_generation"
+        return false
+    }
+    checkpoint := State.storageDepositCheckpoint
+    if !IsObject(checkpoint) || checkpoint.generation != expectedGeneration {
+        failureReason := "missing_checkpoint"
+        return false
+    }
+    if !ParseVerifiedStorageDepositReceipt(result, Config.vehicleStorageId,
+        Config.vehicleStorageType, &receipt) {
+        failureReason := StorageTransferResultIsAmbiguous(result)
+            ? "ambiguous_transfer" : "unverified_bridge_result"
+        return false
+    }
+    receiptAction := StorageTransferReceiptAction(receipt.status)
+    if receiptAction != "COMPLETE" && receiptAction != "RETRY_EXACT" {
+        failureReason := "terminal_receipt_status_" receipt.status
+        return false
+    }
+    if !BindStorageDepositReceipt(checkpoint, receipt,
+        State.farmOutputLedger, expectedUnits) {
+        failureReason := "receipt_ledger_mismatch"
+        return false
+    }
+    receiptUnits := receipt.moved
+    WriteDiagnostic("FARM_OUTPUT_DEPOSIT_RECEIPT checkpoint="
+        checkpoint.checkpointId " units=" receiptUnits " token="
+        DiagnosticToken(receipt.operationToken))
+    return true
+}
+
+StorageDepositCheckpointReceiptRemaining(checkpoint) {
+    return IsObject(checkpoint) && checkpoint.HasOwnProp("receiptVerified")
+        && checkpoint.receiptVerified
+        && checkpoint.HasOwnProp("receiptRemainingByKey")
+        ? PositiveInventoryCountTotal(checkpoint.receiptRemainingByKey) : -1
+}
+
+RetireCompletedStorageDepositCheckpoint(expectedGeneration) {
+    global State
+    checkpoint := State.storageDepositCheckpoint
+    if !IsCurrentRun(expectedGeneration) || !IsObject(checkpoint)
+        || checkpoint.generation != expectedGeneration
+        || StorageDepositCheckpointReceiptRemaining(checkpoint) != 0
+        return false
+    WriteDiagnostic("FARM_OUTPUT_DEPOSIT_CHECKPOINT_RETIRED id="
+        checkpoint.checkpointId " receiptApplied="
+        checkpoint.receiptAppliedUnits " ledgerRemaining="
+        PositiveInventoryCountTotal(State.farmOutputLedger))
+    State.storageDepositCheckpoint := 0
+    return true
+}
+
+ReconcileStorageDepositCheckpoint(checkpoint, liveSpec, ledger,
+    &appliedUnits) {
+    appliedUnits := 0
+    if !IsObject(checkpoint) || Type(ledger) != "Map"
+        || !checkpoint.HasOwnProp("observedItems")
+        || !checkpoint.HasOwnProp("receiptVerified")
+        || !checkpoint.receiptVerified
+        || !checkpoint.HasOwnProp("receiptRemainingByKey")
+        || Type(checkpoint.receiptRemainingByKey) != "Map"
+        || !IsValidInventorySpec(checkpoint.observedItems)
+        || !IsValidInventorySpec(liveSpec)
+        return false
+    beforeTotals := InventorySpecExactTotals(checkpoint.observedItems)
+    afterTotals := InventorySpecExactTotals(liveSpec)
+    ; A paired bridge receipt authorizes the whole observed reduction frontier.
+    ; Reject extra reduction on the same key and any reduction on an unreceipted
+    ; key before mutating either the receipt or Farm ledger.
+    for key, beforeCount in beforeTotals {
+        afterCount := afterTotals.Has(key) ? afterTotals[key] : 0
+        observedReduction := Max(0, beforeCount - afterCount)
+        allowance := checkpoint.receiptRemainingByKey.Has(key)
+            ? checkpoint.receiptRemainingByKey[key] : 0
+        if observedReduction > allowance
+            return false
+    }
+    exhaustedKeys := []
+    for key, allowance in checkpoint.receiptRemainingByKey {
+        if !IsInteger(allowance) || allowance <= 0
+            continue
+        beforeCount := beforeTotals.Has(key) ? beforeTotals[key] : 0
+        afterCount := afterTotals.Has(key) ? afterTotals[key] : 0
+        observedReduction := Max(0, beforeCount - afterCount)
+        ledgerCount := ledger.Has(key) ? ledger[key] : 0
+        if observedReduction > ledgerCount
+            return false
+        applied := observedReduction
+        if applied <= 0
+            continue
+        nextAllowance := allowance - applied
+        if nextAllowance > 0
+            checkpoint.receiptRemainingByKey[key] := nextAllowance
+        else
+            exhaustedKeys.Push(key)
+        nextLedgerCount := ledgerCount - applied
+        if nextLedgerCount > 0
+            ledger[key] := nextLedgerCount
+        else if ledger.Has(key)
+            ledger.Delete(key)
+        appliedUnits += applied
+    }
+    ; Do not structurally modify the Map while its enumerator is live. This also
+    ; keeps the observation/reconciliation pass deterministic on every AHK build.
+    for key in exhaustedKeys {
+        if checkpoint.receiptRemainingByKey.Has(key)
+            checkpoint.receiptRemainingByKey.Delete(key)
+    }
+    checkpoint.receiptAppliedUnits += appliedUnits
+    if checkpoint.receiptAppliedUnits > checkpoint.receiptUnits
+        return false
+    ; Moving this observation frontier on every valid snapshot makes a repeated
+    ; or late callback idempotent. The same exact player reduction cannot be
+    ; consumed from the ledger twice.
+    checkpoint.observedItems := liveSpec
+    return true
+}
+
+ResetFarmOutputLedger() {
+    global State
+    State.farmOutputLedger := NewExactInventoryCountMap()
+    State.storageDepositCheckpoint := 0
+    State.storageDepositSequence := 0
+}
+
+BeginActiveStorageDepositCheckpoint(expectedGeneration, currentSpec) {
+    global State
+    if !IsCurrentRun(expectedGeneration)
+        || !FarmOutputLedgerHasPending(State.farmOutputLedger)
+        return false
+    if IsObject(State.storageDepositCheckpoint) {
+        return State.storageDepositCheckpoint.generation = expectedGeneration
+    }
+    State.storageDepositSequence += 1
+    checkpoint := CreateStorageDepositCheckpoint(expectedGeneration,
+        State.storageDepositSequence, currentSpec, State.farmOutputLedger)
+    if !IsObject(checkpoint)
+        return false
+    State.storageDepositCheckpoint := checkpoint
+    WriteDiagnostic("FARM_OUTPUT_DEPOSIT_CHECKPOINT_BEGIN id="
+        checkpoint.checkpointId " units="
+        PositiveInventoryCountTotal(checkpoint.authorizedByKey))
+    return true
+}
+
+ReconcileActiveStorageDepositCheckpoint(expectedGeneration, liveSpec,
+    &appliedUnits, &remainingUnits) {
+    global State
+    appliedUnits := 0
+    remainingUnits := PositiveInventoryCountTotal(State.farmOutputLedger)
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    checkpoint := State.storageDepositCheckpoint
+    if !IsObject(checkpoint) || checkpoint.generation != expectedGeneration
+        return false
+    if !ReconcileStorageDepositCheckpoint(checkpoint, liveSpec,
+        State.farmOutputLedger, &appliedUnits)
+        return false
+    remainingUnits := PositiveInventoryCountTotal(State.farmOutputLedger)
+    if appliedUnits > 0 {
+        WriteDiagnostic("FARM_OUTPUT_LEDGER_REDUCED checkpoint="
+            checkpoint.checkpointId " applied=" appliedUnits
+            " remaining=" remainingUnits)
+    }
+    return true
+}
+
+FinalizeVerifiedFarmOutputDeposit(expectedGeneration, verifiedInfo) {
+    global State
+    if !IsCurrentRun(expectedGeneration) || !IsObject(verifiedInfo)
+        || FarmOutputLedgerHasPending(State.farmOutputLedger)
+        return false
+    checkpointId := IsObject(State.storageDepositCheckpoint)
+        ? State.storageDepositCheckpoint.checkpointId : 0
+    State.farmOutputLedger := NewExactInventoryCountMap()
+    State.storageDepositCheckpoint := 0
+    State.inventoryBaseline := verifiedInfo.items
+    State.inventoryBaselineWeight := verifiedInfo.weight
+    State.storageOutputsVerified := true
+    WriteDiagnostic("FARM_OUTPUT_LEDGER_DEPOSIT_VERIFIED checkpoint="
+        checkpointId " remaining=0")
+    return true
+}
+
+InventorySpecNameTotals(spec) {
+    totals := Map()
+    totals.CaseSense := "On"
+    for row in InventorySpecToRows(spec)
+        totals[row.name] := (totals.Has(row.name) ? totals[row.name] : 0)
+            + row.count
+    return totals
+}
+
+InventorySpecNameCount(spec, itemName) {
+    if !RegExMatch(itemName, "^[A-Za-z0-9_-]{1,64}$")
+        return 0
+    totals := InventorySpecNameTotals(spec)
+    return totals.Has(itemName) ? totals[itemName] : 0
+}
+
+DetectConsumedInventoryItem(beforeSpec, afterSpec, &itemName,
+    &consumedCount) {
+    itemName := ""
+    consumedCount := 0
+    beforeTotals := InventorySpecNameTotals(beforeSpec)
+    afterTotals := InventorySpecNameTotals(afterSpec)
+    candidates := 0
+    for name, beforeCount in beforeTotals {
+        afterCount := afterTotals.Has(name) ? afterTotals[name] : 0
+        if afterCount >= beforeCount
+            continue
+        candidates += 1
+        itemName := name
+        consumedCount := beforeCount - afterCount
+    }
+    if candidates != 1 {
+        itemName := ""
+        consumedCount := 0
+        return false
+    }
+    return true
+}
+
+LearnRawStoneItemFromVerifiedWash(beforeInfo, afterInfo) {
+    global Config, State
+    if !IsObject(beforeInfo) || !IsObject(afterInfo)
+        return ""
+    if Config.rawStoneItemName {
+        beforeCount := InventorySpecNameCount(beforeInfo.items,
+            Config.rawStoneItemName)
+        afterCount := InventorySpecNameCount(afterInfo.items,
+            Config.rawStoneItemName)
+        State.lastRawStoneCount := afterCount
+        if beforeCount > afterCount {
+            WriteDiagnostic("WASH_RAW_STONE_VERIFIED item="
+                Config.rawStoneItemName " consumed=" (beforeCount - afterCount)
+                " remaining=" afterCount)
+            return ""
+        }
+        WriteDiagnostic("WASH_RAW_STONE_NOT_CONSUMED item="
+            Config.rawStoneItemName " before=" beforeCount " after=" afterCount)
+        return ""
+    }
+    if !DetectConsumedInventoryItem(beforeInfo.items, afterInfo.items,
+        &candidateName, &consumedCount) {
+        WriteDiagnostic("WASH_RAW_STONE_LEARN_SKIPPED reason=ambiguous_or_none")
+        return ""
+    }
+    Config.rawStoneItemName := candidateName
+    State.lastRawStoneCount := InventorySpecNameCount(afterInfo.items,
+        candidateName)
+    WriteDiagnostic("WASH_RAW_STONE_LEARNED item=" candidateName
+        " consumed=" consumedCount " remaining=" State.lastRawStoneCount)
+    return candidateName
 }
 
 InitializeLocalVehicleRun(expectedGeneration) {
@@ -8333,15 +10174,52 @@ InitializeLocalVehicleRun(expectedGeneration) {
         ShowPage("vehicle")
         return false
     }
-    State.inventoryBaseline := inventoryInfo.items
-    RecordConfirmedInventory(inventoryInfo, "start_local")
-    if CapacityNeedsStorage(inventoryInfo, &startReason, &startFreeWeight) {
+    startCapacityBlocked := CapacityNeedsStorage(inventoryInfo, &startReason,
+        &startFreeWeight)
+    startRawStoneCount := State.runMode = "washing"
+        && Config.rawStoneItemName
+        ? InventorySpecNameCount(inventoryInfo.items,
+            Config.rawStoneItemName) : -1
+    criticalWasOn := A_IsCritical
+    if !criticalWasOn
+        Critical "On"
+    try {
+        if !IsCurrentRun(expectedGeneration)
+            return false
+        State.inventoryBaseline := inventoryInfo.items
+        State.inventoryBaselineWeight := inventoryInfo.weight
+        if !RecordConfirmedInventory(inventoryInfo, "start_local",
+            expectedGeneration)
+            return false
+        if startRawStoneCount >= 0
+            State.lastRawStoneCount := startRawStoneCount
+        if !startCapacityBlocked && startRawStoneCount = 0 {
+            ; No work output exists in this new run, so there is nothing to deposit.
+            ; Mark that empty output phase as verified and perform a refill-only trip;
+            ; do not require a wash button that legitimately disappears at zero input.
+            State.storagePending := true
+            State.storageReason := "raw_stone_empty"
+            State.storagePreSnapshot := inventoryInfo
+            State.storageOutputsVerified := true
+            State.storageRefillVerified := false
+            State.nextCapacityCheckAt := 0
+        }
+    } finally {
+        if !criticalWasOn
+            Critical "Off"
+    }
+    if startCapacityBlocked {
         WriteDiagnostic("LOCAL_INVENTORY_START_CAPACITY_BLOCKED reason="
             startReason " free=" startFreeWeight " baseline=protected")
         StopAutomationWithFault(
             "開始時点ですでに容量が不足しています。既存の食料や道具を保護するため自動収納は行いません。手動で空きを作ってから再開してください",
             "vehicle", "UNTRUSTED_STORAGE_BASELINE")
         return false
+    }
+    if startRawStoneCount = 0 {
+        WriteDiagnostic("LOCAL_WASH_START_REFILL_ONLY item="
+            . Config.rawStoneItemName . " count=0")
+        return true
     }
     workTargetPresent := ProbeWorkTarget(State.runMode, expectedGeneration)
     if !IsCurrentRun(expectedGeneration)
@@ -8352,7 +10230,18 @@ InitializeLocalVehicleRun(expectedGeneration) {
         ShowPage("vehicle")
         return false
     }
-    State.nextCapacityCheckAt := MonotonicMs() + Config.capacityCheckIntervalMs
+    criticalWasOn := A_IsCritical
+    if !criticalWasOn
+        Critical "On"
+    try {
+        if !IsCurrentRun(expectedGeneration)
+            return false
+        State.nextCapacityCheckAt := MonotonicMs()
+            + Config.capacityCheckIntervalMs
+    } finally {
+        if !criticalWasOn
+            Critical "Off"
+    }
     WriteDiagnostic("LOCAL_INVENTORY_BASELINE weight=" inventoryInfo.weight
         " max=" inventoryInfo.maxWeight " used=" inventoryInfo.used
         " slots=" inventoryInfo.slots)
@@ -8371,7 +10260,8 @@ VerifyStorageReduction(expectedGeneration, beforeInfo, &afterInfo,
         if !IsCurrentRun(expectedGeneration)
             return false
         if ParseInventorySnapshot(lastSnapshotResult, &candidateInfo) {
-            RecordConfirmedInventory(candidateInfo, "storage_verify")
+            RecordConfirmedInventory(candidateInfo, "storage_verify",
+                expectedGeneration)
             if InventorySnapshotWasReduced(candidateInfo, beforeInfo) {
                 afterInfo := candidateInfo
                 return true
@@ -8384,6 +10274,429 @@ VerifyStorageReduction(expectedGeneration, beforeInfo, &afterInfo,
     return false
 }
 
+VerifyStorageLedgerProgress(expectedGeneration, &afterInfo,
+    &lastSnapshotResult, &appliedUnits) {
+    global Config
+    afterInfo := 0
+    lastSnapshotResult := ""
+    appliedUnits := 0
+    deadline := MonotonicMs() + Config.storageVerifyTimeoutMs
+    while MonotonicMs() < deadline {
+        lastSnapshotResult := RunBackgroundBridgeCancelable(expectedGeneration,
+            "inventory-snapshot")
+        if !IsCurrentRun(expectedGeneration)
+            return false
+        if ParseInventorySnapshot(lastSnapshotResult, &candidateInfo) {
+            RecordConfirmedInventory(candidateInfo, "storage_ledger_verify",
+                expectedGeneration)
+            if !ReconcileActiveStorageDepositCheckpoint(expectedGeneration,
+                candidateInfo.items, &observedApplied, &remainingUnits) {
+                lastSnapshotResult := "ERROR LEDGER_RECONCILE"
+                return false
+            }
+            appliedUnits += observedApplied
+            receiptRemaining := StorageDepositCheckpointReceiptRemaining(
+                State.storageDepositCheckpoint)
+            if receiptRemaining = 0 {
+                afterInfo := candidateInfo
+                return true
+            }
+            if receiptRemaining < 0 {
+                lastSnapshotResult := "ERROR UNVERIFIED_DEPOSIT_RECEIPT"
+                return false
+            }
+            Sleep 140
+            continue
+        }
+        Sleep 180
+    }
+    return false
+}
+
+StorageCycleCleanupAllowed(expectedGeneration, currentGeneration, running) {
+    return running && expectedGeneration > 0
+        && expectedGeneration = currentGeneration
+}
+
+StorageCycleStillOwnsCleanup(expectedGeneration) {
+    global State
+    return StorageCycleCleanupAllowed(expectedGeneration, State.generation,
+        State.running)
+}
+
+WashingRefillReceiptDeltaStatus(beforeCount, observedCount, expectedMoved) {
+    if beforeCount < 0 || expectedMoved < 1
+        || beforeCount > 2147483647 - expectedMoved
+        return "INVALID"
+    expectedCount := beforeCount + expectedMoved
+    return observedCount = expectedCount ? "MATCH"
+        : observedCount >= beforeCount && observedCount < expectedCount
+            ? "PENDING" : "UNPAIRED"
+}
+
+WashingRefillAccountedTotalMatches(originalCount, currentCount,
+    verifiedUnits) {
+    return originalCount >= 0 && currentCount >= originalCount
+        && verifiedUnits >= 0 && currentCount - originalCount = verifiedUnits
+}
+
+VerifyRawStoneReceiptDelta(expectedGeneration, itemName, beforeCount,
+    expectedMoved, &afterInfo, &lastSnapshotResult, &failureReason) {
+    global Config
+    afterInfo := 0
+    lastSnapshotResult := ""
+    failureReason := ""
+    if WashingRefillReceiptDeltaStatus(beforeCount, beforeCount,
+        expectedMoved) = "INVALID" {
+        failureReason := "INVALID_RECEIPT_DELTA"
+        return false
+    }
+    expectedCount := beforeCount + expectedMoved
+    deadline := MonotonicMs() + Config.storageVerifyTimeoutMs
+    while MonotonicMs() < deadline {
+        lastSnapshotResult := RunBackgroundBridgeCancelable(expectedGeneration,
+            "inventory-snapshot")
+        if !IsCurrentRun(expectedGeneration)
+            return false
+        if ParseInventorySnapshot(lastSnapshotResult, &candidateInfo) {
+            candidateCount := InventorySpecNameCount(candidateInfo.items,
+                itemName)
+            deltaStatus := WashingRefillReceiptDeltaStatus(beforeCount,
+                candidateCount, expectedMoved)
+            if deltaStatus = "MATCH" {
+                afterInfo := candidateInfo
+                return true
+            }
+            if deltaStatus = "UNPAIRED" || deltaStatus = "INVALID" {
+                afterInfo := candidateInfo
+                failureReason := "UNPAIRED_DELTA"
+                return false
+            }
+            Sleep 140
+            continue
+        }
+        Sleep 180
+    }
+    failureReason := "RECEIPT_DELTA_TIMEOUT"
+    return false
+}
+
+ParseVerifiedWashingRefillReceipt(result, expectedStorageId,
+    expectedStorageType, &receipt) {
+    receipt := 0
+    result := Trim(String(result))
+    if !RegExMatch(result,
+        "^(WITHDRAWN|WITHDRAWN_PARTIAL) ([1-9][0-9]{0,6}) "
+        . "([1-9][0-9]{0,3}) ([A-Za-z0-9+/]+={0,2}) "
+        . "([A-Za-z0-9+/]+={0,2}) ([A-Za-z0-9_-]{1,64}) "
+        . "(COMPLETE|PARTIAL_[A-Z_]{2,48})$", &parts)
+        return false
+    moved := parts[2] + 0
+    stacks := parts[3] + 0
+    if parts[4] != expectedStorageId || parts[5] != expectedStorageType
+        || !IsValidBase64Token(parts[4]) || !IsValidBase64Token(parts[5])
+        || stacks > moved || stacks > 1000
+        || (parts[1] = "WITHDRAWN" && parts[7] != "COMPLETE")
+        || (parts[1] = "WITHDRAWN_PARTIAL"
+            && !InStr(parts[7], "PARTIAL_") = 1)
+        return false
+    receipt := {
+        moved: moved,
+        stacks: stacks,
+        storageId: parts[4],
+        storageType: parts[5],
+        operationToken: parts[6],
+        status: parts[7]
+    }
+    return true
+}
+
+WashingRefillReceiptOperationMatches(receipt, expectedOperationToken) {
+    return IsObject(receipt) && receipt.HasOwnProp("operationToken")
+        && RegExMatch(expectedOperationToken, "^[A-Za-z0-9_-]{1,64}$")
+        && receipt.operationToken = expectedOperationToken
+}
+
+WashingRefillErrorKind(result) {
+    result := Trim(String(result))
+    return result = "ERROR INVENTORY_CAPACITY" ? "CAPACITY"
+        : result = "ERROR RAW_STONE_NOT_FOUND" ? "SOURCE_EMPTY" : "ERROR"
+}
+
+WashingRefillFailureAction(result) {
+    result := Trim(String(result))
+    if StorageTransferResultIsAmbiguous(result)
+        return "STOP_AMBIGUOUS"
+    ; Only explicit results produced before a transfer, or a definitive false
+    ; swapItems response, may retry. Unknown/process errors fail closed because
+    ; the server may still apply an unobserved request after the bridge returns.
+    return result = "ERROR MOVE_REJECTED"
+        || result = "ERROR INVENTORY_CLOSED"
+        || result = "ERROR INVENTORY_UNAVAILABLE"
+        || result = "ERROR STORAGE_UNAVAILABLE"
+        || result = "ERROR CALLBACK_UNAVAILABLE"
+        ? "RETRY_ZERO" : "STOP_FATAL"
+}
+
+CommitVerifiedWashingRefill(expectedGeneration, info, originalCount,
+    verifiedUnits, requireIncrease, &afterInfo, &failureMessage,
+    &fatalFailure, proof) {
+    global State, Config
+    criticalWasOn := A_IsCritical
+    if !criticalWasOn
+        Critical "On"
+    try {
+        if !IsCurrentRun(expectedGeneration) || State.runMode != "washing"
+            || !State.storagePending || !State.storageOutputsVerified
+            return false
+        verifiedCount := InventorySpecNameCount(info.items,
+            Config.rawStoneItemName)
+        observedUnits := verifiedCount - originalCount
+        if requireIncrease {
+            if verifiedUnits < 1 || observedUnits != verifiedUnits {
+                failureMessage := "補充レシートと未洗浄石の増加量が一致しません"
+                fatalFailure := true
+                return false
+            }
+        } else if verifiedCount < Config.washRefillMaximum {
+            failureMessage := "設定した補充数へ到達していません"
+            return false
+        }
+        if CapacityNeedsStorage(info, &capacityReason, &freeWeight) {
+            failureMessage := "補充後の作業用空き容量を確保できませんでした"
+            fatalFailure := true
+            WriteDiagnostic("WASH_REFILL_RESERVE_FAILED reason="
+                . capacityReason . " free=" . freeWeight
+                . " proof=" . DiagnosticToken(proof))
+            return false
+        }
+        afterInfo := info
+        RecordConfirmedInventory(info, "washing_refill_commit",
+            expectedGeneration)
+        State.inventoryBaseline := info.items
+        State.inventoryBaselineWeight := info.weight
+        State.lastRawStoneCount := verifiedCount
+        State.storageRefillVerified := true
+        if requireIncrease {
+            State.washRefillTrips += 1
+            State.lastStorageResult := "洗浄結果を収納・未洗浄石を"
+                . observedUnits . "個補充"
+        }
+        WriteDiagnostic("WASH_REFILL_CONFIRMED item="
+            . Config.rawStoneItemName . " before=" . originalCount
+            . " after=" . verifiedCount . " verifiedUnits=" . verifiedUnits
+            . " weight=" . info.weight . " proof="
+            . DiagnosticToken(proof))
+        return true
+    } finally {
+        if !criticalWasOn
+            Critical "Off"
+    }
+}
+
+RefillWashingInputAtStorage(expectedGeneration, currentInfo, &afterInfo,
+    &failureMessage, &fatalFailure) {
+    global State, Config
+    afterInfo := currentInfo
+    failureMessage := ""
+    fatalFailure := false
+    if State.runMode != "washing" || !Config.rawStoneItemName
+        return true
+    if !RegExMatch(Config.rawStoneItemName, "^[A-Za-z0-9_-]{1,64}$") {
+        failureMessage := "未洗浄石の識別情報が壊れているため補充できません"
+        fatalFailure := true
+        return false
+    }
+
+    currentCount := InventorySpecNameCount(currentInfo.items,
+        Config.rawStoneItemName)
+    originalCount := currentCount
+    verifiedRefillUnits := 0
+    if currentCount >= Config.washRefillMaximum {
+        ; The live storage snapshot itself proves that the configured working
+        ; quantity is already present; no withdraw command is necessary.
+        return CommitVerifiedWashingRefill(expectedGeneration, currentInfo,
+            originalCount, 0, false, &afterInfo, &failureMessage,
+            &fatalFailure, "already_at_target")
+    }
+
+    Loop Config.storageMaxRetries {
+        if !IsCurrentRun(expectedGeneration)
+            return false
+        refillAttempt := A_Index
+        if refillAttempt > 1 {
+            liveResult := RunBackgroundBridgeCancelable(expectedGeneration,
+                "inventory-snapshot")
+            if !IsCurrentRun(expectedGeneration)
+                return false
+            if !ParseInventorySnapshot(liveResult, &liveInfo) {
+                WriteDiagnostic("WASH_REFILL_REOBSERVE_ERROR retry="
+                    . refillAttempt . " result=" . DiagnosticToken(liveResult))
+                Sleep 180
+                continue
+            }
+            liveCount := InventorySpecNameCount(liveInfo.items,
+                Config.rawStoneItemName)
+            if !WashingRefillAccountedTotalMatches(originalCount,
+                liveCount, verifiedRefillUnits) {
+                failureMessage := "補充レシートにない未洗浄石の増減を検知したため停止します"
+                fatalFailure := true
+                WriteDiagnostic("WASH_REFILL_UNPAIRED_REOBSERVE original="
+                    . originalCount . " observed=" . liveCount
+                    . " verified=" . verifiedRefillUnits)
+                return false
+            }
+            currentInfo := liveInfo
+            currentCount := liveCount
+        }
+        targetTotalCount := Min(1000000, Max(1, Config.washRefillMaximum))
+        ; Keep the post-refill snapshot below every configured departure threshold,
+        ; otherwise the next cycle would immediately return to storage without a
+        ; positive Farm delta. The bridge still computes the exact item count from
+        ; the live per-item weight and available slots.
+        reserveWeight := WashingRefillReserveWeight(currentInfo.maxWeight)
+        reserveSlots := WashingRefillReserveSlots(currentInfo.slots)
+        TransitionFarmState("REFILLING_INPUT", "未洗浄石を補充 "
+            . refillAttempt . "/" . Config.storageMaxRetries,
+            expectedGeneration, 0, true)
+        State.statusLabel.Text := BuildFarmProgressStatus(
+            "未洗浄の石を持てる限界まで補充しています（",
+            refillAttempt, Config.storageMaxRetries)
+        WriteDiagnostic("WASH_REFILL_REQUEST item=" . Config.rawStoneItemName
+            . " before=" . currentCount . " targetTotal=" . targetTotalCount
+            . " reserveWeight=" . reserveWeight
+            . " reserveSlots=" . reserveSlots . " retry=" . refillAttempt)
+        withdrawResult := RunBackgroundBridgeCancelable(expectedGeneration,
+            "withdraw-item", Config.vehicleStorageId,
+            Config.vehicleStorageType, Config.rawStoneItemName, targetTotalCount,
+            reserveWeight, reserveSlots)
+        if !IsCurrentRun(expectedGeneration)
+            return false
+
+        if ParseVerifiedWashingRefillReceipt(withdrawResult,
+            Config.vehicleStorageId, Config.vehicleStorageType,
+            &withdrawReceipt) {
+            receiptAction := StorageTransferReceiptAction(
+                withdrawReceipt.status, true)
+            TransitionFarmState("VERIFY_REFILL",
+                "荷台減少済みレシートと未洗浄石の増加を照合",
+                expectedGeneration, 0, true)
+            receiptMatched := VerifyRawStoneReceiptDelta(expectedGeneration,
+                Config.rawStoneItemName, currentCount, withdrawReceipt.moved,
+                &verifiedInfo, &verifiedSnapshot, &receiptFailure)
+            if !IsCurrentRun(expectedGeneration)
+                return false
+            WriteDiagnostic("WASH_REFILL_RECEIPT_VERIFY retry="
+                . refillAttempt . " token="
+                . DiagnosticToken(withdrawReceipt.operationToken)
+                . " status=" . withdrawReceipt.status
+                . " moved=" . withdrawReceipt.moved
+                . " matched=" . (receiptMatched ? 1 : 0)
+                . " failure=" . receiptFailure
+                . " snapshot=" . DiagnosticToken(verifiedSnapshot))
+            if !receiptMatched {
+                failureMessage := receiptFailure = "UNPAIRED_DELTA"
+                    ? "補充レシートと未洗浄石の増加量が一致しません"
+                    : "補充レシートの反映を確認できませんでした"
+                ; The bridge already proved a paired trunk decrease/player
+                ; increase. Never issue another transfer without reconciling it.
+                fatalFailure := true
+                return false
+            }
+            if verifiedRefillUnits > 2147483647 - withdrawReceipt.moved {
+                failureMessage := "補充レシートの合計が上限を超えました"
+                fatalFailure := true
+                return false
+            }
+            verifiedRefillUnits += withdrawReceipt.moved
+            newCount := InventorySpecNameCount(verifiedInfo.items,
+                Config.rawStoneItemName)
+            if !WashingRefillAccountedTotalMatches(originalCount,
+                newCount, verifiedRefillUnits) {
+                failureMessage := "複数の補充レシートと所持数が一致しません"
+                fatalFailure := true
+                return false
+            }
+            currentInfo := verifiedInfo
+            currentCount := newCount
+            if receiptAction = "STOP" || receiptAction = "INVALID" {
+                failureMessage := "補充要求の結果が確定できないため、安全のため停止します: "
+                    . withdrawReceipt.status
+                fatalFailure := true
+                WriteDiagnostic("WASH_REFILL_TERMINAL_RECEIPT status="
+                    . withdrawReceipt.status . " verified="
+                    . verifiedRefillUnits . " current=" . currentCount)
+                return false
+            }
+            if receiptAction = "COMPLETE"
+                || receiptAction = "COMMIT_EXACT" {
+                refillProofPrefix := receiptAction = "COMPLETE"
+                    ? "complete_receipt_" : "capacity_receipt_"
+                return CommitVerifiedWashingRefill(expectedGeneration,
+                    verifiedInfo, originalCount, verifiedRefillUnits, true,
+                    &afterInfo, &failureMessage, &fatalFailure,
+                    refillProofPrefix . withdrawReceipt.operationToken)
+            }
+            if receiptAction != "RETRY_EXACT" {
+                failureMessage := "補充レシートの状態を安全に判定できません"
+                fatalFailure := true
+                return false
+            }
+            failureMessage := "未洗浄石を一部補充しました。残量を再確認します"
+            WriteDiagnostic("WASH_REFILL_PARTIAL_ACCOUNTED total="
+                . verifiedRefillUnits . " current=" . currentCount)
+            if refillAttempt < Config.storageMaxRetries
+                Sleep 180
+            continue
+        }
+
+        errorKind := WashingRefillErrorKind(withdrawResult)
+        accountedExactly := verifiedRefillUnits > 0
+            && WashingRefillAccountedTotalMatches(originalCount,
+                currentCount, verifiedRefillUnits)
+        if (errorKind = "SOURCE_EMPTY" || errorKind = "CAPACITY")
+            && accountedExactly {
+            return CommitVerifiedWashingRefill(expectedGeneration,
+                currentInfo, originalCount, verifiedRefillUnits, true,
+                &afterInfo, &failureMessage, &fatalFailure,
+                errorKind = "SOURCE_EMPTY"
+                    ? "source_empty_after_partial"
+                    : "capacity_after_partial")
+        }
+        if errorKind = "SOURCE_EMPTY" {
+            failureMessage := "車両ストレージに未洗浄の石がありません"
+            fatalFailure := true
+            WriteDiagnostic(
+                "Stone Washing paused: no raw stone available in truck storage")
+            return false
+        }
+        if errorKind = "CAPACITY" {
+            failureMessage := "未洗浄石を補充できる安全な空き容量がありません"
+            fatalFailure := true
+            return false
+        }
+        failureAction := WashingRefillFailureAction(withdrawResult)
+        if failureAction != "RETRY_ZERO" {
+            failureMessage := failureAction = "STOP_AMBIGUOUS"
+                ? "補充要求の反映有無を確認できないため、二重取得を防いで停止します"
+                : "未洗浄石を安全に補充できません: "
+                    . DiagnosticToken(withdrawResult)
+            fatalFailure := true
+            WriteDiagnostic("WASH_REFILL_TERMINAL_RESULT action="
+                . failureAction . " result=" DiagnosticToken(withdrawResult))
+            return false
+        }
+        failureMessage := "未洗浄石の補充操作を開始できませんでした: "
+            . DiagnosticToken(withdrawResult)
+        if refillAttempt < Config.storageMaxRetries {
+            ; This branch is an explicit, definite-zero result only. The next
+            ; command still re-observes the exact accounted total first.
+            Sleep 180
+        }
+    }
+    return false
+}
+
 RunLocalVehicleStorageCycle(expectedGeneration, reuseStoragePose := false) {
     global State, Config
     if !IsCurrentRun(expectedGeneration)
@@ -8391,18 +10704,30 @@ RunLocalVehicleStorageCycle(expectedGeneration, reuseStoragePose := false) {
 
     protectedSnapshot := IsObject(State.storagePreSnapshot)
         ? State.storagePreSnapshot : State.confirmedInventory
+    ledgerUnits := PositiveInventoryCountTotal(State.farmOutputLedger)
+    refillOnlyDeparture := !reuseStoragePose && State.runMode = "washing"
+        && State.storageOutputsVerified
+        && State.storageReason = "raw_stone_empty"
+    verifiedRefillRecovery := reuseStoragePose && State.runMode = "washing"
+        && State.storageOutputsVerified && Config.rawStoneItemName != ""
+    ledgerSnapshotValid := IsObject(protectedSnapshot) && ledgerUnits > 0
+        && BuildFarmOutputProtectedBaseline(protectedSnapshot.items,
+            State.farmOutputLedger, &preflightBaseline, &preflightUnits,
+            &preflightFailure)
     if !IsObject(protectedSnapshot)
-        || !StorageDeltaBaselineIsSafe(State.inventoryBaseline,
-            protectedSnapshot.items) {
-        WriteDiagnostic("STORAGE_BASELINE_BLOCKED source=departure baseline="
-            DiagnosticToken(State.inventoryBaseline))
+        || (!ledgerSnapshotValid && !refillOnlyDeparture
+            && !verifiedRefillRecovery) {
+        WriteDiagnostic("STORAGE_LEDGER_BLOCKED source=departure reason="
+            (!IsObject(protectedSnapshot) ? "missing_snapshot"
+                : ledgerUnits <= 0 ? "empty_ledger" : preflightFailure)
+            " ledger=" ledgerUnits)
         StopAutomationWithFault(
-            "開始後に増えた持ち物を安全に特定できないため、車両へ移動せず停止しました",
+            "確定した作業報酬だけを安全に特定できないため、車両へ移動せず停止しました",
             "vehicle", "UNTRUSTED_STORAGE_BASELINE")
         return
     }
 
-    TransitionFarmState("OPENING_STORAGE", "近くの登録車両を探索",
+    TransitionFarmState("LOCATING_TRUCK", "近くの登録車両を探索",
         expectedGeneration, 0, true)
     State.statusLabel.Text := "近くの登録車両を探しています"
     WriteDiagnostic("LOCAL_STORAGE_TRIP_START trip=" (State.storageTrips + 1))
@@ -8455,79 +10780,285 @@ RunLocalVehicleStorageCycle(expectedGeneration, reuseStoragePose := false) {
         return
     }
 
-    depositOk := false
+    ; The storage probe only succeeds after the exact registered rightInventory id
+    ; and trunk type are visible, which is the observable arrival condition in
+    ; server-independent local mode. Never deposit merely because movement ended.
+    TransitionFarmState("VERIFY_TRUCK_REACHED",
+        "登録済み荷台との一致を確認", expectedGeneration, 0, true)
+    TransitionFarmState("OPENING_STORAGE",
+        "登録済み荷台を開いた状態を確認", expectedGeneration)
+
+    depositOk := State.storageOutputsVerified
+        && !FarmOutputLedgerHasPending(State.farmOutputLedger)
+    refillOk := true
     fatalDeposit := false
+    fatalRefill := false
     failureMessage := "収納後の所持量を確認できませんでした"
-    beforeAttempt := protectedSnapshot
+    refillFailureMessage := ""
+    postInfo := protectedSnapshot
+    depositedCount := 0
     try {
         if !ValidateServerEpochCheckpoint(expectedGeneration,
             "local_before_deposit") {
             failureMessage := "収納直前に接続状態が変わったため停止しました"
             fatalDeposit := true
         } else {
-            Loop Config.storageMaxRetries {
-                if !IsCurrentRun(expectedGeneration)
-                    return
-                State.storageRetryCount := A_Index
-                State.farmStateRetry := A_Index - 1
-                TransitionFarmState("STORING", "収納試行 " A_Index "/"
-                    Config.storageMaxRetries, expectedGeneration, 0, true)
-                State.statusLabel.Text := "増えた持ち物を収納しています（"
-                    A_Index "/" Config.storageMaxRetries "）"
-                depositResult := RunBackgroundBridgeCancelable(expectedGeneration,
-                    "deposit-delta", Config.vehicleStorageId,
-                    Config.vehicleStorageType, State.inventoryBaseline)
-                if !IsCurrentRun(expectedGeneration)
-                    return
-                TransitionFarmState("VERIFY_STORAGE", "収納後の減少を確認",
-                    expectedGeneration)
-                reduced := VerifyStorageReduction(expectedGeneration,
-                    beforeAttempt, &postInfo, &postResult)
-                if !IsCurrentRun(expectedGeneration)
-                    return
-                WriteDiagnostic("LOCAL_DEPOSIT_ATTEMPT retry=" A_Index
-                    " command=" depositResult " reduced=" (reduced ? 1 : 0)
-                    " snapshot=" postResult)
-                if reduced {
-                    remainingDelta := InventorySpecHasIncrease(postInfo.items,
-                        State.inventoryBaseline)
-                    stillFull := CapacityNeedsStorage(postInfo,
-                        &postCapacityReason, &postFreeWeight)
-                    if !remainingDelta && !stillFull {
-                        State.inventoryBaseline := postInfo.items
-                        depositOk := true
-                        depositedCount := RegExMatch(depositResult,
-                            "^DEPOSITED (\d+) (\d+)$", &depositParts)
-                            ? depositParts[1] + 0 : 1
-                        State.lastStorageResult := depositedCount "個以上を収納"
-                        break
-                    }
-                    beforeAttempt := postInfo
-                    failureMessage := remainingDelta
-                        ? "収納対象が残っているため再試行します"
-                        : "容量不足が続いているため再試行します"
+            if depositOk {
+                resumedSnapshot := RunBackgroundBridgeCancelable(expectedGeneration,
+                    "inventory-snapshot")
+                if !ParseInventorySnapshot(resumedSnapshot, &postInfo) {
+                    depositOk := false
+                    failureMessage := "収納済み所持品を再確認できませんでした"
                 } else {
-                    failureMessage := DepositFailureMessage(depositResult)
-                    if InStr(depositResult, "WRONG_STORAGE")
-                        || InStr(depositResult, "STORAGE_FULL") {
-                        fatalDeposit := true
-                        break
+                    RecordConfirmedInventory(postInfo,
+                        "storage_resume_verified", expectedGeneration)
+                    if FarmOutputLedgerHasPending(State.farmOutputLedger) {
+                        depositOk := false
+                        failureMessage := "収納復旧中に未収納の確定作業報酬を検出しました"
                     }
                 }
-                if A_Index < Config.storageMaxRetries {
-                    TransitionFarmState("STORING", "収納を再試行",
-                        expectedGeneration)
-                    Sleep 180
+            }
+            if !depositOk {
+                Loop Config.storageMaxRetries {
+                    if !IsCurrentRun(expectedGeneration)
+                        return
+                    State.storageRetryCount := A_Index
+                    State.farmStateRetry := A_Index - 1
+                    TransitionFarmState("STORING_OUTPUTS", "収納試行 " A_Index "/"
+                        Config.storageMaxRetries, expectedGeneration, 0, true)
+                    State.statusLabel.Text := BuildFarmProgressStatus(
+                        "確定した作業報酬を収納しています（", A_Index,
+                        Config.storageMaxRetries)
+
+                    ; Re-observe immediately before every command. This first
+                    ; reconciles a late completion from the one active checkpoint,
+                    ; then synthesizes a new baseline that protects every live unit
+                    ; except the exact remaining ledger quantities.
+                    liveSnapshotResult := RunBackgroundBridgeCancelable(
+                        expectedGeneration, "inventory-snapshot")
+                    if !IsCurrentRun(expectedGeneration)
+                        return
+                    if !ParseInventorySnapshot(liveSnapshotResult, &beforeAttempt) {
+                        failureMessage := "収納直前の所持品を再確認できませんでした"
+                        WriteDiagnostic("LOCAL_DEPOSIT_PRE_SNAPSHOT_ERROR retry="
+                            A_Index " result=" liveSnapshotResult)
+                    } else {
+                        RecordConfirmedInventory(beforeAttempt,
+                            "storage_ledger_before", expectedGeneration)
+                        if IsObject(State.storageDepositCheckpoint) {
+                            if !State.storageDepositCheckpoint.receiptVerified {
+                                failureMessage := "荷台側の増加を証明する収納レシートがないため停止しました"
+                                fatalDeposit := true
+                                break
+                            }
+                            if !ReconcileActiveStorageDepositCheckpoint(
+                                expectedGeneration, beforeAttempt.items,
+                                &lateApplied, &remainingBefore) {
+                                failureMessage := "収納台帳の遅延結果を照合できませんでした"
+                                fatalDeposit := true
+                                break
+                            }
+                            depositedCount += lateApplied
+                            receiptRemaining := StorageDepositCheckpointReceiptRemaining(
+                                State.storageDepositCheckpoint)
+                            if remainingBefore > 0 && receiptRemaining > 0 {
+                                ; A trusted bridge receipt already proved the paired
+                                ; registered-trunk increase. Wait only for the rest of
+                                ; that exact receipt to become visible in player state;
+                                ; never dispatch a second transfer for it.
+                                TransitionFarmState("VERIFY_STORAGE",
+                                    "検証済み収納レシートの反映待ち",
+                                    expectedGeneration, 0, true)
+                                receiptObserved := VerifyStorageLedgerProgress(
+                                    expectedGeneration, &postInfo, &postResult,
+                                    &continuedApplied)
+                                if !IsCurrentRun(expectedGeneration)
+                                    return
+                                depositedCount += continuedApplied
+                                remainingBefore := PositiveInventoryCountTotal(
+                                    State.farmOutputLedger)
+                                if !receiptObserved {
+                                    failureMessage := "検証済み収納レシートの所持品反映を確認できませんでした"
+                                    if InStr(postResult, "LEDGER_RECONCILE")
+                                        || InStr(postResult, "UNVERIFIED_DEPOSIT_RECEIPT") {
+                                        fatalDeposit := true
+                                        break
+                                    }
+                                    continue
+                                }
+                                beforeAttempt := postInfo
+                                if remainingBefore > 0 {
+                                    if !RetireCompletedStorageDepositCheckpoint(
+                                        expectedGeneration) {
+                                        failureMessage := "部分収納レシートを安全に完了できませんでした"
+                                        fatalDeposit := true
+                                        break
+                                    }
+                                }
+                            } else if remainingBefore > 0 {
+                                ; A fully reconciled PARTIAL receipt authorizes a
+                                ; fresh checkpoint for only the ledger remainder.
+                                if !RetireCompletedStorageDepositCheckpoint(
+                                    expectedGeneration) {
+                                    failureMessage := "収納レシートと未収納台帳の残量が一致しません"
+                                    fatalDeposit := true
+                                    break
+                                }
+                            }
+                        } else
+                            remainingBefore := PositiveInventoryCountTotal(
+                                State.farmOutputLedger)
+
+                        if remainingBefore = 0 {
+                            postInfo := beforeAttempt
+                            if !FinalizeVerifiedFarmOutputDeposit(
+                                expectedGeneration, postInfo) {
+                                failureMessage := "空になった収納台帳を確定できませんでした"
+                                fatalDeposit := true
+                                break
+                            }
+                            stillFull := State.runMode = "washing" ? false
+                                : CapacityNeedsStorage(postInfo,
+                                    &postCapacityReason, &postFreeWeight)
+                            if stillFull {
+                                depositOk := false
+                                fatalDeposit := true
+                                failureMessage := "作業報酬は収納しましたが、保護対象の持ち物で容量不足が続いています"
+                            } else
+                                depositOk := true
+                            break
+                        }
+
+                        if !BuildFarmOutputProtectedBaseline(beforeAttempt.items,
+                            State.farmOutputLedger, &protectedBaseline,
+                            &eligibleUnits, &baselineFailure) {
+                            failureMessage := "収納対象台帳と現在の所持品が一致しません（"
+                                . baselineFailure . "）"
+                            fatalDeposit := true
+                            break
+                        }
+                        if !BeginActiveStorageDepositCheckpoint(
+                            expectedGeneration, beforeAttempt.items) {
+                            failureMessage := "収納台帳のチェックポイントを開始できませんでした"
+                            fatalDeposit := true
+                            break
+                        }
+
+                        depositResult := RunBackgroundBridgeCancelable(
+                            expectedGeneration, "deposit-delta",
+                            Config.vehicleStorageId, Config.vehicleStorageType,
+                            protectedBaseline,
+                            State.storageDepositCheckpoint.authorizedSpec)
+                        if !IsCurrentRun(expectedGeneration)
+                            return
+                        if !BindActiveStorageDepositReceipt(expectedGeneration,
+                            depositResult, eligibleUnits, &receiptUnits,
+                            &receiptFailure) {
+                            ; ERROR/timeout/no-result is deliberately terminal. A
+                            ; player-only decrease cannot prove that the registered
+                            ; trunk gained the item, so it must never consume ledger.
+                            failureMessage := DepositFailureMessage(depositResult)
+                                . "（収納レシート: " . receiptFailure . "）"
+                            fatalDeposit := true
+                            WriteDiagnostic("LOCAL_DEPOSIT_RECEIPT_REJECTED retry="
+                                A_Index " result=" DiagnosticToken(depositResult)
+                                " reason=" receiptFailure)
+                            break
+                        }
+                        TransitionFarmState("VERIFY_STORAGE",
+                            "荷台増加済みレシートと台帳減少を照合",
+                            expectedGeneration)
+                        reduced := VerifyStorageLedgerProgress(
+                            expectedGeneration, &postInfo, &postResult,
+                            &appliedUnits)
+                        if !IsCurrentRun(expectedGeneration)
+                            return
+                        depositedCount += appliedUnits
+                        remainingAfter := PositiveInventoryCountTotal(
+                            State.farmOutputLedger)
+                        WriteDiagnostic("LOCAL_DEPOSIT_ATTEMPT retry=" A_Index
+                            " command=" depositResult
+                            " receiptUnits=" receiptUnits
+                            " ledgerApplied=" appliedUnits
+                            " ledgerRemaining=" remainingAfter
+                            " eligible=" eligibleUnits
+                            " snapshot=" postResult)
+                        if reduced && remainingAfter = 0 {
+                            if !FinalizeVerifiedFarmOutputDeposit(
+                                expectedGeneration, postInfo) {
+                                failureMessage := "収納後の空台帳を確定できませんでした"
+                                fatalDeposit := true
+                                break
+                            }
+                            stillFull := State.runMode = "washing" ? false
+                                : CapacityNeedsStorage(postInfo,
+                                    &postCapacityReason, &postFreeWeight)
+                            if stillFull {
+                                depositOk := false
+                                fatalDeposit := true
+                                failureMessage := "作業報酬は収納しましたが、保護対象の持ち物で容量不足が続いています"
+                            } else {
+                                depositOk := true
+                                State.lastStorageResult := depositedCount
+                                    . "個の確定報酬を収納"
+                            }
+                            break
+                        }
+                        if reduced {
+                            if !RetireCompletedStorageDepositCheckpoint(
+                                expectedGeneration) {
+                                failureMessage := "部分収納レシートを安全に完了できませんでした"
+                                fatalDeposit := true
+                                break
+                            }
+                            failureMessage := "部分収納済み。確定台帳の残量だけ再試行します"
+                        }
+                        else {
+                            failureMessage := "検証済み収納レシートの所持品反映を確認できませんでした"
+                            if InStr(postResult, "LEDGER_RECONCILE") {
+                                fatalDeposit := true
+                                break
+                            }
+                        }
+                    }
+                    if A_Index < Config.storageMaxRetries {
+                        TransitionFarmState("STORING_OUTPUTS", "収納を再試行",
+                            expectedGeneration)
+                        Sleep 180
+                    }
                 }
+            }
+            if depositOk && State.runMode = "washing"
+                && Config.rawStoneItemName {
+                refillOk := RefillWashingInputAtStorage(expectedGeneration,
+                    postInfo, &refilledInfo, &refillFailureMessage,
+                    &fatalRefill)
+                if refillOk
+                    postInfo := refilledInfo
             }
         }
     } catch as err {
-        failureMessage := "収納処理でエラーが発生しました"
+        if depositOk && State.runMode = "washing"
+            && Config.rawStoneItemName {
+            refillOk := false
+            refillFailureMessage := "未洗浄石の補充処理でエラーが発生しました"
+        } else
+            failureMessage := "収納処理でエラーが発生しました"
         WriteDiagnostic("LOCAL_STORAGE_CYCLE_ERROR=" err.Message)
     } finally {
-        ReleaseAllInputs()
-        releaseOk := ReleaseBackgroundTarget(true)
-        closeResult := RunBackgroundBridge("close-inventory")
+        ; F9 may interrupt a blocking bridge call and F8 may already own a newer
+        ; generation when this old stack unwinds. Only the exact live generation
+        ; may release inputs or close NUI; StopMining already cleaned the old run.
+        if StorageCycleStillOwnsCleanup(expectedGeneration) {
+            ReleaseAllInputs()
+            releaseOk := ReleaseBackgroundTarget(true)
+            closeResult := RunBackgroundBridge("close-inventory")
+        } else {
+            releaseOk := false
+            closeResult := "STALE_OWNER"
+            WriteDiagnostic("LOCAL_STORAGE_CLEANUP_SKIPPED staleGeneration="
+                expectedGeneration " currentGeneration=" State.generation)
+        }
     }
 
     if !IsCurrentRun(expectedGeneration)
@@ -8552,6 +11083,21 @@ RunLocalVehicleStorageCycle(expectedGeneration, reuseStoragePose := false) {
         return
     }
 
+    if !refillOk {
+        failureCode := InStr(refillFailureMessage, "ありません")
+            ? "RAW_STONE_NOT_FOUND" : "RAW_STONE_REFILL_FAILED"
+        StopAutomationWithFault(refillFailureMessage, "vehicle", failureCode)
+        return
+    }
+
+    if !StorageReturnAllowed(State.runMode, Config.rawStoneItemName != "",
+        State.storageRefillVerified) {
+        StopAutomationWithFault(
+            "未洗浄石の補充を所持品で確認できないため作業地点へ戻りません",
+            "vehicle", "RAW_STONE_REFILL_UNVERIFIED")
+        return
+    }
+
     CompleteVerifiedStorageReturn(expectedGeneration)
 }
 
@@ -8559,7 +11105,15 @@ CompleteVerifiedStorageReturn(expectedGeneration) {
     global State, Config
     if !IsCurrentRun(expectedGeneration)
         return false
-    TransitionFarmState("RETURNING_TO_FARM", "収納減少確認後に作業地点へ復帰",
+    if FarmOutputLedgerHasPending(State.farmOutputLedger) {
+        StopAutomationWithFault(
+            "未収納の確定作業報酬が台帳に残っているため作業地点へ戻りません",
+            "vehicle", "STORAGE_LEDGER_REMAINING")
+        return false
+    }
+    TransitionFarmState("LOCATING_FARM", "収納・補充確認後に元の作業地点を復元",
+        expectedGeneration, 0, true)
+    TransitionFarmState("RETURNING_TO_FARM", "元の作業地点へ復帰",
         expectedGeneration, 0, true)
     State.statusLabel.Text := "作業位置へ戻っています"
     poseRestored := RestoreLocalSearchPose(expectedGeneration,
@@ -8570,11 +11124,23 @@ CompleteVerifiedStorageReturn(expectedGeneration) {
         StopAutomationWithFault("作業位置へ安全に戻れないため停止しました", "vehicle")
         return false
     }
+    TransitionFarmState("VERIFY_FARM_REACHED", "往路の逆操作完了を確認",
+        expectedGeneration, 0, true)
     if !ValidateServerEpochCheckpoint(expectedGeneration, "local_work_return") {
         StopAutomationWithFault("収納中のサーバー再起動または再接続を検知しました",
             "vehicle")
         return false
     }
+    ; Storage/refill and the reversible return route are now independently proven.
+    ; Clear the storage objective before target recovery so a high-but-protected raw
+    ; stone baseline cannot send RECOVERY back to the truck a second time.
+    State.storagePending := false
+    State.storageStartPending := false
+    State.storagePreSnapshot := 0
+    State.storageRecoveryAttempted := false
+    State.recoveryAtStorage := false
+    WriteDiagnostic("LOCAL_FARM_RETURN_ROUTE_CONFIRMED refill="
+        . (State.storageRefillVerified ? 1 : 0))
     State.statusLabel.Text := "作業ボタンを再確認しています"
     workRecovered := RecoverLocalWorkTarget(expectedGeneration)
     if !IsCurrentRun(expectedGeneration)
@@ -8596,6 +11162,8 @@ CompleteVerifiedStorageReturn(expectedGeneration) {
     State.workpointProbeFailures := 0
     State.storagePending := false
     State.storageStartPending := false
+    State.storageOutputsVerified := false
+    State.storageRefillVerified := false
     State.storageRecoveryAttempted := false
     State.recoveryAtStorage := false
     State.resumeVerificationPending := true
@@ -8635,6 +11203,9 @@ FindRegisteredStorageNearby(expectedGeneration, &movementHistory,
         (pulse * 4) ":1", (pulse * 4) ":8", (pulse * 4) ":2"]
     nearbyViews := ["", "520:16", "440:80", "440:144", "820:16"]
     for movementRoute in movementSteps {
+        TransitionFarmState("MOVING_TO_TRUCK",
+            "登録車両を再観測しながら近距離移動 " . A_Index . "/"
+                . movementSteps.Length, expectedGeneration, 0, true)
         State.statusLabel.Text := "登録車両を近距離で再探索しています ("
             . A_Index "/" movementSteps.Length ")"
         if !PlayLocalRoute(expectedGeneration, movementRoute) {
@@ -8898,6 +11469,9 @@ EnsureDevConPort(preflightRelease := true) {
 }
 
 DepositFailureMessage(result) {
+    if InStr(result, "AMBIGUOUS_TRANSFER")
+        || InStr(result, "BRIDGE_TIMEOUT")
+        return "収納要求の反映有無を確認できないため、二重収納を防いで停止しました"
     if InStr(result, "WRONG_STORAGE")
         return "登録した車両と一致しないため、何も収納しませんでした"
     if InStr(result, "STORAGE_FULL")
@@ -8910,9 +11484,11 @@ DepositFailureMessage(result) {
 }
 
 FarmStateNameKnown(farmState) {
-    return InStr("|IDLE|FARMING|WASH_SETTLING|WASH_CORRECTING|WASH_VERIFYING|INVENTORY_CHECK|INVENTORY_FULL|"
-        . "STOPPING_FARM|OPENING_STORAGE|STORING|VERIFY_STORAGE|"
-        . "RETURNING_TO_FARM|RESUMING_FARM|RECOVERY|ERROR|",
+    return InStr("|IDLE|FARMING|WASH_SETTLING|WASH_CORRECTING|WASH_VERIFYING|CHECKING_INVENTORY|INVENTORY_CHECK|NEED_STORAGE|INVENTORY_FULL|"
+        . "STOPPING_FARM|LOCATING_TRUCK|MOVING_TO_TRUCK|VERIFY_TRUCK_REACHED|"
+        . "OPENING_STORAGE|STORING_OUTPUTS|STORING|VERIFY_STORAGE|"
+        . "REFILLING_INPUT|VERIFY_REFILL|LOCATING_FARM|RETURNING_TO_FARM|"
+        . "VERIFY_FARM_REACHED|RESUMING_FARM|VERIFY_FARM_RESUMED|RECOVERY|ERROR|",
         "|" farmState "|") != 0
 }
 
@@ -8934,20 +11510,29 @@ FarmFailureCode(message, farmState, recoveryReason := "",
     if !FarmStateNameKnown(farmState) || InStr(detail, "内部状態")
         || InStr(detail, "dispatcher_unhandled")
         return "UNKNOWN_STATE"
-    if farmState = "RETURNING_TO_FARM" || farmState = "RESUMING_FARM"
+    if farmState = "LOCATING_FARM" || farmState = "RETURNING_TO_FARM"
+        || farmState = "VERIFY_FARM_REACHED" || farmState = "RESUMING_FARM"
+        || farmState = "VERIFY_FARM_RESUMED"
         || InStr(detail, "作業位置へ安全に戻れない")
         return "FARM_RESUME_FAILED"
-    if farmState = "OPENING_STORAGE" || InStr(detail, "荷台")
+    if farmState = "LOCATING_TRUCK" || farmState = "MOVING_TO_TRUCK"
+        || farmState = "VERIFY_TRUCK_REACHED" || farmState = "OPENING_STORAGE"
+        || InStr(detail, "荷台")
         || InStr(detail, "登録車両の探索")
         || InStr(detail, "登録した車両と一致しない")
         return "STORAGE_UI_NOT_FOUND"
+    if farmState = "REFILLING_INPUT" || farmState = "VERIFY_REFILL"
+        || InStr(detail, "未洗浄石") || InStr(detail, "未洗浄の石")
+        return "RAW_STONE_REFILL_FAILED"
     if farmState = "VERIFY_STORAGE" || InStr(detail, "収納後")
         || InStr(detail, "減少を確認") || InStr(detail, "容量不足が続")
         return "STORAGE_VERIFY_FAILED"
-    if farmState = "STORING" || InStr(detail, "車両ストレージへ収納")
+    if farmState = "STORING_OUTPUTS" || farmState = "STORING"
+        || InStr(detail, "車両ストレージへ収納")
         || InStr(detail, "ストレージの容量")
         return "STORAGE_ACTION_FAILED"
-    if farmState = "INVENTORY_CHECK" || InStr(detail, "所持品")
+    if farmState = "CHECKING_INVENTORY" || farmState = "INVENTORY_CHECK"
+        || InStr(detail, "所持品")
         || InStr(detail, "インベントリ状態")
         return "INVENTORY_DETECTION_FAILED"
     if InStr(detail, "作業対象") || InStr(detail, "作業視点")
@@ -8959,17 +11544,27 @@ FarmFailureCode(message, farmState, recoveryReason := "",
 StopAutomationWithFault(message, pageName := "overview",
     faultCode := "FARM_FATAL") {
     global State
-    faultCode := FarmFailureCode(message, State.farmState,
-        State.recoveryReason, faultCode)
-    WriteDiagnostic("FARM_STOP code=" DiagnosticToken(faultCode)
-        " state=" State.farmState " reason=" DiagnosticToken(message))
-    State.lastStorageResult := message
-    State.farmStateLastError := message
-    StopMining()
-    TransitionFarmState("ERROR", message, 0, 0, true)
-    State.statusLabel.Text := message
-    ShowPage(pageName)
-    ShowMainWindow()
+    criticalWasOn := A_IsCritical
+    if !criticalWasOn
+        Critical "On"
+    try {
+        ; Bind the fault to the run/task that observed it.  StopMining validates
+        ; this token in the same critical claim that installs stopInProgress, so
+        ; a delayed old callback can never fault a later run (or turn a normal F9
+        ; stop into ERROR after its stack resumes).
+        if !State.running || State.stopInProgress
+            return false
+        expectedGeneration := State.generation
+        expectedTaskId := State.farmStateTaskId
+        resolvedCode := FarmFailureCode(message, State.farmState,
+            State.recoveryReason, faultCode)
+    } finally {
+        if !criticalWasOn
+            Critical "Off"
+    }
+    return StopMining({message: message, pageName: pageName,
+        faultCode: resolvedCode, expectedGeneration: expectedGeneration,
+        expectedTaskId: expectedTaskId})
 }
 
 EnsureBackgroundInventoryReady(expectedGeneration, &inventoryInfo) {
@@ -9053,6 +11648,13 @@ EnsureBackgroundInventoryReady(expectedGeneration, &inventoryInfo) {
 }
 
 AutomationCycle(expectedGeneration, expectedTaskId := 0) {
+    if !TryClaimFarmCallback(expectedGeneration, expectedTaskId)
+        return
+    try AutomationCycleOwned(expectedGeneration, expectedTaskId)
+    finally ReleaseFarmCallback()
+}
+
+AutomationCycleOwned(expectedGeneration, expectedTaskId := 0) {
     global State, Config
     if !IsCurrentFarmTask(expectedGeneration, expectedTaskId)
         return
@@ -9108,7 +11710,8 @@ AutomationCycle(expectedGeneration, expectedTaskId := 0) {
     if State.nextActionAt > MonotonicMs() {
         if MaybeHandleServerHealth(expectedGeneration)
             return
-        if !MaintainBackgroundWorkView(expectedGeneration)
+        if !WorkViewDownModeSupported(State.runMode)
+            && !MaintainBackgroundWorkView(expectedGeneration)
             return
         if MaybeHandleBackgroundEating(expectedGeneration)
             return
@@ -9122,14 +11725,17 @@ AutomationCycle(expectedGeneration, expectedTaskId := 0) {
     if MaybeHandleServerHealth(expectedGeneration)
         return
     if State.farmState = "FARMING" && Config.vehicleStorageEnabled {
-        TransitionFarmState("INVENTORY_CHECK", "定期所持品確認",
+        TransitionFarmState("CHECKING_INVENTORY", "定期所持品確認",
             expectedGeneration)
         if MaybeHandleVehicleCapacity(expectedGeneration)
             return
         if State.farmState != "FARMING"
             return
     }
-    if !MaintainBackgroundWorkView(expectedGeneration)
+    ; Washing/gold perform one explicit down alignment in their attempt function.
+    ; Do not stack the generic maintenance pulse immediately before that pulse.
+    if !WorkViewDownModeSupported(State.runMode)
+        && !MaintainBackgroundWorkView(expectedGeneration)
         return
     if MaybeHandleBackgroundEating(expectedGeneration)
         return
@@ -9142,7 +11748,8 @@ AutomationCycle(expectedGeneration, expectedTaskId := 0) {
 }
 
 FarmStateRequiresCapacityDispatch(farmState, storagePending) {
-    return farmState = "INVENTORY_CHECK"
+    return farmState = "CHECKING_INVENTORY"
+        || farmState = "INVENTORY_CHECK"
         || (farmState = "STOPPING_FARM" && storagePending)
 }
 
@@ -9155,12 +11762,13 @@ EnterFarmRecovery(expectedGeneration, returnState, reason) {
     WriteDiagnostic("FARM_RECOVERY code=" DiagnosticToken(reason)
         " from=" State.farmState " return=" returnState)
     State.farmStateRetry += 1
-    TransitionFarmState("RECOVERY", reason, expectedGeneration, 0, true)
-    ; Recovery begins by cancelling every owned input and stale pending action.
+    if !TransitionFarmState("RECOVERY", reason, expectedGeneration, 0, true)
+        return false
+    State.recoveryPreflightFailures := 0
+    ; The recovery cycle owns target release and inventory closure so every
+    ; failure is counted. Entry only cancels helpers and releases local inputs.
     CancelActiveBridgeProcess()
     ReleaseAllInputs()
-    ReleaseBackgroundTarget(true)
-    RunBackgroundBridge("close-inventory")
     ScheduleNext(expectedGeneration, 120)
     return true
 }
@@ -9198,7 +11806,7 @@ HandleFarmTargetMissing(expectedGeneration, actionMode) {
         return true
     }
     State.statusLabel.Text := "●  作業対象を再検出中（"
-        Round(lostFor / 1000, 1) "秒）"
+        . Round(lostFor / 1000, 1) . "秒）"
     ScheduleNext(expectedGeneration, Config.notFoundRetryMs)
     return true
 }
@@ -9218,7 +11826,8 @@ RunFarmRecoveryCycle(expectedGeneration, expectedTaskId) {
     }
     ReleaseAllInputs()
     if !ReleaseBackgroundTarget(true) {
-        ScheduleNext(expectedGeneration, 500)
+        HandleFarmRecoveryPreflightFailure(expectedGeneration,
+            expectedTaskId, "release_background_target", "INPUT_RELEASE")
         return
     }
     closeResult := RunBackgroundBridgeCancelable(expectedGeneration,
@@ -9226,10 +11835,11 @@ RunFarmRecoveryCycle(expectedGeneration, expectedTaskId) {
     if !IsCurrentFarmTask(expectedGeneration, expectedTaskId, "RECOVERY")
         return
     if closeResult != "CLOSED" {
-        WriteDiagnostic("FSM_RECOVERY_CLOSE result=" closeResult)
-        ScheduleNext(expectedGeneration, 500)
+        HandleFarmRecoveryPreflightFailure(expectedGeneration,
+            expectedTaskId, "close_inventory", closeResult)
         return
     }
+    State.recoveryPreflightFailures := 0
     ; A reward whose inventory delta is already frozen must finish its local WAL /
     ; outbox transaction even if the server epoch changes afterwards. It cannot be
     ; discarded as an unconfirmed game observation at this point.
@@ -9253,22 +11863,112 @@ RunFarmRecoveryCycle(expectedGeneration, expectedTaskId) {
         if !IsCurrentFarmTask(expectedGeneration, expectedTaskId, "RECOVERY")
             return
         if ParseInventorySnapshot(snapshotResult, &inventoryInfo) {
-            RecordConfirmedInventory(inventoryInfo, "storage_recovery")
-            reduced := IsObject(State.storagePreSnapshot)
-                && InventorySnapshotWasReduced(inventoryInfo,
-                    State.storagePreSnapshot)
-            remainingDelta := InventorySpecHasIncrease(inventoryInfo.items,
-                State.inventoryBaseline)
-            stillFull := CapacityNeedsStorage(inventoryInfo,
-                &capacityReason, &freeWeight)
-            WriteDiagnostic("FSM_STORAGE_RECOVERY reduced=" (reduced ? 1 : 0)
-                " remaining=" (remainingDelta ? 1 : 0)
+            RecordConfirmedInventory(inventoryInfo, "storage_recovery",
+                expectedGeneration)
+            ledgerApplied := 0
+            remainingLedgerUnits := PositiveInventoryCountTotal(
+                State.farmOutputLedger)
+            if IsObject(State.storageDepositCheckpoint) {
+                if !State.storageDepositCheckpoint.receiptVerified {
+                    StopAutomationWithFault(
+                        "荷台側の増加を証明する収納レシートがないため、遅延した所持品減少を採用せず停止しました",
+                        "vehicle", "UNVERIFIED_STORAGE_RECEIPT")
+                    return
+                }
+                if !ReconcileActiveStorageDepositCheckpoint(expectedGeneration,
+                    inventoryInfo.items, &ledgerApplied,
+                    &remainingLedgerUnits) {
+                    StopAutomationWithFault(
+                        "遅延した収納結果を確定報酬台帳と照合できないため停止しました",
+                        "vehicle", "STORAGE_LEDGER_RECONCILE_FAILED")
+                    return
+                }
+                if remainingLedgerUnits = 0 {
+                    if !FinalizeVerifiedFarmOutputDeposit(expectedGeneration,
+                        inventoryInfo) {
+                        StopAutomationWithFault(
+                            "遅延収納後の空台帳を確定できないため停止しました",
+                            "vehicle", "STORAGE_LEDGER_RECONCILE_FAILED")
+                        return
+                    }
+                } else if StorageDepositCheckpointReceiptRemaining(
+                    State.storageDepositCheckpoint) = 0 {
+                    ; Every unit in a trusted PARTIAL receipt is now reflected.
+                    ; Retire it before the bounded recovery issues a new command
+                    ; for only the still-authorized ledger remainder.
+                    if !RetireCompletedStorageDepositCheckpoint(
+                        expectedGeneration) {
+                        StopAutomationWithFault(
+                            "部分収納レシートを完了できないため停止しました",
+                            "vehicle", "STORAGE_LEDGER_RECONCILE_FAILED")
+                        return
+                    }
+                }
+            }
+            remainingDelta := remainingLedgerUnits > 0
+            reduced := ledgerApplied > 0 || State.storageOutputsVerified
+            stillFull := FarmModeNeedsStorage(State.runMode, inventoryInfo,
+                Config.rawStoneItemName, State.inventoryBaselineWeight,
+                &capacityReason, &freeWeight, &recoveryRawStoneCount)
+            if recoveryRawStoneCount >= 0
+                State.lastRawStoneCount := recoveryRawStoneCount
+            WriteDiagnostic("FSM_STORAGE_RECOVERY ledgerApplied=" ledgerApplied
+                " ledgerRemaining=" remainingLedgerUnits
+                " outputsVerified=" (State.storageOutputsVerified ? 1 : 0)
                 " full=" (stillFull ? 1 : 0)
                 " atStorage=" (State.recoveryAtStorage ? 1 : 0))
-            if State.recoveryAtStorage && reduced
-                && !remainingDelta && !stillFull {
+            if !remainingDelta && !State.storageOutputsVerified {
+                refillOnlyRecovery := IsVerifiedWashingRefillOnlyDeparture(
+                    State.runMode, State.storagePending,
+                    State.storageOutputsVerified, State.storageReason,
+                    recoveryRawStoneCount)
+                if !refillOnlyRecovery {
+                    StopAutomationWithFault(
+                        "収納できる確定作業報酬が台帳にないため、保護対象を動かさず停止しました",
+                        "vehicle", "UNTRUSTED_STORAGE_BASELINE")
+                    return
+                }
+            }
+            if State.recoveryAtStorage && !remainingDelta
+                && State.runMode != "washing" && stillFull {
+                StopAutomationWithFault(
+                    "作業報酬は収納済みですが、保護対象の持ち物で容量不足が続いています",
+                    "vehicle", "PROTECTED_INVENTORY_FULL")
+                return
+            }
+            storageRecoveryAction := StorageRecoverySnapshotAction(
+                State.recoveryAtStorage, reduced, remainingDelta, stillFull,
+                State.runMode, Config.rawStoneItemName != "")
+            if storageRecoveryAction = "RETURN"
+                || storageRecoveryAction = "REFILL" {
+                ; The single checkpoint has consumed every exact late reduction once.
+                ; Only now can the verified live snapshot become the next baseline.
+                State.inventoryBaseline := inventoryInfo.items
+                State.inventoryBaselineWeight := inventoryInfo.weight
+                State.storagePreSnapshot := inventoryInfo
+                State.storageOutputsVerified := true
+                State.storageRefillVerified := false
                 State.targetRecoveryAttempts := 0
-                CompleteVerifiedStorageReturn(expectedGeneration)
+                if storageRecoveryAction = "REFILL" {
+                    ; Re-open the same verified storage only once to finish washing
+                    ; input refill. This consumes the same bounded recovery slot as
+                    ; every other storage retry.
+                    if !TryClaimStorageRecoveryAttempt(expectedGeneration,
+                        expectedTaskId) {
+                        if !IsCurrentFarmTask(expectedGeneration,
+                            expectedTaskId, "RECOVERY")
+                            return
+                        StopAutomationWithFault(
+                            "収納復旧を1回試しても未洗浄石の補充を完了できないため停止しました",
+                            "vehicle", "STORAGE_RECOVERY_EXHAUSTED")
+                        return
+                    }
+                    TransitionFarmState("OPENING_STORAGE",
+                        "遅延収納を確認。未洗浄石の補充を再開",
+                        expectedGeneration, expectedTaskId)
+                    RunLocalVehicleStorageCycle(expectedGeneration, true)
+                } else
+                    CompleteVerifiedStorageReturn(expectedGeneration)
                 return
             }
             if !State.recoveryAtStorage && !remainingDelta && !stillFull {
@@ -9276,6 +11976,7 @@ RunFarmRecoveryCycle(expectedGeneration, expectedTaskId) {
                 ; an externally completed/late operation. Rebase the delta and use
                 ; the normal target recovery below; no vehicle return route exists.
                 State.inventoryBaseline := inventoryInfo.items
+                State.inventoryBaselineWeight := inventoryInfo.weight
                 State.storagePending := false
                 State.storageStartPending := false
                 State.storagePreSnapshot := 0
@@ -9288,18 +11989,30 @@ RunFarmRecoveryCycle(expectedGeneration, expectedTaskId) {
             WriteDiagnostic("FSM_STORAGE_RECOVERY_SNAPSHOT_ERROR attempt="
                 State.capacityProbeFailures " result=" snapshotResult)
             if State.capacityProbeFailures < 3 {
-                State.statusLabel.Text := "●  収納復旧の所持品を再確認中（"
-                    State.capacityProbeFailures "/3）"
+                State.statusLabel.Text := BuildFarmProgressStatus(
+                    "●  収納復旧の所持品を再確認中（",
+                    State.capacityProbeFailures, 3)
                 ScheduleNext(expectedGeneration, 500)
                 return
             }
         }
         if State.storagePending {
             ; Still full/unchanged (or three snapshots unavailable): remain in the
-            ; storage closed loop. Never transition through FARMING or emit a farm
-            ; input until a verified reduction clears storagePending.
+            ; storage closed loop. The normal storage cycle gets at most one clean
+            ; recovery restart; a second failure is terminal, so no timer can loop
+            ; forever and no Farm input can overlap the storage owner.
             State.capacityProbeFailures := 0
             atStorage := State.recoveryAtStorage
+            if !TryClaimStorageRecoveryAttempt(expectedGeneration,
+                expectedTaskId) {
+                if !IsCurrentFarmTask(expectedGeneration, expectedTaskId,
+                    "RECOVERY")
+                    return
+                StopAutomationWithFault(
+                    "収納を1回復旧しても安全な完了を確認できないため停止しました",
+                    "vehicle", "STORAGE_RECOVERY_EXHAUSTED")
+                return
+            }
             TransitionFarmState("OPENING_STORAGE", atStorage
                 ? "収納地点で荷台を再確認" : "容量不足のまま荷台を再探索",
                 expectedGeneration, expectedTaskId)
@@ -9308,7 +12021,15 @@ RunFarmRecoveryCycle(expectedGeneration, expectedTaskId) {
         }
     }
     if State.targetRecoveryAttempts >= 3 {
-        StopAutomationWithFault("実際の視点入力後も作業対象を3回確認できないため停止しました")
+        restartReason := "target_not_found_after_three_view_recoveries"
+        restarted := RestartFarmAfterRecoveryExhausted(expectedGeneration,
+            restartReason)
+        if !IsCurrentFarmTask(expectedGeneration, expectedTaskId, "RECOVERY")
+            return
+        if restarted
+            return
+        StopAutomationWithFault(
+            "視点を含む一度の安全な再始動後も作業対象を確認できないため停止しました")
         return
     }
     cameraDispatched := Config.workViewLock
@@ -9322,11 +12043,11 @@ RunFarmRecoveryCycle(expectedGeneration, expectedTaskId) {
     State.targetRecoveryAttempts += 1
     recoveryAttempt := State.targetRecoveryAttempts
     if cameraDispatched {
-        State.statusLabel.Text := "●  視点入力後の作業対象を確認中（"
-            recoveryAttempt "/3）"
+        State.statusLabel.Text := BuildFarmProgressStatus(
+            "●  視点入力後の作業対象を確認中（", recoveryAttempt, 3)
     } else {
-        State.statusLabel.Text := "●  作業対象を自動復旧中（"
-            recoveryAttempt "/3）"
+        State.statusLabel.Text := BuildFarmProgressStatus(
+            "●  作業対象を自動復旧中（", recoveryAttempt, 3)
     }
     Critical "Off"
     ; 最初の2回は視点だけを検証します。3回目だけ境界付き位置補正へ進み、
@@ -9352,7 +12073,140 @@ RunFarmRecoveryCycle(expectedGeneration, expectedTaskId) {
     ScheduleNext(expectedGeneration, 100)
 }
 
-MaintainBackgroundWorkView(expectedGeneration, force := false) {
+RecoveryRestartAllowed(restartCount, restartPending) {
+    return restartCount < 1 && !restartPending
+}
+
+RecoveryPreflightAction(failureCount, restartCount, restartPending) {
+    if failureCount < 3
+        return "RETRY"
+    return RecoveryRestartAllowed(restartCount, restartPending)
+        ? "RESTART" : "STOP"
+}
+
+HandleFarmRecoveryPreflightFailure(expectedGeneration, expectedTaskId,
+    reason, detail := "") {
+    global State
+    Critical "On"
+    if !IsCurrentFarmTask(expectedGeneration, expectedTaskId, "RECOVERY") {
+        Critical "Off"
+        return true
+    }
+    State.recoveryPreflightFailures += 1
+    failureCount := State.recoveryPreflightFailures
+    restartCount := State.recoveryRestartCount
+    restartPending := State.recoveryRestartPending
+    Critical "Off"
+
+    WriteDiagnostic("FARM_RECOVERY_PREFLIGHT_ERROR reason="
+        . DiagnosticToken(reason) . " attempt=" . failureCount . "/3 detail="
+        . DiagnosticToken(detail))
+    action := RecoveryPreflightAction(failureCount, restartCount,
+        restartPending)
+    if action = "RETRY" {
+        State.statusLabel.Text := BuildFarmProgressStatus(
+            "●  復旧前の入力・画面解放を再確認中（", failureCount, 3)
+        ScheduleNext(expectedGeneration, 500)
+        return true
+    }
+    if action = "RESTART" {
+        restarted := RestartFarmAfterRecoveryExhausted(expectedGeneration,
+            "preflight_" reason)
+        if restarted
+            return true
+        if !IsCurrentFarmTask(expectedGeneration, expectedTaskId, "RECOVERY")
+            return true
+    }
+    if IsCurrentFarmTask(expectedGeneration, expectedTaskId, "RECOVERY") {
+        StopAutomationWithFault(
+            "入力・画面の解放を3回確認し、同モードを一度再始動しても復旧できないため停止しました",
+            "overview", "RECOVERY_PREFLIGHT_EXHAUSTED")
+    }
+    return true
+}
+
+RestartFarmAfterRecoveryExhausted(expectedGeneration, reason) {
+    global State
+    expectedTaskId := 0
+    runMode := ""
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        if !IsCurrentFarmTask(expectedGeneration, 0, "RECOVERY")
+            return false
+        if !RecoveryRestartAllowed(State.recoveryRestartCount,
+            State.recoveryRestartPending)
+            return false
+        ; A proven reward is never discarded/replayed to recover a view. The WAL
+        ; reconciliation path above owns it until the same event ID is durable.
+        if FarmAttemptRequiresDurabilityHold(State.pendingFarmAttempt)
+            return false
+        State.recoveryRestartPending := true
+        State.recoveryRestartCount += 1
+        expectedTaskId := State.farmStateTaskId
+        runMode := State.runMode
+        WriteDiagnostic("FARM_RECOVERY_RESTART_BEGIN mode=" runMode
+            " reason=" DiagnosticToken(reason))
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+
+    ; This is an in-session dispatcher restart, not a new Farm/metagame session.
+    ; Stable reward IDs and all pending completion evidence therefore remain intact.
+    CancelActiveBridgeProcess()
+    ReleaseAllInputs()
+    targetReleased := ReleaseBackgroundTarget(true)
+    if !IsCurrentFarmTask(expectedGeneration, expectedTaskId, "RECOVERY")
+        return true
+    closeResult := targetReleased
+        ? RunBackgroundBridgeCancelable(expectedGeneration, "close-inventory")
+        : "ERROR INPUT_RELEASE"
+    if !IsCurrentFarmTask(expectedGeneration, expectedTaskId, "RECOVERY")
+        return true
+    if !targetReleased || closeResult != "CLOSED" {
+        WriteDiagnostic("FARM_RECOVERY_RESTART_RELEASE_ERROR target="
+            (targetReleased ? 1 : 0) " close=" DiagnosticToken(closeResult))
+        return false
+    }
+
+    transitionOk := false
+    criticalWasOn := EnterMetagameOutboxCritical()
+    try {
+        if !IsCurrentFarmTask(expectedGeneration, expectedTaskId, "RECOVERY")
+            || !State.recoveryRestartPending || State.recoveryRestartCount != 1
+            || State.runMode != runMode
+            return true
+        State.targetRecoveryAttempts := 0
+        State.targetLostSince := 0
+        State.workViewStatus := "UNKNOWN"
+        State.lastWorkViewAt := 0
+        State.lastWorkViewVerifiedAt := 0
+        State.workViewFailures := 0
+        State.workViewNoEffectCount := 0
+        State.lastTargetProbeResult := ""
+        State.lastTargetProbeFatal := false
+        State.farmWatchdogAt := MonotonicMs()
+        ResetWashCompletionRecoveryState()
+        if runMode = "gold"
+            ResetGoldRecoveryState()
+        returnState := State.recoveryReturnState = "RESUMING_FARM"
+            ? "RESUMING_FARM" : "FARMING"
+        transitionOk := TransitionFarmState(returnState,
+            "視点復旧上限から同モードを一度だけ安全再始動",
+            expectedGeneration, expectedTaskId)
+        if !transitionOk
+            return false
+        State.recoveryRestartPending := false
+        State.statusLabel.Text := "●  入力を全解放し、" . BackgroundActionDisplayName(runMode)
+            . "を一度だけ再始動します"
+        WriteDiagnostic("FARM_RECOVERY_RESTARTED mode=" runMode
+            " count=" State.recoveryRestartCount)
+    } finally LeaveMetagameOutboxCritical(criticalWasOn)
+    if !transitionOk
+        return false
+    ScheduleNext(expectedGeneration, 120)
+    return true
+}
+
+MaintainBackgroundWorkView(expectedGeneration, force := false,
+    ignoreVerifiedTarget := false) {
     global State, Config
     if !Config.workViewLock
         return true
@@ -9361,6 +12215,7 @@ MaintainBackgroundWorkView(expectedGeneration, force := false) {
     ; mouse input while that observation is still valid; correction is event-driven
     ; only after an actual MISSING probe records targetLostSince.
     if State.workViewStatus = "TARGET_OK" && !State.targetLostSince
+        && !ignoreVerifiedTarget
         return true
     if !force && State.workViewStatus != "WAIT_FG"
         && State.workViewStatus != "FAILED" && State.lastWorkViewAt
@@ -9370,10 +12225,10 @@ MaintainBackgroundWorkView(expectedGeneration, force := false) {
     if !IsCurrentRun(expectedGeneration)
         return false
 
-    ; FiveM/GTAのカメラは相対マウス軸です。DevConへ +look_down の文字列を
-    ; 書けたことはカメラ移動の証明にならないため、視点には使用しません。
-    ; 別アプリが前面のときにSendInputするとそのアプリを操作してしまうので、
-    ; FiveMが前面へ戻るまで保留し、force時だけcycleを待機させます。
+    ; FiveM/GTAのカメラは相対マウス軸です。前面時は物理的な
+    ; SendInputを使い、別アプリが前面のバックグラウンド動作では
+    ; DevConの期限付きlook_down routeを使います。後者もhelperが入力前後に
+    ; 全解放し、呼び出し元が実targetを再観測してはじめて成功扱いします。
     if !State.targetHwnd || !WinExist("ahk_id " State.targetHwnd) {
         State.workViewStatus := "FAILED"
         State.workViewFailures += 1
@@ -9390,6 +12245,10 @@ MaintainBackgroundWorkView(expectedGeneration, force := false) {
     }
 
     if !WinActive("ahk_id " State.targetHwnd) {
+        if Config.backgroundMode && (force || State.targetLostSince) {
+            return SendBackgroundCameraDown(expectedGeneration,
+                Config.workViewDownPulseMs)
+        }
         State.workViewStatus := "WAIT_FG"
         WriteDiagnostic("CAMERA_WAIT_FOREGROUND force=" (force ? 1 : 0))
         if force || State.targetLostSince {
@@ -9471,6 +12330,127 @@ MaintainBackgroundWorkView(expectedGeneration, force := false) {
         " duration=" Config.workViewDownPulseMs
         " verified=0 mode=" runMode)
     return true
+}
+
+EnsureWorkViewDown(expectedGeneration, mode, force := false) {
+    global State, Config
+    Critical "On"
+    if !WorkViewDownModeSupported(mode)
+        || !IsCurrentRun(expectedGeneration) || State.runMode != mode {
+        Critical "Off"
+        return false
+    }
+    if !Config.workViewLock {
+        Critical "Off"
+        return true
+    }
+    ; Washing and gold-panning targets are below the character. A normal verified
+    ; target suppresses periodic drift, but an explicit per-action alignment must
+    ; still drive the pitch to GTA's lower clamp before this cycle's click.
+    State.statusLabel.Text := "●  " . BackgroundActionDisplayName(mode)
+        . "の視点を真下へ整えています"
+    ; Recovery may temporarily reverse its exploratory direction. A normal washing /
+    ; gold attempt always returns to the user's configured down direction.
+    State.workViewDirection := Config.workViewMouseDirection
+    Critical "Off"
+    aligned := MaintainBackgroundWorkView(expectedGeneration, true, force)
+    if !aligned || !IsCurrentRun(expectedGeneration)
+        return false
+
+    ; Input acceptance is not target proof. The immediately following try-washing /
+    ; try-gold helper performs target discovery and click in one bound CDP session,
+    ; so a separate ProbeWorkTarget here only duplicated the expensive frame scan.
+    WriteDiagnostic("WORK_VIEW_DOWN mode=" mode " force=" (force ? 1 : 0)
+        " verified=0 proof=deferred_to_try adapter="
+        (WinActive("ahk_id " State.targetHwnd)
+            ? "sendinput-relative" : "devcon-route"))
+    return true
+}
+
+SendBackgroundCameraDown(expectedGeneration, durationMs) {
+    global State, Config
+    if !Config.backgroundMode || !IsCurrentRun(expectedGeneration)
+        return false
+    portReady := EnsureDevConPort(false)
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    if !portReady {
+        Critical "On"
+        if !IsCurrentRun(expectedGeneration) {
+            Critical "Off"
+            return false
+        }
+        State.workViewStatus := "FAILED"
+        State.workViewFailures += 1
+        failures := State.workViewFailures
+        Critical "Off"
+        WriteDiagnostic("CAMERA_BACKGROUND_PORT_ERROR failures="
+            failures)
+        return HandleWorkViewDispatchFailure(expectedGeneration, failures,
+            "background_view_port_unavailable")
+    }
+    port := State.lastDevConPort
+    route := BackgroundCameraDownRoute(durationMs)
+    duration := SubStr(route, 1, InStr(route, ":") - 1) + 0
+    result := RunBackgroundBridgeCancelable(expectedGeneration,
+        "play-route-health", port, route, State.serverEpoch)
+    if !IsCurrentRun(expectedGeneration)
+        return false
+    if result != "ROUTE " port " " duration {
+        Critical "On"
+        if !IsCurrentRun(expectedGeneration) {
+            Critical "Off"
+            return false
+        }
+        State.lastDevConPort := 0
+        State.workViewStatus := "FAILED"
+        State.workViewFailures += 1
+        failures := State.workViewFailures
+        Critical "Off"
+        WriteDiagnostic("CAMERA_BACKGROUND_INPUT_ERROR failures="
+            failures " result=" DiagnosticToken(result))
+        return HandleWorkViewDispatchFailure(expectedGeneration, failures,
+            "background_view_input_failed")
+    }
+    Critical "On"
+    if !IsCurrentRun(expectedGeneration) {
+        Critical "Off"
+        return false
+    }
+    State.lastWorkViewAt := MonotonicMs()
+    State.workViewStatus := "INPUT_SENT"
+    runMode := State.runMode
+    Critical "Off"
+    WriteDiagnostic("CAMERA_INPUT_SENT adapter=devcon-route mask=32 duration="
+        duration " verified=0 mode=" runMode)
+    return true
+}
+
+HandleWorkViewDispatchFailure(expectedGeneration, failures, reason) {
+    global State, Config
+    if failures < 3 {
+        ScheduleNext(expectedGeneration, Config.notFoundRetryMs)
+        return false
+    }
+    ; Three failed dispatches inside RECOVERY must reach the same bounded-restart
+    ; gate as three successful-but-ineffective camera pulses. Do not recursively
+    ; re-enter RECOVERY with a new task forever when DevCon itself is unavailable.
+    Critical "On"
+    if !IsCurrentRun(expectedGeneration) {
+        Critical "Off"
+        return false
+    }
+    alreadyRecovering := State.farmState = "RECOVERY"
+    returnState := State.farmState = "RESUMING_FARM"
+        ? "RESUMING_FARM" : "FARMING"
+    if alreadyRecovering
+        State.targetRecoveryAttempts := Max(3, State.targetRecoveryAttempts)
+    Critical "Off"
+    if alreadyRecovering
+        ScheduleNext(expectedGeneration, 1)
+    else
+        EnterFarmRecovery(expectedGeneration, returnState, reason)
+    return false
 }
 
 SendForegroundCameraDown(expectedGeneration, durationMs, stepPixels, direction := -1) {
@@ -9958,7 +12938,7 @@ RunWashCompletionRecoveryCycle(expectedGeneration, expectedTaskId) {
         remaining := State.washSettleDeadline - MonotonicMs()
         if remaining > 0 {
             State.statusLabel.Text := "●  洗浄完了。後退が止まるまで待機中（"
-                Ceil(remaining / 100) / 10 "秒）"
+                . (Ceil(remaining / 100) / 10) . "秒）"
             ScheduleNext(expectedGeneration, remaining)
             return
         }
@@ -9986,6 +12966,28 @@ RunWashCompletionRecoveryCycle(expectedGeneration, expectedTaskId) {
             expectedTaskId)
             return
         ScheduleNext(expectedGeneration, 1)
+        return
+    }
+
+    ; A consumed final raw stone legitimately removes the wash option. Treat that
+    ; inventory fact as the workflow trigger instead of misclassifying the missing
+    ; button as a camera failure and looping in visual recovery.
+    if Config.rawStoneItemName && State.lastRawStoneCount = 0 {
+        WriteDiagnostic("WASH_INPUT_EMPTY_AFTER_SETTLE item="
+            . Config.rawStoneItemName . " next=CHECKING_INVENTORY")
+        ResetWashCompletionRecoveryState()
+        if !Config.vehicleStorageEnabled {
+            StopAutomationWithFault(
+                "未洗浄の石がなくなりましたが、自動収納が無効なため停止しました",
+                "vehicle", "RAW_STONE_NOT_FOUND")
+            return
+        }
+        State.nextCapacityCheckAt := 0
+        if !TransitionFarmState("CHECKING_INVENTORY",
+            "未洗浄石0を確認。収納と補充へ移行", expectedGeneration,
+            expectedTaskId)
+            return
+        MaybeHandleVehicleCapacity(expectedGeneration)
         return
     }
 
@@ -10046,7 +13048,7 @@ RunWashCompletionRecoveryCycle(expectedGeneration, expectedTaskId) {
     ; latch before physical input, then re-probe on the next cycle. Never stack
     ; additional camera pulses for the same completed washing reward.
     if !State.washCameraRestoreSent {
-        if !IsTargetForeground(expectedGeneration) {
+        if !Config.backgroundMode && !IsTargetForeground(expectedGeneration) {
             State.statusLabel.Text := "●  FiveMを前面にすると洗浄視点を復旧します"
             MaintainBackgroundWorkView(expectedGeneration, true)
             return
@@ -10072,8 +13074,8 @@ RunWashCompletionRecoveryCycle(expectedGeneration, expectedTaskId) {
             "wash_post_completion_target_missing")
         return
     }
-    State.statusLabel.Text := "●  洗浄対象の再表示を確認中（"
-        verificationAttempt "/3）"
+    State.statusLabel.Text := BuildFarmProgressStatus(
+        "●  洗浄対象の再表示を確認中（", verificationAttempt, 3)
     ScheduleNext(expectedGeneration, 350)
 }
 
@@ -10111,6 +13113,8 @@ CompleteVerifiedFarmReward(expectedGeneration, actionMode, completionAt,
     ; validate the exact frozen attempt before one atomic visible-state commit, so
     ; a late callback from F9 -> F8 cannot increment/discard the new run.
     startWashRecovery := false
+    learnedRawStoneName := ""
+    ledgerAddedUnits := 0
     criticalWasOn := EnterMetagameOutboxCritical()
     try {
         if !IsCurrentRun(expectedGeneration)
@@ -10129,6 +13133,14 @@ CompleteVerifiedFarmReward(expectedGeneration, actionMode, completionAt,
             return false
         confirmedInfo := attempt.rewardConfirmedInfo
         rewardReason := attempt.rewardConfirmationReason
+        if !attempt.HasOwnProp("outputLedgerCommitted")
+            attempt.outputLedgerCommitted := false
+        if !attempt.outputLedgerCommitted {
+            if !AccumulateVerifiedFarmOutputLedger(State.farmOutputLedger,
+                attempt.before.items, confirmedInfo.items, &ledgerAddedUnits)
+                return false
+            attempt.outputLedgerCommitted := true
+        }
         confirmedAt := MonotonicMs()
         ResetActionCompletionState()
         State.successes += 1
@@ -10140,6 +13152,17 @@ CompleteVerifiedFarmReward(expectedGeneration, actionMode, completionAt,
             State.nextCapacityCheckAt := 0
         State.targetLostSince := 0
         State.targetRecoveryAttempts := 0
+        ; A verified reward ends the current no-result recovery episode. A later,
+        ; independent target loss may use its own single safe dispatcher restart.
+        State.recoveryRestartCount := 0
+        State.recoveryRestartPending := false
+
+        ; Learn the real unwashed-stone item id only from one verified washing
+        ; transaction. A unique decrease in the before/after snapshots is stronger
+        ; evidence than a translated label or a guessed server-specific item name.
+        if actionMode = "washing"
+            learnedRawStoneName := LearnRawStoneItemFromVerifiedWash(
+                attempt.before, confirmedInfo)
 
         DiscardPendingFarmAttempt("reward_confirmed")
 
@@ -10150,6 +13173,9 @@ CompleteVerifiedFarmReward(expectedGeneration, actionMode, completionAt,
             transitionReason := wasResume
                 ? "収納後の実報酬を確認: " rewardReason
                 : "遅延した実報酬を確認: " rewardReason
+            if wasResume
+                TransitionFarmState("VERIFY_FARM_RESUMED", transitionReason,
+                    expectedGeneration, 0, true)
             if !TransitionFarmState("FARMING", transitionReason,
                 expectedGeneration)
                 return false
@@ -10168,6 +13194,8 @@ CompleteVerifiedFarmReward(expectedGeneration, actionMode, completionAt,
             actionMode " elapsed=" completionElapsedMs
             " bundled=" completionWasBundled
             " reward=" rewardReason " revision=" confirmedInfo.revision
+            " ledgerAdded=" ledgerAddedUnits " ledgerPending="
+            PositiveInventoryCountTotal(State.farmOutputLedger)
             " reconcile=" (completionAt < confirmedAt - 1000 ? 1 : 0)
             " clickAge=" (State.lastMineAt ? confirmedAt - State.lastMineAt : -1))
         startWashRecovery := actionMode = "washing"
@@ -10175,6 +13203,16 @@ CompleteVerifiedFarmReward(expectedGeneration, actionMode, completionAt,
             State.statusLabel.Text := "●  " BackgroundActionDisplayName(actionMode)
                 . "完了。次の作業を確認します"
     } finally LeaveMetagameOutboxCritical(criticalWasOn)
+    if learnedRawStoneName {
+        try {
+            SaveAllSettingsAtomically()
+            WriteDiagnostic("WASH_RAW_STONE_SAVED item=" learnedRawStoneName)
+        } catch as err {
+            ; Keep the verified in-memory identity for this run, but make persistence
+            ; failure explicit. It must not roll back or duplicate a durable reward.
+            WriteDiagnostic("WASH_RAW_STONE_SAVE_ERROR=" DiagnosticToken(err.Message))
+        }
+    }
     ; Timer/input side effects happen after the atomic visible commit. Both paths
     ; revalidate generation ownership, so an intervening F9 cannot touch a new run.
     if startWashRecovery
@@ -10304,12 +13342,19 @@ WashAttemptBackground(expectedGeneration) {
         State.statusLabel.Text := "●  FiveMが終了したため停止"
         return
     }
-
     State.attempts += 1
     if !CaptureFarmAttemptBaseline(expectedGeneration, "washing") {
         EnterFarmRecovery(expectedGeneration,
             State.farmState = "RESUMING_FARM" ? "RESUMING_FARM" : "FARMING",
             "wash_reward_baseline_unavailable")
+        return
+    }
+    ; Inventory capture may take long enough for the game camera to drift.  Make
+    ; the real, verified down pulse the final operation immediately before the
+    ; atomic target scan/click, on every single washing attempt.
+    if !EnsureWorkViewDown(expectedGeneration, "washing", true) {
+        if IsCurrentRun(expectedGeneration)
+            DiscardPendingFarmAttempt("washing_view_down_failed")
         return
     }
     State.statusLabel.Text := "●  「石を洗う」を確認中"
@@ -10464,12 +13509,18 @@ GoldAttemptBackground(expectedGeneration) {
         State.statusLabel.Text := "●  FiveMが終了したため停止"
         return
     }
-
     State.attempts += 1
     if !CaptureFarmAttemptBaseline(expectedGeneration, "gold") {
         EnterFarmRecovery(expectedGeneration,
             State.farmState = "RESUMING_FARM" ? "RESUMING_FARM" : "FARMING",
             "gold_reward_baseline_unavailable")
+        return
+    }
+    ; Keep camera alignment adjacent to the actual scan/click.  Doing this before
+    ; the inventory baseline let a slow NUI snapshot undo the alignment.
+    if !EnsureWorkViewDown(expectedGeneration, "gold", true) {
+        if IsCurrentRun(expectedGeneration)
+            DiscardPendingFarmAttempt("gold_view_down_failed")
         return
     }
     ; 毎回まず現在位置を検査します。bridgeが同じCDPセッションでtargetを
@@ -10654,8 +13705,9 @@ MineAttempt(expectedGeneration) {
                         WriteDiagnostic("attempt=" State.attempts
                             " CYCLE_RESYNC elapsed=" elapsedSinceClick)
                     } else {
-                        State.statusLabel.Text := "状態: 石を安全に再同期中 "
-                            State.stoneReadyVotes "/" Config.stoneReadyConfirmations
+                        State.statusLabel.Text := BuildFarmProgressStatus(
+                            "状態: 石を安全に再同期中 ", State.stoneReadyVotes,
+                            Config.stoneReadyConfirmations, "")
                         WriteDiagnostic("attempt=" State.attempts " RESYNC_CANDIDATE votes="
                             State.stoneReadyVotes " elapsed=" elapsedSinceClick)
                         ScheduleNext(expectedGeneration, Config.stoneProbeRetryMs)
@@ -10673,8 +13725,9 @@ MineAttempt(expectedGeneration) {
                         State.statusLabel.Text := "状態: 石の消失を確認。再出現を監視中"
                         WriteDiagnostic("attempt=" State.attempts " MARKER_GONE_CONFIRMED")
                     } else {
-                        State.statusLabel.Text := "状態: 石の消失を確認中 "
-                            State.stoneAbsentVotes "/" Config.stoneGoneConfirmations
+                        State.statusLabel.Text := BuildFarmProgressStatus(
+                            "状態: 石の消失を確認中 ", State.stoneAbsentVotes,
+                            Config.stoneGoneConfirmations, "")
                         WriteDiagnostic("attempt=" State.attempts " GONE_CANDIDATE votes="
                             State.stoneAbsentVotes " marker=" markerPresent " button=" found)
                     }
@@ -10694,8 +13747,9 @@ MineAttempt(expectedGeneration) {
 
             State.stoneReadyVotes += 1
             if State.stoneReadyVotes < Config.stoneReadyConfirmations {
-                State.statusLabel.Text := "状態: 石の再出現を確認中 "
-                    State.stoneReadyVotes "/" Config.stoneReadyConfirmations
+                State.statusLabel.Text := BuildFarmProgressStatus(
+                    "状態: 石の再出現を確認中 ", State.stoneReadyVotes,
+                    Config.stoneReadyConfirmations, "")
                 WriteDiagnostic("attempt=" State.attempts " READY_CANDIDATE votes="
                     State.stoneReadyVotes " pos=" markerX "," markerY)
                 ScheduleNext(expectedGeneration, Config.stoneProbeRetryMs)
@@ -10893,7 +13947,7 @@ RunBackgroundBridgeCancelable(expectedGeneration, mode, bridgeArgs*) {
     resultPath := State.backgroundResultPath "." callId ".txt"
     helperPid := 0
     operationToken := ""
-    if mode = "deposit-delta" {
+    if mode = "deposit-delta" || mode = "withdraw-item" {
         operationToken := DllCall("GetCurrentProcessId") "-" callId
         bridgeArgs.Push(operationToken)
     }
@@ -10949,7 +14003,8 @@ RunBackgroundBridgeCancelable(expectedGeneration, mode, bridgeArgs*) {
             timeoutMs := longCompanionCommand ? 125000
                 : companionCommand = "open-cargo" ? 28000 : 18000
         } else {
-            timeoutMs := mode = "deposit-delta" ? 50000 : 9000
+            timeoutMs := mode = "deposit-delta" || mode = "withdraw-item"
+                ? 50000 : 9000
         }
         deadline := MonotonicMs() + timeoutMs
         nextCompanionEpochCheckAt := longCompanionCommand
@@ -10989,9 +14044,30 @@ RunBackgroundBridgeCancelable(expectedGeneration, mode, bridgeArgs*) {
         }
         if !FileExist(resultPath)
             return "ERROR no bridge result"
-        try return Trim(FileRead(resultPath, "UTF-8"))
+        try result := Trim(FileRead(resultPath, "UTF-8"))
         catch as err
             return "ERROR " err.Message
+        if mode = "deposit-delta" && InStr(result, "DEPOSITED ") = 1 {
+            expectedStorageId := bridgeArgs.Length >= 2 ? bridgeArgs[1] : ""
+            expectedStorageType := bridgeArgs.Length >= 2 ? bridgeArgs[2] : ""
+            if !ParseVerifiedStorageDepositReceipt(result, expectedStorageId,
+                expectedStorageType, &depositReceipt)
+                || !StorageDepositReceiptOperationMatches(depositReceipt,
+                    operationToken)
+                return "ERROR DEPOSIT_RECEIPT_MISMATCH"
+        }
+        if mode = "withdraw-item"
+            && (InStr(result, "WITHDRAWN ") = 1
+                || InStr(result, "WITHDRAWN_PARTIAL ") = 1) {
+            expectedStorageId := bridgeArgs.Length >= 2 ? bridgeArgs[1] : ""
+            expectedStorageType := bridgeArgs.Length >= 2 ? bridgeArgs[2] : ""
+            if !ParseVerifiedWashingRefillReceipt(result, expectedStorageId,
+                expectedStorageType, &withdrawReceipt)
+                || !WashingRefillReceiptOperationMatches(withdrawReceipt,
+                    operationToken)
+                return "ERROR WITHDRAW_RECEIPT_MISMATCH"
+        }
+        return result
     } finally {
         Critical "On"
         if helperPid && State.activeBridgePid = helperPid {
@@ -11057,7 +14133,7 @@ CancelActiveBridgeProcess() {
 CancelBridgeProcess(processId, mode := "", operationToken := "") {
     if !processId || !ProcessExist(processId)
         return
-    if mode = "deposit-delta" && operationToken {
+    if (mode = "deposit-delta" || mode = "withdraw-item") && operationToken {
         ; 先にNUIへ同じ操作IDの中止を通知し、現在の1トランザクションが
         ; 確定または失敗するまで待ってから補助プロセスを終了します。
         ReleaseBackgroundTarget(true)

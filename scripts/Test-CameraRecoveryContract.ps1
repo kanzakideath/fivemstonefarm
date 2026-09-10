@@ -16,7 +16,7 @@ $resolvedSource = [System.IO.Path]::GetFullPath($sourceCandidate)
 if (-not (Test-Path -LiteralPath $resolvedSource -PathType Leaf)) {
     throw "Camera recovery source was not found: $resolvedSource"
 }
-$source = Get-Content -LiteralPath $resolvedSource -Raw
+$source = Get-Content -LiteralPath $resolvedSource -Raw -Encoding UTF8
 
 function Assert-Contract {
     param(

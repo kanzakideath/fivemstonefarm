@@ -130,7 +130,7 @@ namespace AiMiner.UiHost
                 new Regex(@"\Aai-miner-webview-test-[a-f0-9]{32}\z", RegexOptions.CultureInvariant);
             private static readonly HashSet<string> VisualFixtures = new HashSet<string>(StringComparer.Ordinal)
             {
-                "overview", "action-sheet", "settings", "narrow",
+                "overview", "action-sheet", "settings", "vehicle", "update", "narrow",
                 "stone-home", "stone-gacha", "stone-collection", "stone-achievements",
                 "stone-profile", "stone-narrow", "stone-host"
             };
@@ -186,6 +186,10 @@ namespace AiMiner.UiHost
                         return "https://app.local/index.html?fixture=1&page=overview&picker=1";
                     case "settings":
                         return "https://app.local/index.html?fixture=1&page=settings";
+                    case "vehicle":
+                        return "https://app.local/index.html?fixture=1&page=vehicle";
+                    case "update":
+                        return "https://app.local/index.html?fixture=1&page=update";
                     case "narrow":
                     case "overview":
                         return "https://app.local/index.html?fixture=1&page=overview";
@@ -405,7 +409,7 @@ namespace AiMiner.UiHost
                 }
                 if (!VisualFixtures.Contains(fixture))
                 {
-                    error = "--fixture は overview、action-sheet、settings、narrow、stone-home、"
+                    error = "--fixture は overview、action-sheet、settings、vehicle、update、narrow、stone-home、"
                         + "stone-gacha、stone-collection、stone-achievements、stone-profile、"
                         + "stone-narrow、stone-host のいずれかです。";
                     return false;
@@ -505,7 +509,7 @@ namespace AiMiner.UiHost
                     string parseError;
                     string[] scenes =
                     {
-                        "overview", "action-sheet", "settings", "narrow",
+                        "overview", "action-sheet", "settings", "vehicle", "update", "narrow",
                         "stone-home", "stone-gacha", "stone-collection", "stone-achievements",
                         "stone-profile", "stone-narrow", "stone-host"
                     };
@@ -524,19 +528,23 @@ namespace AiMiner.UiHost
                             ? "https://app.local/index.html?fixture=1&page=overview&picker=1"
                             : scene == "settings"
                                 ? "https://app.local/index.html?fixture=1&page=settings"
-                                : scene == "stone-gacha"
-                                    ? "https://app.local/index.html?fixture=1&page=stone&metaRoute=gacha"
-                                    : scene == "stone-collection"
-                                        ? "https://app.local/index.html?fixture=1&page=stone&metaRoute=collection"
-                                    : scene == "stone-achievements"
-                                        ? "https://app.local/index.html?fixture=1&page=stone&metaRoute=achievements"
-                                    : scene == "stone-profile"
-                                        ? "https://app.local/index.html?fixture=1&page=stone&metaRoute=profile"
-                                        : scene == "stone-home" || scene == "stone-narrow"
-                                            ? "https://app.local/index.html?fixture=1&page=stone&metaRoute=home"
-                                            : scene == "stone-host"
-                                                ? "https://app.local/index.html?fixture=host&page=stone&metaRoute=home"
-                                            : "https://app.local/index.html?fixture=1&page=overview";
+                                : scene == "vehicle"
+                                    ? "https://app.local/index.html?fixture=1&page=vehicle"
+                                    : scene == "update"
+                                        ? "https://app.local/index.html?fixture=1&page=update"
+                                        : scene == "stone-gacha"
+                                            ? "https://app.local/index.html?fixture=1&page=stone&metaRoute=gacha"
+                                            : scene == "stone-collection"
+                                                ? "https://app.local/index.html?fixture=1&page=stone&metaRoute=collection"
+                                                : scene == "stone-achievements"
+                                                    ? "https://app.local/index.html?fixture=1&page=stone&metaRoute=achievements"
+                                                    : scene == "stone-profile"
+                                                        ? "https://app.local/index.html?fixture=1&page=stone&metaRoute=profile"
+                                                        : scene == "stone-home" || scene == "stone-narrow"
+                                                            ? "https://app.local/index.html?fixture=1&page=stone&metaRoute=home"
+                                                            : scene == "stone-host"
+                                                                ? "https://app.local/index.html?fixture=host&page=stone&metaRoute=home"
+                                                                : "https://app.local/index.html?fixture=1&page=overview";
                         if (!TryParse(visualArgs, out parsed, out parseError)
                             || !parsed.VisualTest || !parsed.Fixture
                             || parsed.VisualFixture != scene

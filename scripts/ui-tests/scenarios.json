@@ -18,6 +18,14 @@
       "arguments": ["--fixture", "settings", "--window-width", "820", "--window-height", "640"]
     },
     {
+      "name": "vehicle",
+      "arguments": ["--fixture", "vehicle", "--window-width", "820", "--window-height", "640"]
+    },
+    {
+      "name": "update",
+      "arguments": ["--fixture", "update", "--window-width", "820", "--window-height", "640"]
+    },
+    {
       "name": "narrow",
       "arguments": ["--fixture", "overview", "--window-width", "520", "--window-height", "640"]
     },

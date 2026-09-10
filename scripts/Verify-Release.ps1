@@ -32,7 +32,8 @@ $manifest = $manifestText | ConvertFrom-Json
 if ([int]$manifest.schema -ne 1 -or $manifest.product -ne $expectedProduct -or $manifest.channel -ne 'stable') {
     throw 'Manifest identity or schema is invalid.'
 }
-if ($manifest.version -notmatch '^\d+\.\d+\.\d+$' -or $manifest.minimumUpdaterVersion -notmatch '^\d+\.\d+\.\d+$') {
+if ($manifest.version -notmatch '^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$' -or
+    $manifest.minimumUpdaterVersion -notmatch '^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$') {
     throw 'Manifest version is not strict semantic version x.y.z.'
 }
 

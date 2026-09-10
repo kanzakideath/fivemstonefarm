@@ -1,17 +1,22 @@
 #Requires -Version 5.1
 [CmdletBinding()]
 param(
-    [string]$SourcePath = (Join-Path $PSScriptRoot '..\src\mining-auto.ahk')
+    [string]$SourcePath = ''
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$resolvedSource = [System.IO.Path]::GetFullPath($SourcePath)
+$sourceCandidate = if ([string]::IsNullOrWhiteSpace($SourcePath)) {
+    Join-Path $PSScriptRoot '..\src\mining-auto.ahk'
+} else {
+    $SourcePath
+}
+$resolvedSource = [System.IO.Path]::GetFullPath($sourceCandidate)
 if (-not (Test-Path -LiteralPath $resolvedSource -PathType Leaf)) {
     throw "Washing recovery source was not found: $resolvedSource"
 }
-$source = Get-Content -LiteralPath $resolvedSource -Raw
+$source = Get-Content -LiteralPath $resolvedSource -Raw -Encoding UTF8
 
 function Assert-Contract {
     param(
@@ -46,10 +51,19 @@ $complete = Get-AhkFunctionBody 'CompleteVerifiedFarmReward'
 $begin = Get-AhkFunctionBody 'BeginWashCompletionRecovery'
 $correct = Get-AhkFunctionBody 'PerformWashCompletionCorrection'
 $cycle = Get-AhkFunctionBody 'RunWashCompletionRecoveryCycle'
-$dispatcher = Get-AhkFunctionBody 'AutomationCycle'
+$dispatcher = Get-AhkFunctionBody 'AutomationCycleOwned'
 $start = Get-AhkFunctionBody 'StartMining'
 $maintain = Get-AhkFunctionBody 'MaintainBackgroundWorkView'
 $scheduleNext = Get-AhkFunctionBody 'ScheduleNext'
+$armTimer = Get-AhkFunctionBody 'ArmFarmTimerOwned'
+$armPendingTimer = Get-AhkFunctionBody 'ArmPendingFarmTimerAfterOwnerRelease'
+$claimCallback = Get-AhkFunctionBody 'TryClaimFarmCallback'
+$releaseCallback = Get-AhkFunctionBody 'ReleaseFarmCallback'
+$automationCycle = Get-AhkFunctionBody 'AutomationCycle'
+$stop = Get-AhkFunctionBody 'StopMining'
+$timerHandoffMock = Get-AhkFunctionBody 'RunFarmTimerHandoffMockTest'
+$washingReward = Get-AhkFunctionBody 'WashingSnapshotHasExchangeReward'
+$confirmReward = Get-AhkFunctionBody 'TryConfirmPendingFarmRewardSnapshot'
 
 Assert-Contract ($source -match
     'washPostCompletionSettleMs:\s*ReadIntegerSetting\(settingsPath,\s*"Washing",\s*"PostCompletionSettleMs",\s*1200,\s*900,\s*4000\)') `
@@ -177,11 +191,44 @@ Assert-Contract ($washDispatch -ge 0 -and $washDispatch -lt $unhandled) `
     'Dedicated washing states are not dispatched before generic unknown-state recovery.'
 $cancelOldTimer = $scheduleNext.IndexOf('SetTimer(State.timerFn, 0)',
     [StringComparison]::Ordinal)
-$installNextTimer = $scheduleNext.IndexOf('SetTimer(nextFn, -Max(1, delayMs))',
+$installNextTimer = $scheduleNext.IndexOf('ArmFarmTimerOwned(expectedGeneration, expectedTaskId, delayMs)',
     [StringComparison]::Ordinal)
 Assert-Contract ($cancelOldTimer -ge 0 -and
-    $installNextTimer -gt $cancelOldTimer) `
+    $installNextTimer -gt $cancelOldTimer -and
+    $armTimer -match 'SetTimer\(nextFn,\s*-Max\(1,\s*Round\(delayMs\)\)\)') `
     'A previous Farm timer can overlap the dedicated washing settle/recovery timer.'
+Assert-Contract ($automationCycle -match
+    'TryClaimFarmCallback\(expectedGeneration,\s*expectedTaskId\)[\s\S]{0,180}try\s+AutomationCycleOwned\(expectedGeneration,\s*expectedTaskId\)[\s\S]{0,100}finally\s+ReleaseFarmCallback\(\)' -and
+    $claimCallback -match
+    'State\.stopInProgress\s*\|\|\s*State\.activeFarmCallbacks\s*!=\s*0[\s\S]{0,300}State\.activeFarmCallbacks\s*\+=\s*1' -and
+    $releaseCallback -match
+    'State\.activeFarmCallbacks\s*-=?\s*1[\s\S]{0,180}if\s+State\.activeFarmCallbacks\s*=\s*0[\s\S]{0,100}ArmPendingFarmTimerAfterOwnerRelease\(\)') `
+    'Farm callbacks are not serialized through one claim/release owner.'
+Assert-Contract ($scheduleNext -match
+    'action\s*:=\s*FarmTimerScheduleAction\([\s\S]{0,300}if\s+action\s*=\s*"DEFER"[\s\S]{0,500}pendingFarmTimerGeneration\s*:=\s*expectedGeneration[\s\S]{0,180}pendingFarmTimerTaskId\s*:=\s*expectedTaskId[\s\S]{0,180}pendingFarmTimerDueAt\s*:=' -and
+    $armPendingTimer -match
+    'pendingFarmTimerGeneration\s*:=\s*0[\s\S]{0,120}pendingFarmTimerTaskId\s*:=\s*0[\s\S]{0,120}pendingFarmTimerDueAt\s*:=\s*0[\s\S]{0,600}ArmFarmTimerOwned\(expectedGeneration,\s*expectedTaskId' -and
+    $start -match
+    'pendingFarmTimerGeneration\s*:=\s*0[\s\S]{0,120}pendingFarmTimerTaskId\s*:=\s*0[\s\S]{0,120}pendingFarmTimerDueAt\s*:=\s*0' -and
+    $stop -match
+    'pendingFarmTimerGeneration\s*:=\s*0[\s\S]{0,120}pendingFarmTimerTaskId\s*:=\s*0[\s\S]{0,120}pendingFarmTimerDueAt\s*:=\s*0') `
+    'Deferred one-shot handoff is not last-wins, owner-released, and start/stop cleared.'
+Assert-Contract ($timerHandoffMock -match
+    'Loop\s+iterations[\s\S]{0,700}pendingTaskId\s*!=\s*13[\s\S]{0,500}armedCount\s*\+=\s*1[\s\S]{0,350}armedCount\s*!=\s*1[\s\S]{0,350}stopInProgress\s*:=\s*true[\s\S]{0,250}"DROP"' -and
+    $source -match 'RunFarmTimerHandoffMockTest\(100\)') `
+    'The compiled validation path no longer proves exactly one last-wins timer handoff.'
+Assert-Contract ($washingReward -match
+    'beforeRaw\s*:=\s*InventorySpecNameCount[\s\S]{0,260}if\s+beforeRaw\s*<=\s*afterRaw[\s\S]{0,100}return\s+false' -and
+    $washingReward -match
+    'DetectConsumedInventoryItem\(beforeInfo\.items,\s*afterInfo\.items' -and
+    $washingReward -match
+    'StrCompare\(name,\s*consumedRawName,\s*true\)\s*=\s*0[\s\S]{0,300}outputUnits\s*\+=' -and
+    $washingReward -match
+    'return\s+consumedUnits\s*>\s*0\s*&&\s*outputUnits\s*>\s*0' -and
+    $confirmReward -match
+    'actionMode\s*=\s*"washing"[\s\S]{0,350}WashingSnapshotHasExchangeReward\(' -and
+    $source -match 'testWashingRewardEvidenceOk\s*:=\s*WashingSnapshotHasExchangeReward\(') `
+    'Washing success can be counted without both raw consumption and a different output gain.'
 
 $beginSession = $start.IndexOf('if !BeginFarmMetagameSession(runGeneration)',
     [StringComparison]::Ordinal)

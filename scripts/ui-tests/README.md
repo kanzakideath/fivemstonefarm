@@ -11,7 +11,7 @@ The default scenario manifest expects an explicitly supplied executable to stay
 open and accept an explicit offline asset directory:
 
 ```text
---visual-test --assets <absolute-www-directory> --fixture <overview|action-sheet|settings|narrow|stone-home|stone-gacha|stone-collection|stone-achievements|stone-profile|stone-narrow|stone-host>
+--visual-test --assets <absolute-www-directory> --fixture <overview|action-sheet|settings|vehicle|update|narrow|stone-home|stone-gacha|stone-collection|stone-achievements|stone-profile|stone-narrow|stone-host>
 --window-width <pixels> --window-height <pixels>
 ```
 
@@ -113,12 +113,12 @@ pwsh -NoProfile -File scripts/ui-tests/Test-UiTestTools.ps1
 ```
 
 The self-test uses a local, inert WinForms fixture. It starts a same-title
-baseline window, runs all eleven scenarios (including COLLECTION and
-ACHIEVEMENTS), verifies every PNG and the 600px Stone layout, and verifies that
-the baseline process survived. It also mutates an isolated fake Web asset during
-a one-scene suite and requires the manifest recheck to reject that run. It closes
-only the fixture processes it created and removes only its GUID-named temporary
-directory.
+baseline window, runs all thirteen scenarios (including VEHICLE, UPDATE,
+COLLECTION, and ACHIEVEMENTS), verifies every PNG and the 600px Stone layout,
+and verifies that the baseline process survived. It also mutates an isolated
+fake Web asset during a one-scene suite and requires the manifest recheck to
+reject that run. It closes only the fixture processes it created and removes
+only its GUID-named temporary directory.
 
 ## Limitations
 

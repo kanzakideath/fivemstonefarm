@@ -1,13 +1,22 @@
 #Requires -Version 5.1
 [CmdletBinding()]
 param(
-    [string]$SourcePath = (Join-Path $PSScriptRoot '..\src\mining-auto.ahk')
+    [string]$SourcePath = ''
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$source = Get-Content -LiteralPath $SourcePath -Raw
+$sourceCandidate = if ([string]::IsNullOrWhiteSpace($SourcePath)) {
+    Join-Path $PSScriptRoot '..\src\mining-auto.ahk'
+} else {
+    $SourcePath
+}
+$resolvedSource = [System.IO.Path]::GetFullPath($sourceCandidate)
+if (-not (Test-Path -LiteralPath $resolvedSource -PathType Leaf)) {
+    throw "Stone progress source was not found: $resolvedSource"
+}
+$source = Get-Content -LiteralPath $resolvedSource -Raw -Encoding UTF8
 
 function Assert-SourcePattern {
     param(
@@ -63,7 +72,7 @@ Assert-SourcePattern `
     'AcknowledgeMetagameEvent\(command, eventId\)[\s\S]{0,1900}nextAt := MonotonicMs\(\) \+ 1' `
     'ACKed history must advance on the next timer tick instead of the old 100 ms gap.'
 Assert-SourcePattern `
-    'ParseVerifiedFarmRewardDiagnosticLine\(line, &record,[\s\S]{0,2200}FARM_REWARD_CONFIRMED[\s\S]{0,900}reason=\(weight_increase\|item_increase\)' `
+    'ParseVerifiedFarmRewardDiagnosticLine\(line, &record,[\s\S]{0,2200}FARM_REWARD_CONFIRMED[\s\S]{0,900}reason=\(weight_increase\|item_increase\|wash_exchange_raw_\[1-9\]\[0-9\]\*_output_\[1-9\]\[0-9\]\*\)' `
     'History migration must accept only verified inventory-reward diagnostics.'
 Assert-SourcePattern `
     'RunLegacyFarmHistoryBackfill\(\)[\s\S]{0,4200}PersistMetagameOutbox\(candidate,[\s\S]{0,1800}WriteLegacyFarmHistoryBackfillMarker' `
@@ -96,13 +105,13 @@ Assert-SourcePattern `
     'ParseLegacyFarmHistoryContents\(contents, &records, maximumRecords := 16384\)' `
     'Retained diagnostic logs must not be rejected at the old 2,048-event boundary.'
 Assert-SourcePattern `
-    'metagameBackfillMarkerPath:[\s\S]{0,220}: A_ScriptDir "\\AI採掘機_STONE履歴移行\.v1\.done"' `
+    'metagameBackfillMarkerPath:[\s\S]{0,220}: A_ScriptDir "\\[^"\r\n]*_STONE[^"\r\n]*\.v1\.done"' `
     'The legacy-history marker must be scoped to the installation that owns the diagnostic log.'
 Assert-SourcePattern `
-    'paths := \[A_ScriptDir "\\AI採掘機_STONE履歴復元\.log",[\s\S]{0,180}State\.diagnosticPath "\.2", State\.diagnosticPath "\.1",[\s\S]{0,80}State\.diagnosticPath\]' `
+    'paths := \[A_ScriptDir "\\[^"\r\n]*_STONE[^"\r\n]*\.log",[\s\S]{0,180}State\.diagnosticPath "\.2", State\.diagnosticPath "\.1",[\s\S]{0,80}State\.diagnosticPath\]' `
     'The support recovery log must be imported through the strict history parser before diagnostic rotations.'
 Assert-SourcePattern `
-    'ParseDiagnosticSessionStartLine\(line, &versionCode\)[\s\S]{0,900}AI採掘機 v\(\[0-9\]\{1,4\}\)' `
+    'ParseDiagnosticSessionStartLine\(line, &versionCode\)[\s\S]{0,900}\| [^"\r\n]+ v\(\[0-9\]\{1,4\}\)' `
     'Diagnostic history does not parse and retain the session source version.'
 Assert-SourcePattern `
     'segmentAllowsLegacy := contentIsSupport[\s\S]{0,120}sessionVersionCode < 900000002' `
@@ -114,26 +123,26 @@ Assert-SourcePattern `
     'supportPending := !LegacyFarmHistorySupportReceiptComplete\([\s\S]{0,2200}PersistMetagameOutbox\(candidate,[\s\S]{0,1700}WriteLegacyFarmHistorySupportReceipt\(' `
     'A support export added after the normal marker must have its own content receipt written only after queue persistence.'
 Assert-SourcePattern `
-    'diagnosticPath: isUiTestRun \|\| HasCommandLineArgument\("--validate"\)\s+\? A_Temp "\\ai-miner-diagnostic-test-" processId "\.log"\s+: A_ScriptDir "\\AI採掘機_診断\.log"' `
+    'diagnosticPath: isUiTestRun \|\| HasCommandLineArgument\("--validate"\)\s+\? A_Temp "\\ai-miner-diagnostic-test-" processId "\.log"\s+: A_ScriptDir "\\[^"\r\n]+\.log"' `
     'Updater validation, smoke, and visual tests must never modify the install diagnostic log.'
 Assert-SourcePattern `
-    'TryClaimStartOperation\(&startToken\)[\s\S]{0,500}EnterMetagameOutboxCritical\(\)[\s\S]{0,500}AutomationStartAllowed\(State\.running, State\.registrationActive,[\s\S]{0,120}State\.startInProgress\)[\s\S]{0,500}State\.startInProgress := true' `
+    'TryClaimStartOperation\(&startToken\)\s*\{[\s\S]{0,220}EnterMetagameOutboxCritical\(\)[\s\S]{0,500}AutomationStartAllowed\(State\.running, State\.registrationActive,[\s\S]{0,220}State\.activeFarmCallbacks\)[\s\S]{0,500}State\.startInProgress := true' `
     'A Start request does not atomically claim ownership before blocking preflight.'
 Assert-SourcePattern `
     'StartMining\(\*\)[\s\S]{0,700}TryClaimStartOperation\(&startToken\)[\s\S]{0,600}PrepareMetagameForNewFarmStart\(\)[\s\S]{0,180}IsStartOperationCurrent\(startToken\)[\s\S]{0,5000}RunBackgroundBridge\("health"\)[\s\S]{0,180}IsStartOperationCurrent\(startToken\)' `
     'Start preflight does not revalidate ownership after its blocking boundaries.'
 Assert-SourcePattern `
-    'StartMining\(\*\)[\s\S]{0,9500}criticalWasOn := EnterMetagameOutboxCritical\(\)[\s\S]{0,180}IsStartOperationCurrent\(startToken\)[\s\S]{0,180}State\.running := true[\s\S]{0,20000}finally FinishStartPreparation\(startToken\)' `
-    'Start does not atomically revalidate its owner at commit and clear it on every exit.'
+    'StartMining\(\*\)[\s\S]{0,9500}criticalWasOn := EnterMetagameOutboxCritical\(\)[\s\S]{0,180}IsStartOperationCurrent\(startToken\)[\s\S]{0,180}State\.running := true[\s\S]{0,800}State\.activeFarmCallbacks \+= 1[\s\S]{0,180}runInitializationOwned := true[\s\S]{0,12000}ScheduleNext\(runGeneration,[\s\S]{0,300}finally\s*\{[\s\S]{0,180}FinishStartPreparation\(startToken\)[\s\S]{0,180}ReleaseFarmCallback\(\)' `
+    'Start does not transfer atomic ownership through every post-install blocking boundary.'
 Assert-SourcePattern `
-    'StopMining\(\*\)[\s\S]{0,300}startCancelled := CancelStartOperation\(\)[\s\S]{0,500}if startCancelled && !State\.running[\s\S]{0,900}return' `
+    'StopMining\([^)]*\)[\s\S]{0,700}startCancelled := CancelStartOperation\(\)[\s\S]{0,500}if startCancelled && !State\.running[\s\S]{0,900}return' `
     'Stop cannot cancel a Start request while preflight still has running=false.'
 Assert-SourcePattern `
     'IsMiningActive\(\*\)[\s\S]{0,160}State\.running \|\| State\.registrationActive \|\| State\.startInProgress' `
     'The stop hotkey is unavailable during Start preflight.'
 Assert-SourcePattern `
-    'TestStartOperationOwnership\(\)[\s\S]{0,1800}duplicateBlocked[\s\S]{0,500}stopCancelled[\s\S]{0,500}staleReleaseBlocked' `
-    'The deterministic validation fixture does not cover duplicate Start and Stop-during-preflight ownership.'
+    'TestStartOperationOwnership\(\)[\s\S]{0,2200}callbackOwnerBlocked[\s\S]{0,500}duplicateBlocked[\s\S]{0,500}stopCancelled[\s\S]{0,500}staleReleaseBlocked' `
+    'The deterministic validation fixture does not cover callback drain, duplicate Start, and Stop-during-preflight ownership.'
 
 $finalize = [regex]::Match($source,
     'CompleteVerifiedFarmReward\(expectedGeneration, actionMode,[\s\S]{0,7500}?ScheduleNext\(expectedGeneration, 1\)')

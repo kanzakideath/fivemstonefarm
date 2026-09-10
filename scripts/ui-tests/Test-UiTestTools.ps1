@@ -38,8 +38,8 @@ try {
     )
     $suite = & $suiteScript -ExecutablePath $powerShellPath -OutputDirectory (Join-Path $testRoot 'captures') `
         -BaseArguments $suiteArguments -ReadyDelayMilliseconds 250
-    if (-not $suite.passed -or $suite.captures.Count -ne 11) {
-        throw 'The fixture suite did not produce all eleven expected captures.'
+    if (-not $suite.passed -or $suite.captures.Count -ne 13) {
+        throw 'The fixture suite did not produce all thirteen expected captures.'
     }
     if (-not $suite.webAssets.unchangedAtEnd -or
         $suite.webAssets.manifestSha256AtStart -ne $suite.webAssets.manifestSha256AtEnd -or
@@ -77,10 +77,13 @@ try {
     $stoneNarrowCapture = @($suite.captures | Where-Object { $_.scenario -eq 'stone-narrow' })[0]
     $stoneCollectionCapture = @($suite.captures | Where-Object { $_.scenario -eq 'stone-collection' })[0]
     $stoneAchievementsCapture = @($suite.captures | Where-Object { $_.scenario -eq 'stone-achievements' })[0]
+    $vehicleCapture = @($suite.captures | Where-Object { $_.scenario -eq 'vehicle' })[0]
+    $updateCapture = @($suite.captures | Where-Object { $_.scenario -eq 'update' })[0]
     if ($wideCapture.imageWidth -lt 780 -or $wideCapture.imageWidth -gt 900 -or
         $narrowCapture.imageWidth -lt 480 -or $narrowCapture.imageWidth -gt 600 -or
         $stoneNarrowCapture.imageWidth -lt 560 -or $stoneNarrowCapture.imageWidth -gt 680 -or
-        -not $stoneCollectionCapture -or -not $stoneAchievementsCapture) {
+        -not $stoneCollectionCapture -or -not $stoneAchievementsCapture -or
+        -not $vehicleCapture -or -not $updateCapture) {
         throw 'DPI coordinate conversion produced an unexpected fixture width.'
     }
 

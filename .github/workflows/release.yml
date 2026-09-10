@@ -30,8 +30,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $tag = '${{ github.ref_name }}'
-          if ($tag -notmatch '^v(?<version>\d+\.\d+\.\d+)$') {
+          $tag = $env:GITHUB_REF_NAME
+          if ($tag -notmatch '^v(?<version>(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))$') {
             throw "Release tags must be strict vX.Y.Z: $tag"
           }
           "version=$($Matches.version)" >> $env:GITHUB_OUTPUT
@@ -48,18 +48,21 @@ jobs:
         shell: pwsh
         env:
           UPDATE_SIGNING_KEY_PKCS8_B64: ${{ secrets.UPDATE_SIGNING_KEY_PKCS8_B64 }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          RELEASE_PUBLISHED_AT: ${{ steps.version.outputs.published_at }}
         run: |
           .\scripts\Make-Release.ps1 `
-            -Version '${{ steps.version.outputs.version }}' `
-            -PublishedAt '${{ steps.version.outputs.published_at }}'
+            -Version $env:RELEASE_VERSION `
+            -PublishedAt $env:RELEASE_PUBLISHED_AT
 
       - name: Publish GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $tag = '${{ github.ref_name }}'
+          $tag = $env:GITHUB_REF_NAME
           $artifactRoot = Join-Path $PWD "artifacts\$tag"
           $assets = @(
             (Join-Path $artifactRoot 'ai-miner-win-x64.exe'),
@@ -74,12 +77,18 @@ jobs:
             }
           }
           gh release create $tag @assets `
-            --repo '${{ github.repository }}' `
+            --repo $env:GH_REPO `
             --verify-tag `
             --title "AI採掘機 $tag" `
             --generate-notes `
             --draft
+          if ($LASTEXITCODE -ne 0) {
+            throw "gh release create failed with exit code $LASTEXITCODE. The release remains unpublished."
+          }
           gh release edit $tag `
-            --repo '${{ github.repository }}' `
+            --repo $env:GH_REPO `
             --draft=false `
             --latest
+          if ($LASTEXITCODE -ne 0) {
+            throw "gh release edit failed with exit code $LASTEXITCODE."
+          }

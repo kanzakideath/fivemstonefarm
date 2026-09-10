@@ -1,4 +1,4 @@
-# Stone Metagame統合仕様（v9.0.2）
+# Stone Metagame統合仕様（v9.1.0）
 
 この文書は、検証済みの `sidecar/stone-metagame/` をAI採掘機へ接続する境界をまとめたものです。抽選率、Pity、Pickup、保証、Profile、状態構造は本体側で再実装しません。詳細な正規仕様は `sidecar/stone-metagame/INTEGRATION.md` です。
 
@@ -32,7 +32,7 @@ v9.0.2への初回更新時は、EXEと同じ場所に残る診断ログの `FAR
 
 ## Farm・収納の閉ループ
 
-Farm Controllerが持つ権威状態は次の15状態です。
+Farm Controllerが持つ権威状態は次の23状態です。
 
 ```text
 IDLE
@@ -40,14 +40,22 @@ FARMING
 WASH_SETTLING
 WASH_CORRECTING
 WASH_VERIFYING
-INVENTORY_CHECK
-INVENTORY_FULL
+CHECKING_INVENTORY
+NEED_STORAGE
 STOPPING_FARM
+LOCATING_TRUCK
+MOVING_TO_TRUCK
+VERIFY_TRUCK_REACHED
 OPENING_STORAGE
-STORING
+STORING_OUTPUTS
 VERIFY_STORAGE
+REFILLING_INPUT
+VERIFY_REFILL
+LOCATING_FARM
 RETURNING_TO_FARM
+VERIFY_FARM_REACHED
 RESUMING_FARM
+VERIFY_FARM_RESUMED
 RECOVERY
 ERROR
 ```
@@ -56,14 +64,22 @@ ERROR
 
 ```text
 FARMING
-  -> INVENTORY_CHECK
-  -> INVENTORY_FULL
+  -> CHECKING_INVENTORY
+  -> NEED_STORAGE
   -> STOPPING_FARM
+  -> LOCATING_TRUCK
+  -> MOVING_TO_TRUCK
+  -> VERIFY_TRUCK_REACHED
   -> OPENING_STORAGE
-  -> STORING
+  -> STORING_OUTPUTS
   -> VERIFY_STORAGE
+  -> （石洗いのみ）REFILLING_INPUT
+  -> （石洗いのみ）VERIFY_REFILL
+  -> LOCATING_FARM
   -> RETURNING_TO_FARM
+  -> VERIFY_FARM_REACHED
   -> RESUMING_FARM
+  -> VERIFY_FARM_RESUMED
   -> 最初の確認済み報酬
   -> FARMING
 ```
@@ -74,9 +90,11 @@ FARMING
 - 残り重量が `max(MinimumFreeWeight, EstimatedRewardWeight)` 以下（予測重量の既定2000g、250～20000g）
 - 空きスロットが `MinimumFreeSlots` 以下（既定1、0～10）
 
-収納成功は、プレイヤー側の重量または数量が実際に減り、開始後に増えた差分が残らず、次回報酬を受け取れる容量になった場合だけです。検証に失敗してもすぐ作業地点へ戻らず、同じ荷台で `MaxRetries`（既定5、1～8回）まで再試行します。各検証の上限は `VerifyTimeoutMs`（既定5000ms、1000～15000ms）です。
+収納成功は、プレイヤー側で台帳対象が実際に減り、登録済み荷台側で同じname/metadataの数量が実際に増え、次回報酬を受け取れる容量になった場合だけです。部分移動は確認できた数量だけ台帳から減算し、残数を同じ荷台で再試行します。検証に失敗してもすぐ作業地点へ戻らず、同じ荷台で `MaxRetries`（既定5、1～8回）まで再観測します。各検証の上限は `VerifyTimeoutMs`（既定5000ms、1000～15000ms）です。
 
-収納対象は実行開始時snapshotからの正の数量差分だけです。開始時点ですでに容量不足の場合や差分を証明できない場合は、既存の食料・道具を全搬出せず `UNTRUSTED_STORAGE_BASELINE` で安全停止します。
+収納対象は、各確認済み報酬で増えたname/metadata別の正の数量差分を実行中の台帳へ加算した分だけです。途中で食料を使う、道具のmetadataだけが変わる、既存品が増減する場合は収納対象へ混ぜません。開始時点ですでに容量不足の場合や台帳上の出力を証明できない場合は、既存の食料・道具を全搬出せず `UNTRUSTED_STORAGE_BASELINE` で安全停止します。
+
+石洗いでは収納確認後に、実報酬から学習済みの未洗浄石だけを最新容量内の絶対目標数まで荷台から戻し、プレイヤー側の実増加と荷台側の実減少を確認します。未洗浄石IDを証明できない、容量を再取得できない、補充差分を確認できない場合は作業復帰へ進みません。
 
 世代とtask IDに一致しない遅延結果は捨て、Farm、収納、復帰、Recoveryを並列実行しません。Recoveryへ入ると所有している入力をすべて解放し、インベントリ・画面・視点を整理して最新状態を観測します。まだ容量不足なら荷台探索へ、収納済みなら作業地点への復帰へ分岐します。移動履歴を破棄して無条件にFarmへ戻すことはしません。
 

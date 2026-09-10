@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 [CmdletBinding()]
 param(
     [string]$Bridge = (Join-Path $PSScriptRoot '..\build\staging\AI採掘機_Background.exe')
