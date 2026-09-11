@@ -23,10 +23,14 @@ jobs:
           fetch-depth: 0
           ref: fix/update-validation-timeout-9.1.7
 
-      - name: Patch smoke-test budget and bump release version
+      - name: Patch update validation budgets and bump release version
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+
+          # The updater already grants each candidate validation process 60 seconds.
+          # The application itself used to abort WebView2 readiness after only 15 s,
+          # causing a valid cold-started update to return exit 41 and get rolled back.
           $sourcePath = 'src/mining-auto.ahk'
           $text = [System.IO.File]::ReadAllText($sourcePath)
           $pattern = '(?ms)(RunUiSmokeTest\(\)\s*\{\s*global State\s*)deadline := MonotonicMs\(\) \+ 15000'
@@ -34,11 +38,24 @@ jobs:
           if ($matches.Count -ne 1) {
             throw "Expected exactly one RunUiSmokeTest 15-second readiness budget, found $($matches.Count)."
           }
-          $replacement = '$1' + '; Keep the in-app readiness budget consistent with the updater''s 60 s validation window.' + [Environment]::NewLine +
+          $replacement = '$1' + '; Keep the in-app readiness budget inside the updater''s 60 s validation window.' + [Environment]::NewLine +
               '    ; A cold WebView2 profile on a busy FiveM/GTA machine can legitimately exceed 15 s.' + [Environment]::NewLine +
               '    deadline := MonotonicMs() + 38000'
           $text = [regex]::Replace($text, $pattern, $replacement, 1)
           [System.IO.File]::WriteAllText($sourcePath, $text, [System.Text.UTF8Encoding]::new($false))
+
+          # Build-time UI-host validation had the same optimistic assumption: a
+          # 20-second hard kill.  The release pipeline itself reproduced this timeout.
+          # Give the standalone host one minute, matching the updater's validation budget.
+          $buildPath = 'scripts/Build.ps1'
+          $buildText = [System.IO.File]::ReadAllText($buildPath)
+          $buildOld = 'if (-not $uiTestProcess.WaitForExit(20000)) {'
+          $buildNew = 'if (-not $uiTestProcess.WaitForExit(60000)) {'
+          if (($buildText.Split($buildOld).Count - 1) -ne 1) {
+            throw 'Expected exactly one 20-second UI host self-test timeout.'
+          }
+          $buildText = $buildText.Replace($buildOld, $buildNew)
+          [System.IO.File]::WriteAllText($buildPath, $buildText, [System.Text.UTF8Encoding]::new($true))
 
           $oldVersion = '9.1.6'
           $newVersion = '9.1.7'
@@ -66,6 +83,10 @@ jobs:
           }
           if ($patched -match 'RunUiSmokeTest\(\)[\s\S]{0,700}MonotonicMs\(\) \+ 15000') {
             throw 'The obsolete 15-second UI readiness budget is still present.'
+          }
+          $patchedBuild = [System.IO.File]::ReadAllText($buildPath)
+          if (-not $patchedBuild.Contains('if (-not $uiTestProcess.WaitForExit(60000)) {')) {
+            throw 'Build-time UI host self-test budget was not patched to 60 seconds.'
           }
           git diff --check
           if ($LASTEXITCODE -ne 0) { throw 'git diff --check failed.' }
