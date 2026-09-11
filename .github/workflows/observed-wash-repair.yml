@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - name: Apply explicit integration and both guarded pre-click contracts
+      - name: Apply explicit integration, guarded contracts and fatal error diagnostics
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -28,7 +28,7 @@ jobs:
             python "scripts/passive-route-repair/$name.py"
             if ($LASTEXITCODE -ne 0) { throw "Pending source boundary failed: $name" }
           }
-          foreach ($name in @('Apply-ObservedWash','Apply-ObservedWashUi','Fix-ObservedWashCompile')) {
+          foreach ($name in @('Apply-ObservedWash','Apply-ObservedWashUi','Fix-ObservedWashCompile','Finalize-ObservedWashDiagnostics')) {
             python "scripts/$name.py"
             if ($LASTEXITCODE -ne 0) { throw "Observed repair failed: $name" }
           }
@@ -74,7 +74,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           Remove-Item scripts/passive-route-repair -Recurse -Force
-          Remove-Item scripts/Apply-ObservedWash.py,scripts/Apply-ObservedWashUi.py,scripts/Fix-ObservedWashCompile.py -Force
+          Remove-Item scripts/Apply-ObservedWash.py,scripts/Apply-ObservedWashUi.py,scripts/Fix-ObservedWashCompile.py,scripts/Finalize-ObservedWashDiagnostics.py -Force
           Remove-Item .github/workflows/passive-route-repair.yml,.github/workflows/wash-source-export.yml,.github/workflows/observed-wash-repair.yml -Force
           git add -u
           git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --cached --check
