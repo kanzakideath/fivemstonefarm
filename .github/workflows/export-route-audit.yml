@@ -1,0 +1,26 @@
+name: Export route audit source
+on:
+  push:
+    branches: [fix/route-setup-overlay-9.1.9]
+    paths: [.github/workflows/export-route-audit.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Archive exact checked out source
+        run: |
+          mkdir -p audit
+          git rev-parse HEAD > audit/SOURCE_COMMIT.txt
+          git archive --format=zip HEAD -o audit/source.zip
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: exact-route-audit-source
+          path: audit/
+          retention-days: 7
+          if-no-files-found: error
