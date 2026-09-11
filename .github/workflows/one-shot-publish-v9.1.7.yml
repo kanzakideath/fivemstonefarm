@@ -1,0 +1,37 @@
+name: One-shot publish v9.1.7
+
+on:
+  push:
+    branches:
+      - release/v9.1.7-tag-helper
+    paths:
+      - .github/workflows/one-shot-publish-v9.1.7.yml
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out helper branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Tag validated main commit as v9.1.7
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="83e3a904c9c54ab9af59f567eefa46ae1d39c49e"
+          target="$(git rev-parse HEAD^)"
+          if [ "$target" != "$expected" ]; then
+            echo "Refusing to tag unexpected parent: $target" >&2
+            exit 1
+          fi
+          if git rev-parse -q --verify refs/tags/v9.1.7 >/dev/null; then
+            echo "v9.1.7 already exists; refusing to move it." >&2
+            exit 1
+          fi
+          git tag v9.1.7 "$target"
+          git push origin refs/tags/v9.1.7
