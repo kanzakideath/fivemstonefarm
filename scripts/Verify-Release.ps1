@@ -105,6 +105,15 @@ $requiredDesktopEntries = @(
     'licenses/WebView2-LICENSE.txt',
     'licenses/WebView2-NOTICE.txt'
 )
+# Versioned strict allowlist: keep old release verification compatible while
+# making the new route prerequisites and voice redistribution notice mandatory.
+if ([version]$manifest.version -ge [version]'9.1.8') {
+    $requiredDesktopEntries += @(
+        'EXE_ONLY_ROUTES.md',
+        'VOICE-CREDITS.txt',
+        'voice-manifest.json'
+    )
+}
 $stream = [System.IO.File]::OpenRead($zipPath)
 $archive = [System.IO.Compression.ZipArchive]::new($stream, [System.IO.Compression.ZipArchiveMode]::Read, $false)
 try {
