@@ -2,16 +2,12 @@ name: Storage navigation validation
 on:
   push:
     branches: [fix/verified-storage-navigation]
-    paths:
-      - .github/workflows/storage-navigation-validation.yml
-      - src/**
-      - scripts/**
-      - fivem-resource/**
+    paths: [.github/workflows/storage-navigation-validation.yml]
 permissions:
   contents: write
 concurrency:
   group: verified-storage-navigation
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   validate:
     runs-on: windows-latest
@@ -28,6 +24,11 @@ jobs:
           if (-not $source.Contains('#Include verified-storage-navigation.ahk')) {
             python scripts/Apply-VerifiedNavigationRepair.py
             if ($LASTEXITCODE -ne 0) { throw 'Reviewed integration could not be applied.' }
+          }
+          $config = [IO.File]::ReadAllText('fivem-resource/ai_miner_companion/config.shared.lua')
+          if (-not $config.Contains('WorkArrivalDistance = 0.40')) {
+            python scripts/Refine-VerifiedNavigationRepair.py
+            if ($LASTEXITCODE -ne 0) { throw 'Reviewed refinement could not be applied.' }
           }
           git diff --check
           if ($LASTEXITCODE -ne 0) { throw 'Source diff validation failed.' }
@@ -50,7 +51,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- src/mining-auto.ahk src/verified-storage-navigation.ahk scripts/Build.ps1 src/ui-host/Protocol.cs src/ui-web/src/app.js src/ui-web/src/index.html src/ui-web/www/app.js src/ui-web/www/index.html
+          git add -- src/mining-auto.ahk src/verified-storage-navigation.ahk scripts/Build.ps1 scripts/Test-StorageClosedLoopContract.ps1 scripts/Test-VerifiedNavigation.mjs src/ui-host/Protocol.cs src/ui-web/src/app.js src/ui-web/src/index.html src/ui-web/www/app.js src/ui-web/www/index.html fivem-resource/ai_miner_companion/client.lua fivem-resource/ai_miner_companion/config.shared.lua README.md docs/AI採掘機_使い方.txt
           git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --cached --check
           if ($LASTEXITCODE -ne 0) { throw 'Tested source diff check failed.' }
           git diff --cached --quiet
