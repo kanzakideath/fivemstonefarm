@@ -1117,7 +1117,12 @@ input:focus-visible,
 
   .sidebar-nav {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(66px, 1fr);
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
     margin-top: 4px;
     gap: 2px;
   }
@@ -1251,3 +1256,40 @@ input:focus-visible,
     transform: none;
   }
 }
+
+/* Route setup paints its own surface; white text must never rely on a missing child. */
+.route-launch { display:flex; align-items:center; gap:14px; width:100%; min-height:76px; margin:0 0 22px; padding:16px; border:1px solid #b5c9e8; border-radius:16px; background:#eaf2ff; color:#15365f; text-align:left; cursor:pointer; }
+.route-launch > span:nth-child(2) { flex:1; min-width:0; }
+.route-launch strong,.route-launch small { display:block; line-height:1.5; }
+.route-launch strong { font-size:16px; }
+.route-launch small { font-size:12px; margin-top:3px; color:#3f5573; }
+.route-launch-icon { font-size:27px; }
+.route-launch svg { flex-shrink:0; }
+.route-launch:focus-visible,.route-button:focus-visible,.route-mode-picker button:focus-visible { outline:3px solid #0066cc; outline-offset:3px; }
+.route-eyebrow { display:block; margin-bottom:9px; color:#36577c; font-size:11px; letter-spacing:.07em; font-weight:700; }
+.route-mode-picker { display:flex; gap:7px; padding:5px; border:1px solid #d7dde7; border-radius:14px; background:#e6eaf0; }
+.route-mode-picker button { flex:1; min-height:44px; border:0; border-radius:10px; background:transparent; color:#344257; font:inherit; font-weight:600; }
+.route-mode-picker button[aria-pressed="true"] { background:#183e6e; color:white; box-shadow:0 2px 4px #172b4d22; }
+.route-hint { color:#556478; font-size:12px; line-height:1.7; margin:10px 0 18px; }
+.route-journey { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:18px 14px; background:#152a45; color:#f6f8fc; border-radius:14px; font-size:12px; }
+.route-journey-line { color:#9bceee; }
+.route-feedback { background:#e9f1fb; border-left:4px solid #3675b7; padding:14px 16px; color:#183e62; font-size:13px; line-height:1.75; margin:18px 0; border-radius:5px; overflow-wrap:anywhere; }
+.route-steps { display:grid; gap:14px; }
+.route-step { display:flex; align-items:flex-start; gap:12px; padding:19px; border:1px solid #dce2eb; border-radius:16px; background:#fff; }
+.route-step-number { display:grid; place-items:center; flex:0 0 32px; height:32px; border-radius:50%; background:#eaf1fa; color:#2b5785; font-weight:700; }
+.route-step.is-done .route-step-number { color:#fff; background:#176d51; }
+.route-step-body { flex:1; min-width:0; }
+.route-step-heading { display:flex; flex-wrap:wrap; align-items:center; gap:8px; justify-content:space-between; }
+.route-step h2 { margin:3px 0; font-size:16px; line-height:1.5; }
+.route-step p { font-size:13px; line-height:1.8; color:#526176; margin:9px 0 13px; }
+.route-badge { color:#4a5767; background:#edf0f4; padding:4px 9px; font-size:11px; border-radius:20px; }
+.route-step.is-done .route-badge { color:#135a42; background:#e3f3ec; }
+.route-button { min-height:44px; padding:11px 16px; border:0; border-radius:10px; background:#1c5994; color:#fff; font:inherit; font-size:13px; font-weight:600; line-height:1.5; cursor:pointer; }
+.route-button-quiet { background:#e7edf5; color:#254561; }
+.route-button:disabled { background:#e5e9ee; color:#6b7480; cursor:not-allowed; }
+.route-key-guide { display:flex; flex-wrap:wrap; gap:8px 14px; color:#4f6074; font-size:11px; }
+.route-key-guide kbd { display:inline-block; padding:3px 6px; border:1px solid #c8d1de; border-bottom-width:2px; border-radius:5px; color:#233c59; background:#f5f8fc; font:inherit; font-weight:700; }
+.route-notice { padding:16px; margin:20px 0; border:1px solid #ded6b7; border-radius:12px; background:#fcf8ea; color:#584a26; font-size:12px; line-height:1.8; }
+.route-notice p { margin:5px 0 0; }
+@media (max-width:600px) { .route-step { padding:14px 12px; gap:9px; } .route-journey { flex-wrap:wrap; justify-content:center; } .route-button { width:100%; margin-top:5px; } .route-launch { padding:12px; gap:9px; } }
+@media (max-width:699px) { .sidebar-item > span { white-space:nowrap; } }

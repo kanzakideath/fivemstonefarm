@@ -38,6 +38,17 @@ internal sealed class LocalNavigation : Form
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
     private readonly Label label = new Label();
+    private readonly Label heading = new Label();
+    private readonly Label progressLabel = new Label();
+    private readonly Label keyGuide = new Label();
+    private readonly Panel progressTrack = new Panel();
+    private readonly Panel progressFill = new Panel();
+    private long checkpointSavedAt;
+    private int displayedSegment;
+    private readonly bool overlayPreview;
+    private readonly List<object> diagnosticEvents = new List<object>();
+    private int diagnosticSegment = -1;
+    private double diagnosticScore = -1;
     private readonly List<Sample> pending = new List<Sample>();
     private Route route;
     private long lastTick, idleSince, startedAt;
@@ -56,6 +67,15 @@ internal sealed class LocalNavigation : Form
         try
         {
             if (args[0] == "self-test") result = SelfTest();
+            else if (args[0] == "overlay-preview" && args.Length == 3)
+            {
+                Application.EnableVisualStyles();
+                using (var form = new LocalNavigation("preview", IntPtr.Zero, 0, "", args[2], 1, 0))
+                {
+                    Application.Run(form);
+                    result = form.Result;
+                }
+            }
             else if (args.Length == 8 && (args[0] == "record" || args[0] == "play"))
             {
                 long hwnd;
@@ -80,15 +100,66 @@ internal sealed class LocalNavigation : Form
     private LocalNavigation(string operation, IntPtr window, int parentPid, string cancellation, string routePath, int direction, int process)
     {
         mode = operation; target = window; parent = parentPid; cancelFile = cancellation; path = routePath; down = direction; targetPid = process;
+        overlayPreview = operation == "preview";
         FormBorderStyle = FormBorderStyle.None;
-        ShowInTaskbar = false; TopMost = true; BackColor = Color.FromArgb(25, 29, 38); Opacity = 0.9;
-        Width = 650; Height = 55;
-        label.Dock = DockStyle.Fill; label.ForeColor = Color.White; label.TextAlign = ContentAlignment.MiddleCenter;
-        label.Font = new Font("Yu Gothic UI", 10); Controls.Add(label);
+        ShowInTaskbar = false; TopMost = true; BackColor = Color.FromArgb(20, 40, 63);
+        AutoScaleMode = AutoScaleMode.None;
+        ClientSize = new Size(640, 210);
+        heading.ForeColor = Color.FromArgb(156, 216, 255);
+        heading.Font = new Font("Yu Gothic UI", 12, FontStyle.Bold);
+        heading.AutoEllipsis = true;
+        label.ForeColor = Color.White;
+        label.Font = new Font("Yu Gothic UI", 11);
+        progressLabel.ForeColor = Color.FromArgb(206, 222, 239);
+        progressLabel.Font = new Font("Yu Gothic UI", 10);
+        keyGuide.ForeColor = Color.White;
+        keyGuide.Font = new Font("Yu Gothic UI", 10, FontStyle.Bold);
+        progressTrack.BackColor = Color.FromArgb(52, 75, 99);
+        progressFill.BackColor = Color.FromArgb(82, 185, 222);
+        progressTrack.Controls.Add(progressFill);
+        Controls.Add(heading); Controls.Add(label); Controls.Add(progressLabel);
+        Controls.Add(progressTrack); Controls.Add(keyGuide);
+        LayoutOverlay();
         timer.Interval = 16;
         timer.Tick += Tick;
         Shown += delegate { BeginInvoke(new Action(BeginOperation)); };
         FormClosed += delegate { timer.Stop(); ReleaseKeys(); RemoveHooks(); };
+    }
+    private bool IsReturnLeg() { return Path.GetFileName(path).StartsWith("return", StringComparison.OrdinalIgnoreCase); }
+    private void LayoutOverlay()
+    {
+        int inner = ClientSize.Width - 36;
+        heading.SetBounds(18, 12, inner, 30);
+        label.SetBounds(18, 48, inner, 60);
+        progressLabel.SetBounds(18, 115, inner, 24);
+        progressTrack.SetBounds(18, 144, inner, 7);
+        keyGuide.SetBounds(18, 164, inner, 40);
+    }
+    private void UpdateOverlay()
+    {
+        string directory = Path.GetFileName(Path.GetDirectoryName(path));
+        string work = directory == "washing" ? "石洗い" : directory == "gold" ? "砂金取り" : "石掘り";
+        string leg = IsReturnLeg() ? "復路 / 荷台 → 同じ作業現場" : "往路 / 作業現場 → 登録した荷台";
+        heading.Text = work + " / " + (mode == "record" ? "記録中 / " : "自動徒歩 / ") + leg;
+        int count = route == null ? 0 : route.segments.Count;
+        double fraction;
+        if (mode == "record")
+        {
+            fraction = Math.Min(1, segmentMs / 4000.0);
+            bool justSaved = checkpointSavedAt > 0 && clock.ElapsedMilliseconds - checkpointSavedAt < 1400;
+            progressLabel.Text = (justSaved ? "照合点を保存しました  ·  " : "照合点 " + count + " 個  ·  ")
+                + "この区間 " + (segmentMs / 1000.0).ToString("0.0") + " 秒 / 4 秒目安";
+            progressFill.BackColor = segmentMs >= 3200 ? Color.FromArgb(247, 192, 95) : Color.FromArgb(82, 185, 222);
+            keyGuide.Text = "W A S D：徒歩   F6：照合点   F7：停止して片道終了   F9：中止";
+        }
+        else
+        {
+            fraction = count == 0 ? 0 : (double)displayedSegment / count;
+            progressLabel.Text = "照合済み " + displayedSegment + " / " + count + " 区間  ·  到着は荷台ID／作業ボタンで別途確認";
+            keyGuide.Text = "F9：中止   ·   手動操作／別アプリへ切替でも停止します";
+        }
+        progressFill.SetBounds(0, 0, (int)(progressTrack.Width * fraction), progressTrack.Height);
+        Refresh();
     }
     protected override bool ShowWithoutActivation { get { return true; } }
     protected override CreateParams CreateParams
@@ -99,13 +170,33 @@ internal sealed class LocalNavigation : Form
     {
         try
         {
+            if (overlayPreview)
+            {
+                heading.Text = "プレビュー：石洗い / 往路 / 現場 → 登録した荷台";
+                label.Text = "トラックの荷台前へ歩いてください。\n4秒以内ごとに一度立ち止まると、景色を照合点として保存します。";
+                progressLabel.Text = "照合点 3 個を保存済み   ·   現在の区間 2.8 秒 / 4 秒目安";
+                keyGuide.Text = "W A S D：徒歩   F6：照合点   F7：荷台前で終了   F9：中止";
+                progressFill.Size = new Size((int)(progressTrack.Width * .7), progressTrack.Height);
+                using (var bitmap = new Bitmap(Width, Height))
+                {
+                    DrawToBitmap(bitmap, new Rectangle(0, 0, Width, Height));
+                    bitmap.Save(path, ImageFormat.Png);
+                }
+                Result = "OVERLAY_PREVIEW_OK"; Close(); return;
+            }
             Guard();
             RECT r; GetClientRect(target, out r); POINT p = new POINT(); ClientToScreen(target, ref p);
-            Location = new Point(p.x + Math.Max(0, (r.right - Width) / 2), p.y + Math.Max(0, r.bottom - 70));
+            Width = Math.Min(680, r.right - 32); LayoutOverlay();
+            Location = new Point(p.x + 16, p.y + 16);
+            UpdateOverlay();
             if (mode == "record")
             {
-                label.Text = "3秒後に記録開始。W/A/S/D・マウスだけで徒歩移動。立ち止まると照合点を保存。終点でF7、取消F9";
-                Wait(3000); NormalisePitch();
+                for (int seconds = 3; seconds >= 1; seconds--)
+                {
+                    label.Text = seconds + "秒後に記録を開始します。今は動かずに待ってください。\n矢印は手順の案内です。実際の車両の方向を示すものではありません。";
+                    Wait(1000);
+                }
+                NormalisePitch();
                 byte[] start = CaptureScenery(); RequireTexture(start);
                 route = new Route { width = r.right, height = r.bottom, down = down, start = Convert.ToBase64String(start) };
                 RAWINPUTDEVICE[] devices = { new RAWINPUTDEVICE { page = 1, usage = 2, flags = 0x100, window = Handle } };
@@ -124,6 +215,8 @@ internal sealed class LocalNavigation : Form
                     throw new InvalidOperationException("DISPLAY_CHANGED_RERECORD_ROUTE");
                 playing = true; InstallHooks();
                 Play();
+                Guard();
+                SaveRunEvidence("ROUTE_REPLAYED");
                 Result = "ROUTE_REPLAYED"; // The parent MUST independently verify cargo ID / work target.
                 Close();
             }
@@ -155,7 +248,11 @@ internal sealed class LocalNavigation : Form
                 throw new InvalidOperationException("CHECKPOINT_REQUIRED_STOP_EVERY_FOUR_SECONDS");
             if (mask == 0 && pending.Count > 0 && ((idleSince != 0 && now - idleSince >= 650) || checkpoint || end))
                 SaveCheckpoint();
-            label.Text = "記録中：区間 " + (route.segments.Count + 1) + " / 40。4秒以内ごとに停止。終点でF7、取消F9";
+            label.Text = segmentMs >= 3200
+                ? "そろそろ一度立ち止まってください。\n停止すると照合用の景色を自動保存します。"
+                : (IsReturnLeg() ? "同じ作業現場へ歩いて戻ってください。" : "登録した車両の荷台前へ歩いてください。")
+                    + "\n終点では止まってF7。途中は4秒以内ごとに一度止まります。";
+            UpdateOverlay();
             if (end)
             {
                 if (mask != 0) throw new InvalidOperationException("STOP_WALKING_BEFORE_FINISH");
@@ -182,6 +279,8 @@ internal sealed class LocalNavigation : Form
             NormalisePitch(); byte[] image = CaptureScenery(); RequireTexture(image);
             var segment = new Segment { samples = new List<Sample>(pending), image = Convert.ToBase64String(image) };
             route.segments.Add(segment);
+            checkpointSavedAt = clock.ElapsedMilliseconds;
+            UpdateOverlay();
             if (route.segments.Count > 40) throw new InvalidOperationException("TOO_MANY_CHECKPOINTS");
             pending.Clear(); segmentMs = 0; rawX = rawY = 0; idleSince = 0; lastTick = clock.ElapsedMilliseconds;
         }
@@ -222,17 +321,23 @@ internal sealed class LocalNavigation : Form
             try { replay(value.segments[n], n); }
             finally { release(); }
             guard(); align(Convert.FromBase64String(value.segments[n].image));
-            progress(n + 1, value.segments.Count);
+            guard(); progress(n + 1, value.segments.Count);
         }
     }
     private void Play()
     {
         ExecutePlan(route, Align, ReplaySegment, ReleaseKeys, Guard,
-            delegate(int completed, int total) { File.WriteAllText(path + ".progress", completed + "/" + total, Encoding.UTF8); });
+            delegate(int completed, int total) {
+                displayedSegment = completed; UpdateOverlay();
+                File.WriteAllText(path + ".progress", completed + "/" + total, Encoding.UTF8);
+            });
     }
     private void ReplaySegment(Segment segment, int number)
     {
-        label.Text = "徒歩ルート " + (number + 1) + "/" + route.segments.Count + "：実画面照合つき。F9／手動操作／他アプリ切替で停止";
+        diagnosticSegment = number;
+        displayedSegment = number;
+        label.Text = "自動で徒歩移動中。操作せずに見守ってください。\n景色が一致しない場合は入力を止めます。F9ですぐ中止できます。";
+        UpdateOverlay();
         long origin = clock.ElapsedMilliseconds; int timeline = 0;
         foreach (Sample step in segment.samples)
         {
@@ -253,7 +358,8 @@ internal sealed class LocalNavigation : Form
         ReleaseKeys(); NormalisePitch();
         byte[] live = CaptureScenery();
         if (Matches(reference, live)) { Wait(90); if (Matches(reference, CaptureScenery())) return; }
-        label.Text = "記録した景色へ視点を合わせています。照合できない場合は歩かず停止します";
+        label.Text = "記録した景色へ視点を合わせています。\n照合できるまでは歩きません。一致しない場合は理由を表示して停止します。";
+        UpdateOverlay();
         long deadline = clock.ElapsedMilliseconds + 16000;
         int totalX = 0, bestX = 0;
         double best = Similarity(reference, live);
@@ -262,6 +368,7 @@ internal sealed class LocalNavigation : Form
         {
             MoveCamera(80, 0); totalX += 80; Wait(90); live = CaptureScenery();
             double score = Similarity(reference, live);
+            diagnosticScore = score;
             if (score > best) { best = score; bestX = totalX; }
             if (Matches(reference, live)) { Wait(90); if (Matches(reference, CaptureScenery())) return; }
         }
@@ -276,6 +383,7 @@ internal sealed class LocalNavigation : Form
             Wait(90);
             if (Matches(reference, CaptureScenery())) { Wait(90); if (Matches(reference, CaptureScenery())) return; }
         }
+        diagnosticScore = best;
         throw new InvalidOperationException("VISUAL_CHECKPOINT_MISMATCH");
     }
     private void NormalisePitch()
@@ -296,6 +404,11 @@ internal sealed class LocalNavigation : Form
         if (route != null && (route.width != r.right || route.height != r.bottom))
             throw new InvalidOperationException("DISPLAY_CHANGED_RERECORD_ROUTE");
         POINT p = new POINT(); ClientToScreen(target, ref p);
+        // Never compare the assistant overlay to itself. Restore without activation.
+        bool restoreOverlay = Visible;
+        if (restoreOverlay) { Hide(); DwmFlush(); }
+        try
+        {
         using (var full = new Bitmap(r.right, r.bottom, PixelFormat.Format24bppRgb))
         using (var small = new Bitmap(ImageWidth, ImageHeight, PixelFormat.Format24bppRgb))
         {
@@ -308,6 +421,8 @@ internal sealed class LocalNavigation : Form
             }
             return values;
         }
+        }
+        finally { if (restoreOverlay && !IsDisposed) Show(); }
     }
     // Use separated scenery tiles. Exclude the minimap, lower HUD, and central avatar.
     private static readonly Rectangle[] Tiles = { new Rectangle(8, 12, 22, 16), new Rectangle(37, 9, 22, 14), new Rectangle(66, 12, 22, 16), new Rectangle(8, 29, 22, 13), new Rectangle(66, 29, 22, 13) };
@@ -433,7 +548,22 @@ internal sealed class LocalNavigation : Form
         if (keyboardHook == IntPtr.Zero || mouseHook == IntPtr.Zero) throw new InvalidOperationException("MANUAL_STOP_HOOK_UNAVAILABLE");
     }
     private void RemoveHooks() { if (keyboardHook != IntPtr.Zero) UnhookWindowsHookEx(keyboardHook); if (mouseHook != IntPtr.Zero) UnhookWindowsHookEx(mouseHook); }
-    private void Fail(Exception error) { recording = false; timer.Stop(); ReleaseKeys(); Result = "ERROR " + SafeError(error); Close(); }
+    private void Fail(Exception error) {
+        recording = false; timer.Stop(); ReleaseKeys();
+        Result = "ERROR " + SafeError(error); SaveRunEvidence(Result); Close();
+    }
+    private void SaveRunEvidence(string result) {
+        if (overlayPreview || String.IsNullOrEmpty(path)) return;
+        try {
+            diagnosticEvents.Add(new { segment = diagnosticSegment, score = diagnosticScore,
+                elapsedMs = clock.ElapsedMilliseconds, result = result, utc = DateTime.UtcNow.ToString("o") });
+            if (diagnosticEvents.Count > 64) diagnosticEvents.RemoveAt(0);
+            AtomicWrite(path + ".last-run.json", Json.Serialize(new {
+                schema = 1, operation = mode, result = result, events = diagnosticEvents,
+                inputReleased = heldMask == 0,
+                scope = "Local route observations only; not an inventory receipt." }));
+        } catch { /* Diagnostics must not prevent input release or cancellation. */ }
+    }
     private static string SafeError(Exception error)
     {
         string value = error is InvalidOperationException ? error.Message : error.GetType().Name;
@@ -489,6 +619,21 @@ internal sealed class LocalNavigation : Form
         }
         catch (InvalidOperationException) { }
         if (walked != 0) throw new Exception("INPUT_AFTER_CANCEL");
+        for (int cycle = 0; cycle < 300; cycle++) {
+            int completed = 0;
+            ExecutePlan(route, delegate(byte[] image) { }, delegate(Segment seg, int n) { },
+                delegate { }, delegate { }, delegate(int n, int count) { completed++; });
+            if (completed != route.segments.Count) throw new Exception("REPEATED_PLAN_TEST");
+        }
+        bool cancelledAtEnd = false; observed = 0; aligned = 0;
+        try {
+            ExecutePlan(route, delegate(byte[] image) { if (++aligned == 3) cancelledAtEnd = true; },
+                delegate(Segment seg, int n) { }, delegate { },
+                delegate { if (cancelledAtEnd) throw new InvalidOperationException("CANCELLED"); },
+                delegate(int n, int count) { observed++; });
+            throw new Exception("FINAL_CANCEL_NOT_PROPAGATED");
+        } catch (InvalidOperationException) { }
+        if (observed != 1) throw new Exception("SUCCESS_AFTER_FINAL_CANCEL");
         return "SELFTEST OK";
     }
 
@@ -500,6 +645,7 @@ internal sealed class LocalNavigation : Form
     [StructLayout(LayoutKind.Explicit)] private struct INPUTDATA { [FieldOffset(0)] public MOUSEINPUT mouse; [FieldOffset(0)] public KEYBDINPUT keyboard; }
     [StructLayout(LayoutKind.Sequential)] private struct INPUT { public uint type; public INPUTDATA data; }
     private delegate IntPtr HookCallback(int code, IntPtr w, IntPtr l);
+    [DllImport("dwmapi.dll")] private static extern int DwmFlush();
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr h);
     [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr h);

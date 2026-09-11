@@ -1,6 +1,6 @@
 # Archived UI captures
 
-The PNG files in this directory are the historical v8.0.0 visual baseline. They are not the current v9.1.8 release UI and are not packaged into the application.
+The PNG files in this directory are the historical v8.0.0 visual baseline. They are not the current v9.1.9 release UI and are not packaged into the application.
 
 Current release captures are generated from the completed executable immediately before tagging with:
 
@@ -8,7 +8,7 @@ Current release captures are generated from the completed executable immediately
 $assets = (Resolve-Path 'src/ui-web/www').Path
 & scripts/ui-tests/Invoke-UiVisualTests.ps1 `
   -ExecutablePath <absolute-path-to-AI採掘機.exe> `
-  -OutputDirectory artifacts/ui-tests/v9.1.8 `
+  -OutputDirectory artifacts/ui-tests/v9.1.9 `
   -BaseArguments @('--visual-test', '--assets', $assets) `
   -WebViewScaleFactors 1,1.5,2
 ```

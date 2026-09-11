@@ -95,6 +95,9 @@
               <button id="tab-vehicle" class="sidebar-item" type="button" role="tab" aria-selected="false" aria-controls="screen-vehicle" data-page="vehicle">
                 <svg aria-hidden="true"><use href="#icon-vehicle"></use></svg><span>車両</span>
               </button>
+              <button id="tab-routes" class="sidebar-item" type="button" role="tab" aria-selected="false" aria-controls="screen-routes" data-page="routes">
+                <svg aria-hidden="true"><use href="#icon-link"></use></svg><span>ルート設定</span>
+              </button>
               <button id="tab-settings" class="sidebar-item" type="button" role="tab" aria-selected="false" aria-controls="screen-settings" data-page="settings">
                 <svg aria-hidden="true"><use href="#icon-settings"></use></svg><span>設定</span>
               </button>
@@ -148,6 +151,11 @@
                   </div>
                 </section>
 
+                <button id="overview-route" class="route-launch" type="button" aria-controls="screen-routes">
+                  <span class="route-launch-icon" aria-hidden="true">↔</span>
+                  <span><strong>自動収納・石補充のルートを設定</strong><small id="overview-route-summary">車両登録 → 往復記録 → 自動試走</small></span>
+                  <svg class="chevron" aria-hidden="true"><use href="#icon-chevron"></use></svg>
+                </button>
                 <button id="run-button" class="primary-action pressable" type="button">
                   <span class="press-surface" aria-hidden="true"></span>
                   <svg class="action-icon" aria-hidden="true"><use id="run-icon-use" href="#icon-play"></use></svg>
@@ -190,8 +198,13 @@
               <div class="content-column">
                 <header class="page-heading">
                   <h1>車両</h1>
-                  <p>登録済みの車両を近くから探索し、確認済みの作業報酬だけを同じ荷台へ収納します</p>
+                  <p>荷台を登録し、作業現場との往復ルートを設定します</p>
                 </header>
+                <button id="vehicle-route" class="route-launch" type="button" aria-controls="screen-routes">
+                  <span class="route-launch-icon" aria-hidden="true">↔</span>
+                  <span><strong>ルート設定を開く</strong><small>自動収納・石洗い補充 ／ EXEだけで設定</small></span>
+                  <svg class="chevron" aria-hidden="true"><use href="#icon-chevron"></use></svg>
+                </button>
 
                 <section class="section-block" aria-labelledby="vehicle-registration-heading">
                   <h2 id="vehicle-registration-heading" class="section-label">登録車両</h2>
@@ -241,10 +254,62 @@
                   <svg class="action-icon" aria-hidden="true"><use href="#icon-car-badge"></use></svg>
                   <span id="vehicle-register-label">車両登録を開始</span>
                 </button>
-                <button id="vehicle-route" class="primary-action secondary-primary pressable" type="button">徒歩ルート・音声設定（EXEのみ）</button>
                 <p class="group-footnote">徒歩往復は各現場で記録と自動試走が必要です。移動中はFiveMを前面で使用します。音声：VOICEVOX:四国めたん</p>
                 <button id="vehicle-delete" class="text-action destructive" type="button">登録を削除</button>
                 <p class="group-footnote">登録情報はこのPCへ保存され、採掘・石洗い・砂金採りで共通して使われます。開始前から持っていた道具や食料は移動しません。</p>
+              </div>
+            </section>
+
+            <section id="screen-routes" class="screen" data-page="routes" role="tabpanel" aria-labelledby="tab-routes" aria-hidden="true">
+              <div class="content-column route-column">
+                <header class="page-heading">
+                  <span class="route-eyebrow">EXE ONLY · サーバーへの追加導入なし</span>
+                  <h1>ルート設定</h1>
+                  <p>「どの現場から、どの荷台へ、どう戻るか」を画面で確認しながら登録します。</p>
+                </header>
+                <div class="route-mode-picker" role="group" aria-label="ルートを設定する作業">
+                  <button type="button" data-route-mode="mining" aria-pressed="false">石掘り</button>
+                  <button type="button" data-route-mode="washing" aria-pressed="false">石洗い</button>
+                  <button type="button" data-route-mode="gold" aria-pressed="false">砂金取り</button>
+                </div>
+                <p id="route-mode-hint" class="route-hint"></p>
+                <div class="route-journey" aria-label="登録する往復の流れ。実際の地図ではありません">
+                  <span>作業現場</span><span class="route-journey-line">往路 →</span><strong>登録した荷台</strong><span class="route-journey-line">← 復路</span><span>同じ現場</span>
+                </div>
+                <p class="route-hint">これは手順図です。画面だけから実際の地図・車両座標は表示しません。</p>
+                <div id="route-feedback" class="route-feedback" role="status" aria-live="polite">上から順番に設定してください。記録や試走だけではアイテムを移動しません。</div>
+                <section class="route-feedback" aria-live="polite" aria-label="実行結果の確認">
+                  <strong>直近の収納サイクル</strong>
+                  <p id="route-cycle-status">まだ実行記録はありません。試走では収納しません。</p>
+                </section>
+                <div class="route-steps">
+                  <article class="route-step" id="route-step-vehicle">
+                    <span class="route-step-number">1</span><div class="route-step-body"><div class="route-step-heading"><h2>収納先の車両を登録</h2><span id="route-vehicle-badge" class="route-badge">未登録</span></div>
+                    <p>停車した自分のバン／トラックの荷台を一度開きます。他の車両の荷台には収納しません。</p>
+                    <button id="route-register" type="button" class="route-button">車両登録を開始</button></div>
+                  </article>
+                  <article class="route-step" id="route-step-record">
+                    <span class="route-step-number">2</span><div class="route-step-body"><div class="route-step-heading"><h2>現場との往復を教える</h2><span id="route-record-badge" class="route-badge">未記録</span></div>
+                    <p>作業できる位置から開始。画面上の案内に従って荷台まで歩き、同じ現場へ戻ります。石洗いは手持ち石を用意してください。</p>
+                    <div class="route-key-guide"><span><kbd>W A S D</kbd> 徒歩</span><span><kbd>F6</kbd> 照合点</span><span><kbd>F7</kbd> 片道の終点</span><span><kbd>F9</kbd> 中止</span></div>
+                    <p>4秒以内ごとに立ち止まると、景色を照合点として保存します。往路・復路はそれぞれ記録します。</p>
+                    <button id="route-teach" type="button" class="route-button">画面ガイド付きで往復を記録</button></div>
+                  </article>
+                  <article class="route-step" id="route-step-trial">
+                    <span class="route-step-number">3</span><div class="route-step-body"><div class="route-step-heading"><h2>収納せずに自動試走</h2><span id="route-trial-badge" class="route-badge">未試走</span></div>
+                    <p>元の作業位置から自動で往復します。荷台IDと現場の作業ボタンを確認できた場合だけ試走済みになります。</p>
+                    <button id="route-trial" type="button" class="route-button">自動試走を開始（収納なし）</button></div>
+                  </article>
+                  <article class="route-step" id="route-step-enable">
+                    <span class="route-step-number">4</span><div class="route-step-body"><div class="route-step-heading"><h2>自動収納・補充を有効にする</h2><span id="route-enabled-badge" class="route-badge">OFF</span></div>
+                    <p>石掘り・砂金は容量のしきい値で収納。石洗いは石0または容量のしきい値で成果を収納し、石を補充します。</p>
+                    <button id="route-enable" type="button" class="route-button">自動収納・補充をON</button>
+                    <button id="route-return-home" type="button" class="route-button route-button-quiet">作業画面へ戻る</button></div>
+                  </article>
+                </div>
+                <aside class="route-notice"><strong>記録中・試走中はFiveMを前面にしてください。</strong><p>F9で中止できます。車両や現場を変えたときは再記録、再接続時は再確認が必要です。試走記録があっても接続とルートの一致を開始時に再確認します。実ゲームの全状況での到達保証はありません。</p></aside>
+                <button id="route-voice" class="route-button route-button-quiet" type="button">音声・別ウィンドウの設定を開く</button>
+                <p class="route-hint">画面の入口が使えない場合：Ctrl + Alt + R ／ 完了ボイス：VOICEVOX:四国めたん</p>
               </div>
             </section>
 

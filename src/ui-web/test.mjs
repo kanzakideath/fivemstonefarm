@@ -80,7 +80,7 @@ assert.match(metaAdapter, /activeDrawGeneration !== this\.generation/);
 assert.match(js, /fixtureToken === '1' \|\| fixtureToken === 'host'/);
 assert.match(js, /reportVisualSmoke/);
 
-for (const page of ['overview', 'stone', 'vehicle', 'settings', 'update']) {
+for (const page of ['overview', 'stone', 'vehicle', 'routes', 'settings', 'update']) {
   assert.match(html, new RegExp(`id="tab-${page}"[^>]+aria-controls="screen-${page}"`));
   assert.match(html, new RegExp(`id="screen-${page}"[^>]+aria-labelledby="tab-${page}"`));
 }
@@ -159,3 +159,17 @@ try {
 }
 
 console.log('UI source and offline bundle contract checks passed');
+
+for (const id of ['overview-route', 'vehicle-route', 'route-register', 'route-teach', 'route-trial', 'route-enable']) {
+  assert.match(html, new RegExp(`id="${id}"`));
+}
+assert.match(css, /\.route-launch\s*\{[^}]*background:#eaf2ff/);
+assert.match(js, /sendAction\('route\.teach', \{ mode: state\.actionMode \}\)/);
+assert.match(js, /sendAction\('route\.trial', \{ mode: state\.actionMode \}\)/);
+assert.match(js, /trialSaved === true/);
+assert.match(js, /routeTeach\.disabled = busy \|\| !hasVehicle/);
+assert.match(css, /grid-auto-flow: column/);
+for (const [,body] of html.matchAll(/<button\b[^>]*class="[^"]*primary-action[^"]*"[^>]*>([\s\S]*?)<\/button>/g)) {
+  assert.match(body, /class="press-surface"/, 'white primary buttons must have a visible surface');
+}
+console.log('Route setup entries, visible surfaces and guarded commands verified');

@@ -154,7 +154,7 @@ namespace AiMiner.UiHost
                 new Regex(@"\Aai-miner-webview-test-[a-f0-9]{32}\z", RegexOptions.CultureInvariant);
             private static readonly HashSet<string> VisualFixtures = new HashSet<string>(StringComparer.Ordinal)
             {
-                "overview", "action-sheet", "settings", "vehicle", "update", "narrow",
+                "overview", "action-sheet", "settings", "vehicle", "routes", "update", "narrow",
                 "stone-home", "stone-gacha", "stone-collection", "stone-achievements",
                 "stone-profile", "stone-narrow", "stone-host"
             };
@@ -212,6 +212,8 @@ namespace AiMiner.UiHost
                         return "https://app.local/index.html?fixture=1&page=overview&picker=1";
                     case "settings":
                         return "https://app.local/index.html?fixture=1&page=settings";
+                    case "routes":
+                        return "https://app.local/index.html?fixture=1&page=routes";
                     case "vehicle":
                         return "https://app.local/index.html?fixture=1&page=vehicle";
                     case "update":
@@ -544,7 +546,7 @@ namespace AiMiner.UiHost
                     string parseError;
                     string[] scenes =
                     {
-                        "overview", "action-sheet", "settings", "vehicle", "update", "narrow",
+                        "overview", "action-sheet", "settings", "vehicle", "routes", "update", "narrow",
                         "stone-home", "stone-gacha", "stone-collection", "stone-achievements",
                         "stone-profile", "stone-narrow", "stone-host"
                     };
@@ -563,6 +565,8 @@ namespace AiMiner.UiHost
                             ? "https://app.local/index.html?fixture=1&page=overview&picker=1"
                             : scene == "settings"
                                 ? "https://app.local/index.html?fixture=1&page=settings"
+                                : scene == "routes"
+                                    ? "https://app.local/index.html?fixture=1&page=routes"
                                 : scene == "vehicle"
                                     ? "https://app.local/index.html?fixture=1&page=vehicle"
                                     : scene == "update"

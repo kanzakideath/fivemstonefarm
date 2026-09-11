@@ -54,7 +54,7 @@ def main():
             page.evaluate('''() => {
                 const s = window.aiMinerTest.getState(); s.revision += 10;
                 s.routes = {hasVehicle:true,recorded:false,trialSaved:false,busy:false,feedback:'テスト：荷台登録済み'};
-                window.aiMiner.receive({type:'snapshot',payload:s});
+                window.aiMinerTest.setState(s);
             }''')
             assert page.locator('#route-teach').is_enabled()
             assert page.locator('#route-trial').is_disabled()
@@ -65,7 +65,7 @@ def main():
             page.evaluate('''() => {
                 const s = window.aiMinerTest.getState(); s.revision += 10;
                 s.routes = {hasVehicle:true,recorded:true,trialSaved:false,busy:false,feedback:'テスト：往復記録あり'};
-                window.aiMiner.receive({type:'snapshot',payload:s});
+                window.aiMinerTest.setState(s);
             }''')
             assert page.locator('#route-trial').is_enabled()
             assert page.locator('#route-enable').is_disabled()
@@ -74,20 +74,20 @@ def main():
             page.evaluate('''() => {
                 const s = window.aiMinerTest.getState(); s.revision += 10;
                 s.routes = {hasVehicle:true,recorded:true,trialSaved:true,busy:false,feedback:'テスト：前回の試走記録あり。接続は開始時に再確認。'};
-                window.aiMiner.receive({type:'snapshot',payload:s});
+                window.aiMinerTest.setState(s);
             }''')
             assert page.locator('#route-enable').is_enabled()
             page.locator('#route-enable').click()
             assert page.evaluate("window.__sent.some(m => m.action === 'vehicle.toggle' && m.payload.enabled === true)")
             page.evaluate('''() => {
                 const s = window.aiMinerTest.getState(); s.revision += 10; s.routes.busy = true;
-                window.aiMiner.receive({type:'snapshot',payload:s});
+                window.aiMinerTest.setState(s);
             }''')
             for selector in ['#route-register','#route-teach','#route-trial','#route-enable','[data-route-mode="gold"]']:
                 assert page.locator(selector).is_disabled(), selector
             page.evaluate('''() => {
                 const s = window.aiMinerTest.getState(); s.revision += 10; s.routes.busy = false;
-                window.aiMiner.receive({type:'snapshot',payload:s});
+                window.aiMinerTest.setState(s);
             }''')
             page.locator('#route-return-home').click()
             page.locator('#tab-vehicle').click()
@@ -98,6 +98,7 @@ def main():
             page.locator('#tab-routes').click()
             assert page.locator('#screen-routes').is_visible()
             page.locator('#content-stage').evaluate('(el) => { el.scrollTop = 0; }')
+            page.locator('#screen-routes').evaluate('(el) => { el.scrollTop = 0; }')
             page.wait_for_timeout(350)
             page.screenshot(path=str(output / f'routes-{width}.png'), full_page=True)
             overflow = page.evaluate('document.documentElement.scrollWidth > window.innerWidth + 1')
