@@ -68,7 +68,7 @@ jobs:
             python scripts/ui-tests/Test-RouteSetupBrowser.py --output artifacts/observed-wash
           }
           if ($LASTEXITCODE -ne 0) { throw 'Browser interaction tests failed.' }
-      - name: Commit tested runtime sources and remove one-shot patchers
+      - name: Commit only tested application changes, not unrelated generated dependency files
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -77,7 +77,9 @@ jobs:
           Remove-Item scripts/passive-route-repair -Recurse -Force
           Remove-Item scripts/Apply-ObservedWash.py,scripts/Apply-ObservedWashUi.py,scripts/Fix-ObservedWashCompile.py,scripts/Finalize-ObservedWashDiagnostics.py,scripts/Trace-WashValidation.py -Force
           Remove-Item .github/workflows/passive-route-repair.yml,.github/workflows/wash-source-export.yml,.github/workflows/observed-wash-repair.yml -Force
-          git add -u
+          # Build always regenerates vendor and STONEVERSE bundles from unchanged
+          # pinned sources. Do not include their platform-only line-ending churn.
+          git add -u -- . ':(exclude)src/ui-web/www/stoneverse' ':(exclude)src/ui-web/www/stoneverse-host.js' ':(exclude)src/ui-web/www/vendor'
           git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --cached --check
           if ($LASTEXITCODE -ne 0) { throw 'Staged source diff failed.' }
           git commit -m 'Use observed foreground wash correction and retain tested nearby storage and passive routes [skip ci]'
