@@ -1,0 +1,107 @@
+name: Complete route repair validation
+on:
+  push:
+    branches: [fix/route-setup-overlay-9.1.9]
+    paths: [.github/workflows/complete-route-repair.yml]
+permissions:
+  contents: write
+concurrency:
+  group: complete-route-repair
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Apply audited changes, not obsolete prepare scripts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git merge-base --is-ancestor 566d41399a9f31ca2fbf4268e78c832084c9681d HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Unexpected baseline.' }
+          if (-not ([IO.File]::ReadAllText('src/exe-route-navigation.ahk').Contains('NewStorageCycleProof('))) {
+            python scripts/Finalize-RouteRepair.py
+            if ($LASTEXITCODE -ne 0) { throw 'Audited source repair failed.' }
+          }
+          git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'Source diff failed validation.' }
+      - name: Full Windows build and compiled regression tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force artifacts/route-ui | Out-Null
+          Start-Transcript artifacts/route-ui/windows-validation.txt
+          try { ./scripts/Build.ps1 -Version 9.1.9 } finally { Stop-Transcript }
+      - name: Render actual native overlay without game input
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $result = Join-Path $PWD 'artifacts/route-ui/native-overlay-result.txt'
+          $image = Join-Path $PWD 'artifacts/route-ui/native-overlay.png'
+          $helper = Join-Path $PWD 'build/staging/LocalNavigation.exe'
+          $proc = Start-Process -FilePath $helper -ArgumentList @('overlay-preview', "`"$result`"", "`"$image`"") -PassThru
+          if (-not $proc.WaitForExit(15000)) { $proc.Kill(); throw 'Overlay preview timed out.' }
+          if (-not (Test-Path $result) -or (Get-Content $result -Raw).Trim() -ne 'OVERLAY_PREVIEW_OK') { throw 'Overlay renderer failed.' }
+          if (-not (Test-Path $image) -or (Get-Item $image).Length -lt 1000) { throw 'Overlay PNG missing.' }
+      - name: Exercise real route screen and entry points at four sizes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install playwright==1.57.0
+          if ($LASTEXITCODE -ne 0) { throw 'Browser dependency install failed.' }
+          $edge = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+          if (-not (Test-Path $edge)) { $edge = 'C:\Program Files\Microsoft\Edge\Application\msedge.exe' }
+          if (Test-Path $edge) {
+            python scripts/ui-tests/Test-RouteSetupBrowser.py --browser $edge --output artifacts/route-ui
+          } else {
+            python -m playwright install chromium
+            if ($LASTEXITCODE -ne 0) { throw 'Browser install failed.' }
+            python scripts/ui-tests/Test-RouteSetupBrowser.py --output artifacts/route-ui
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Route screen browser checks failed.' }
+      - name: Commit only validated application changes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- src/mining-auto.ahk src/exe-route-navigation.ahk src/local-navigation/LocalNavigation.cs src/ui-host/Protocol.cs src/ui-host/Program.cs src/ui-web/src/app.js src/ui-web/src/app.css src/ui-web/src/index.html src/ui-web/test.mjs src/ui-web/package.json src/ui-web/package-lock.json src/ui-web/README.md src/ui-web/screenshots/README.md src/ui-web/www/app.js src/ui-web/www/app.css src/ui-web/www/index.html src/ui-web/www/build-info.json README.md src/README.md config/AI採掘機.ini docs/AI採掘機_使い方.txt docs/RELEASE_v9.1.9.md scripts/ui-tests/Test-RouteSetupBrowser.py
+          git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --cached --check
+          if ($LASTEXITCODE -ne 0) { throw 'Staged diff failed validation.' }
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 1) {
+            git commit -m 'Complete visible route setup, native guide and observed storage-cycle status [skip ci]'
+            if ($LASTEXITCODE -ne 0) { throw 'Commit failed.' }
+            git push origin HEAD:fix/route-setup-overlay-9.1.9
+            if ($LASTEXITCODE -ne 0) { throw 'Branch moved; do not overwrite other work.' }
+          } elseif ($LASTEXITCODE -ne 0) { throw 'Unable to inspect changes.' }
+          $head = (& git rev-parse HEAD).Trim()
+          $hash = (Get-FileHash dist/ai-miner-win-x64.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "source_commit=$head`nsha256=$hash`nWindows executable, browser, overlay and synthetic logic checks. No live FiveM walking/storage/refill test." | Set-Content artifacts/route-ui/CANDIDATE.txt -Encoding utf8
+          git archive --format=zip HEAD -o artifacts/route-ui/tested-source.zip
+          if ($LASTEXITCODE -ne 0) { throw 'Source archive failed.' }
+      - name: Retain build and visual evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: complete-route-repair-evidence
+          path: |
+            artifacts/route-ui/
+            build/staging/*.txt
+            build/staging/*.log
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Retain unreleased executable only after all checks
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: route-setup-9.1.9-candidate
+          path: |
+            dist/ai-miner-win-x64.exe
+            docs/RELEASE_v9.1.9.md
+            artifacts/route-ui/CANDIDATE.txt
+          retention-days: 7
+          if-no-files-found: error
