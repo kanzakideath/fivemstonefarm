@@ -2,11 +2,22 @@ name: Storage navigation validation
 on:
   push:
     branches: [fix/verified-storage-navigation]
-    paths: [.github/workflows/storage-navigation-validation.yml]
+    paths:
+      - .github/workflows/storage-navigation-validation.yml
+      - src/**
+      - scripts/**
+      - fivem-resource/**
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/storage-navigation-validation.yml
+      - src/**
+      - scripts/**
+      - fivem-resource/**
 permissions:
-  contents: write
+  contents: read
 concurrency:
-  group: verified-storage-navigation
+  group: navigation-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   validate:
@@ -15,57 +26,28 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          fetch-depth: 0
-      - name: Apply reviewed integration on its exact baseline
+          persist-credentials: false
+      - name: Validate the checked-in source without rewriting it
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $source = [IO.File]::ReadAllText('src/mining-auto.ahk')
-          if (-not $source.Contains('#Include verified-storage-navigation.ahk')) {
-            python scripts/Apply-VerifiedNavigationRepair.py
-            if ($LASTEXITCODE -ne 0) { throw 'Reviewed integration could not be applied.' }
+          if ($source -notmatch '(?m)^global AppVersion := "([0-9]+\.[0-9]+\.[0-9]+)"') {
+            throw 'Could not determine the checked-in application version.'
           }
-          $config = [IO.File]::ReadAllText('fivem-resource/ai_miner_companion/config.shared.lua')
-          if (-not $config.Contains('WorkArrivalDistance = 0.40')) {
-            python scripts/Refine-VerifiedNavigationRepair.py
-            if ($LASTEXITCODE -ne 0) { throw 'Reviewed refinement could not be applied.' }
-          }
-          git diff --check
-          if ($LASTEXITCODE -ne 0) { throw 'Source diff validation failed.' }
-      - name: Run navigation checks and full Windows build
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
+          $version = $Matches[1]
           New-Item -ItemType Directory -Force artifacts/navigation-validation | Out-Null
           Start-Transcript -Path artifacts/navigation-validation/validation.txt
           try {
             node scripts/Test-VerifiedNavigation.mjs
             if ($LASTEXITCODE -ne 0) { throw 'Navigation source/JS tests failed.' }
             ./fivem-resource/ai_miner_companion/tests/Validate-Resource.ps1
-            ./scripts/Build.ps1 -Version 9.1.7
+            ./scripts/Build.ps1 -Version $version
+            $sha = (& git rev-parse HEAD).Trim()
+            $hash = (Get-FileHash dist/ai-miner-win-x64.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+            "source_commit=$sha`nsha256=$hash`nUNRELEASED TEST CANDIDATE. Requires administrator-installed companion. No live FiveM validation." | Set-Content artifacts/navigation-validation/CANDIDATE.txt -Encoding utf8
             Write-Host 'NAVIGATION_VALIDATION_OK: compiled adapter mocks and regression suite; no live FiveM test performed.'
           } finally { Stop-Transcript }
-      - name: Commit only tested application sources
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- src/mining-auto.ahk src/verified-storage-navigation.ahk scripts/Build.ps1 scripts/Test-StorageClosedLoopContract.ps1 scripts/Test-VerifiedNavigation.mjs src/ui-host/Protocol.cs src/ui-web/src/app.js src/ui-web/src/index.html src/ui-web/www/app.js src/ui-web/www/index.html fivem-resource/ai_miner_companion/client.lua fivem-resource/ai_miner_companion/config.shared.lua README.md docs/AI採掘機_使い方.txt
-          git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --cached --check
-          if ($LASTEXITCODE -ne 0) { throw 'Tested source diff check failed.' }
-          git diff --cached --quiet
-          if ($LASTEXITCODE -eq 1) {
-            git commit -m 'Connect verified walking to storage and washing refill [skip ci]'
-            if ($LASTEXITCODE -ne 0) { throw 'Tested source commit failed.' }
-            git push origin HEAD:fix/verified-storage-navigation
-            if ($LASTEXITCODE -ne 0) { throw 'Tested source push failed; branch moved.' }
-          } elseif ($LASTEXITCODE -ne 0) { throw 'Could not inspect staged changes.' }
-          $head = (& git rev-parse HEAD).Trim()
-          $hash = (Get-FileHash dist/ai-miner-win-x64.exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          "source_commit=$head`nsha256=$hash`nUNRELEASED TEST CANDIDATE. Requires administrator-installed companion. No live FiveM validation." | Set-Content artifacts/navigation-validation/CANDIDATE.txt -Encoding utf8
-          git archive --format=zip HEAD -o artifacts/navigation-validation/tested-source.zip
-          if ($LASTEXITCODE -ne 0) { throw 'Source archive failed.' }
       - name: Retain validation evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
