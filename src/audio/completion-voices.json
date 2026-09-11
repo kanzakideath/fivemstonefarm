@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "credit": "VOICEVOX:春日部つむぎ",
+  "styleId": 8,
+  "coreVersion": "0.16.4",
+  "modelsVersion": "0.16.0",
+  "clips": [
+    {
+      "file": "stone-mining-complete.wav",
+      "text": "石掘りが終わったよ！",
+      "synthesisText": "いしほりが終わったよ！",
+      "seconds": 1.376,
+      "sha256": "0ab7f8a331266c03a027f582d00d401f1d6ff75a8d1a45176830ab107a2066dc"
+    },
+    {
+      "file": "stone-washing-complete.wav",
+      "text": "石洗いが終わったよ！",
+      "synthesisText": "石洗いが終わったよ！",
+      "seconds": 1.504,
+      "sha256": "7b49d41a720bb22a96b16304716cb5651bc20692b5e8142e72ecae295e1e142b"
+    },
+    {
+      "file": "gold-panning-complete.wav",
+      "text": "砂金取りが終わりました！",
+      "synthesisText": "砂金取りが終わりました！",
+      "seconds": 1.664,
+      "sha256": "ad162cf8597b9cad168e1879b558e804896a8ac2abde226dc4f71a44d078967d"
+    }
+  ]
+}
