@@ -60,3 +60,8 @@ STONEVERSEのオフラインUIには、次の実行時依存関係をロック�
 UIホストへ必要なSDK DLLとLoaderを同梱します。ライセンスとNOTICEは配布ZIPの `licenses/WebView2-LICENSE.txt` と `licenses/WebView2-NOTICE.txt` にあります。WebView2 Evergreen Runtime自体は本プロジェクトのZIPへ同梱しません。
 
 Microsoft Windows、FiveM、Grand Theft Auto V、および記載される製品名は各権利者に帰属します。本プロジェクトはそれらの権利者による公式製品・公認製品ではありません。
+
+
+## Completion voice clips
+
+音声：VOICEVOX:四国めたん（あまあま・ノーマル）。生成音声のみを同梱し、合成エンジン・モデルは配布しません。音声の利用・再配布は https://voicevox.hiroshiba.jp/term/ と https://zunko.jp/con_ongen_kiyaku.html に従ってください。他者への再利用許諾にも同じ条件を引き継いでください。生成条件とSHA-256は `src/audio/voice-manifest.json`。

@@ -266,6 +266,8 @@ if (-not (Test-Path -LiteralPath $appIcon -PathType Leaf)) {
 
 $stagedMain = Join-Path $stageRoot 'mining-auto.ahk'
 Copy-Item -LiteralPath $mainSource -Destination $stagedMain -Force
+Copy-Item -LiteralPath (Join-Path $sourceRoot 'exe-route-navigation.ahk') -Destination $stageRoot -Force
+Copy-Item -LiteralPath (Join-Path $sourceRoot 'audio') -Destination $stageRoot -Recurse -Force
 $assetRoot = Join-Path $sourceRoot 'assets'
 if (Test-Path -LiteralPath $assetRoot -PathType Container) {
     Get-ChildItem -LiteralPath $assetRoot -File | Copy-Item -Destination $stageRoot -Force
@@ -297,6 +299,8 @@ function Invoke-CSharpBuild {
         '/reference:System.dll',
         '/reference:System.Core.dll',
         '/reference:System.Web.Extensions.dll',
+        '/reference:System.Drawing.dll',
+        '/reference:System.Windows.Forms.dll',
         $Source
     )
     & $csc @arguments
@@ -335,6 +339,10 @@ $bridgeOutput = Join-Path $stageRoot 'AI採掘機_Background.exe'
 $updaterOutput = Join-Path $stageRoot 'AI採掘機_Updater.exe'
 Invoke-CSharpBuild -Source $bridgeSource -Output $bridgeOutput
 Invoke-CSharpBuild -Source $updaterSource -Output $updaterOutput
+$localNavOutput = Join-Path $stageRoot 'LocalNavigation.exe'
+Invoke-CSharpBuild -Source (Join-Path $sourceRoot 'local-navigation\LocalNavigation.cs') -Output $localNavOutput
+Invoke-CapabilitySmokeTest -Executable $localNavOutput -Expected 'SELFTEST OK' -Mode 'self-test'
+& (Join-Path $PSScriptRoot 'Test-ExeRoutes.ps1') -SourcePath $mainSource
 & (Join-Path $PSScriptRoot 'Test-CameraRecoveryContract.ps1') -SourcePath $mainSource
 & (Join-Path $PSScriptRoot 'Test-WashRecoveryContract.ps1') -SourcePath $mainSource
 & (Join-Path $PSScriptRoot 'Test-FarmRecoverySafetyContract.ps1') -SourcePath $mainSource
