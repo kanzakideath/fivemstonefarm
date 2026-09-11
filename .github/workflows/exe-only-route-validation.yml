@@ -19,7 +19,7 @@ jobs:
       - name: Apply checksum-verified reviewed patch to index
         shell: python
         run: |
-          import base64, gzip, hashlib, pathlib, subprocess
+          import base64, gzip, hashlib, pathlib, subprocess, sys
           root=pathlib.Path('scripts/exe-only-repair')
           encoded=''.join((root/f'patch.part{n:02}').read_text().strip() for n in range(1,5))
           patch=gzip.decompress(base64.b64decode(encoded,validate=True))
@@ -30,6 +30,7 @@ jobs:
               subprocess.run(['git','apply','--cached','--check',str(path)],check=True)
               subprocess.run(['git','apply','--cached',str(path)],check=True)
               subprocess.run(['git','checkout-index','--all','--force'],check=True)
+          subprocess.run([sys.executable,str(root/'refine.py')],check=True)
           subprocess.run(['git','-c','core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol','diff','--cached','--check'],check=True)
       - name: Full Windows validation build
         shell: pwsh
