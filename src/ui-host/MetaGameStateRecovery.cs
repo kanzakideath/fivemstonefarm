@@ -380,7 +380,9 @@ namespace AiMiner.UiHost
                 .ThenByDescending(x => x.State.Mining.TotalStoneMined)
                 .ThenByDescending(x => x.State.Gacha.TotalDraws)
                 .ThenByDescending(x => x.State.Collection.Count)
-                .ThenByDescending(x => x.State.RewardGrants.Count).First();
+                .ThenByDescending(x => x.State.RewardGrants.Count)
+                .ThenBy(x => x.RequestedPath, StringComparer.OrdinalIgnoreCase)
+                .First();
         }
 
         private static void EnsureExactMergePreconditions(IEnumerable<Candidate> candidates,

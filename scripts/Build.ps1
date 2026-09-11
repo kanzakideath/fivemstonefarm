@@ -514,7 +514,12 @@ $uiTestFailed = $uiTestProcess.ExitCode -ne 0 `
     -or -not (Test-Path -LiteralPath $uiTestResult -PathType Leaf) `
     -or (Get-Content -LiteralPath $uiTestResult -Raw -Encoding UTF8).Trim() -ne 'SELFTEST OK'
 if ($uiTestFailed) {
-    throw 'UI host self-test failed.'
+    $uiTestDetail = if (Test-Path -LiteralPath $uiTestResult -PathType Leaf) {
+        (Get-Content -LiteralPath $uiTestResult -Raw -Encoding UTF8).Trim()
+    } else {
+        'result file was not created'
+    }
+    throw "UI host self-test failed: $uiTestDetail"
 }
 
 $uiRuntimeHost = Join-Path $stageRoot 'ui-runtime\host'
