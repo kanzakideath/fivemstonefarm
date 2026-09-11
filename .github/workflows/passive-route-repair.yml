@@ -1,0 +1,107 @@
+name: Passive recording and nearby storage validation
+on:
+  push:
+    branches: [fix/passive-recording-nearby-9.1.10]
+    paths: [.github/workflows/passive-route-repair.yml]
+permissions:
+  contents: write
+concurrency:
+  group: passive-route-repair
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Apply explicit source edits on verified baseline
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git merge-base --is-ancestor dc2f4bfbfb23a6ff1d30731f576a7c0d9a7d3ede HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Unexpected baseline.' }
+          if (-not ([IO.File]::ReadAllText('src/mining-auto.ahk').Contains('global AppVersion := "9.1.9"'))) { throw 'Unexpected version before repair.' }
+          foreach ($name in @('record','backend','ui')) {
+            python -m py_compile "scripts/passive-route-repair/$name.py"
+            if ($LASTEXITCODE -ne 0) { throw "Invalid repair script: $name" }
+            python "scripts/passive-route-repair/$name.py"
+            if ($LASTEXITCODE -ne 0) { throw "Source boundary repair failed: $name" }
+          }
+          python -m py_compile scripts/ui-tests/Test-RouteSetupBrowser.py
+          if ($LASTEXITCODE -ne 0) { throw 'Invalid browser test script.' }
+          node --check src/ui-web/src/app.js
+          if ($LASTEXITCODE -ne 0) { throw 'Invalid Web UI source.' }
+          git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'Source whitespace check failed.' }
+      - name: Full Windows build and executable tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force artifacts/passive-route | Out-Null
+          Start-Transcript artifacts/passive-route/windows-validation.txt
+          try { ./scripts/Build.ps1 -Version 9.1.10 } finally { Stop-Transcript }
+      - name: Render native overlay and exercise all route entries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $result = Join-Path $PWD 'artifacts/passive-route/native-overlay-result.txt'
+          $image = Join-Path $PWD 'artifacts/passive-route/native-overlay.png'
+          $proc = Start-Process -FilePath (Join-Path $PWD 'build/staging/LocalNavigation.exe') -ArgumentList @('overlay-preview', "`"$result`"", "`"$image`"") -PassThru
+          if (-not $proc.WaitForExit(15000)) { $proc.Kill(); throw 'Native overlay preview timeout.' }
+          if (-not (Test-Path $result) -or (Get-Content $result -Raw).Trim() -ne 'OVERLAY_PREVIEW_OK') { throw 'Native overlay renderer failed.' }
+          python -m pip install playwright==1.57.0
+          if ($LASTEXITCODE -ne 0) { throw 'Browser dependency install failed.' }
+          $edge = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+          if (-not (Test-Path $edge)) { $edge = 'C:\Program Files\Microsoft\Edge\Application\msedge.exe' }
+          if (Test-Path $edge) {
+            python scripts/ui-tests/Test-RouteSetupBrowser.py --browser $edge --output artifacts/passive-route
+          } else {
+            python -m playwright install chromium
+            if ($LASTEXITCODE -ne 0) { throw 'Chromium install failed.' }
+            python scripts/ui-tests/Test-RouteSetupBrowser.py --output artifacts/passive-route
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Browser interaction tests failed.' }
+      - name: Commit only tested application sources and remove temporary repair tooling
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- src/local-navigation/LocalNavigation.cs src/exe-route-navigation.ahk src/mining-auto.ahk src/ui-host/Protocol.cs src/ui-web/src/index.html src/ui-web/src/app.js src/ui-web/src/app.css src/ui-web/package.json src/ui-web/package-lock.json src/ui-web/www/index.html src/ui-web/www/app.js src/ui-web/www/app.css src/ui-web/www/build-info.json scripts/Test-ExeRoutes.ps1 scripts/ui-tests/Test-RouteSetupBrowser.py README.md src/README.md config/AI採掘機.ini
+          git rm -r -- scripts/passive-route-repair .github/workflows/passive-route-repair.yml
+          if ($LASTEXITCODE -ne 0) { throw 'Temporary tooling cleanup failed.' }
+          git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --cached --check
+          if ($LASTEXITCODE -ne 0) { throw 'Staged source check failed.' }
+          git commit -m 'Fix forced recording camera input and add verified nearby storage mode'
+          if ($LASTEXITCODE -ne 0) { throw 'Source commit failed.' }
+          git push origin HEAD:fix/passive-recording-nearby-9.1.10
+          if ($LASTEXITCODE -ne 0) { throw 'Branch changed during validation; refusing overwrite.' }
+          $head = (& git rev-parse HEAD).Trim()
+          $hash = (Get-FileHash dist/ai-miner-win-x64.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "source_commit=$head`nsha256=$hash`nCompiled logic, UI and native overlay tests passed. No live FiveM storage/refill/navigation test." | Set-Content artifacts/passive-route/CANDIDATE.txt -Encoding utf8
+          git archive --format=zip HEAD -o artifacts/passive-route/tested-source.zip
+          if ($LASTEXITCODE -ne 0) { throw 'Source archive failed.' }
+      - name: Retain validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: passive-route-validation-evidence
+          path: |
+            artifacts/passive-route/
+            build/staging/*.log
+            build/staging/*.txt
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Retain candidate only after tests pass
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: passive-route-9.1.10-candidate
+          path: |
+            dist/ai-miner-win-x64.exe
+            docs/RELEASE_v9.1.10.md
+            artifacts/passive-route/CANDIDATE.txt
+          retention-days: 14
+          if-no-files-found: error
