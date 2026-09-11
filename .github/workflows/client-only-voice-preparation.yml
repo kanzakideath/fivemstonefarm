@@ -1,0 +1,50 @@
+name: Prepare offline completion voices
+on:
+  push:
+    branches: [fix/client-only-routes-and-voice]
+    paths:
+      - .github/workflows/client-only-voice-preparation.yml
+      - scripts/Generate-CompletionVoices.py
+permissions:
+  contents: write
+concurrency:
+  group: prepare-client-only-voices
+  cancel-in-progress: false
+jobs:
+  voices:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: fix/client-only-routes-and-voice
+      - name: Obtain the pinned build-only synthesis toolchain
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/voice-toolchain
+          curl --fail --location --retry 3 https://github.com/VOICEVOX/voicevox_core/releases/download/0.16.4/download-linux-x64 -o build/voice-download
+          chmod +x build/voice-download
+          build/voice-download --only onnxruntime models dict --models-version 0.16.0 --models-pattern 0.vvm --onnxruntime-version voicevox_onnxruntime-1.17.3 --output build/voice-toolchain
+          python3 -m venv build/voice-venv
+          build/voice-venv/bin/pip install 'https://github.com/VOICEVOX/voicevox_core/releases/download/0.16.4/voicevox_core-0.16.4-cp310-abi3-manylinux_2_34_x86_64.whl'
+      - name: Synthesize actual WAV assets
+        run: build/voice-venv/bin/python scripts/Generate-CompletionVoices.py build/voice-toolchain src/audio
+      - name: Commit only generated audio and credit records
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- src/audio/stone-mining-complete.wav src/audio/stone-washing-complete.wav src/audio/gold-panning-complete.wav src/audio/completion-voices.json src/audio/VOICE_CREDITS.md
+          git diff --cached --check
+          if ! git diff --cached --quiet; then
+            git commit -m 'Bundle actual VOICEVOX completion speech and attribution [skip ci]'
+            git push origin HEAD:fix/client-only-routes-and-voice
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: completion-voice-assets
+          path: src/audio/
+          retention-days: 14
+          if-no-files-found: error
