@@ -1,0 +1,5 @@
+音声：VOICEVOX:四国めたん（あまあま／ノーマル）
+生成音声の利用・再配布には以下の利用規約を遵守してください。再利用を他者に許諾する場合も同じ遵守義務を引き継いでください。
+https://voicevox.hiroshiba.jp/term/
+https://zunko.jp/con_ongen_kiyaku.html
+音声モデル・音声合成エンジンそのものは同梱していません。

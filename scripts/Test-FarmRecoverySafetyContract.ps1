@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 [CmdletBinding()]
 param(
     [string]$SourcePath = '',
@@ -384,7 +384,7 @@ Assert-Contract ($alert -match
     'State\.lastAlertKind\s*:=\s*kind[\s\S]{0,80}State\.lastAlertAt\s*:=\s*now') `
     'Same-kind alerts are not atomically suppressed for a positive cooldown.'
 Assert-Contract ($alertSoundType -match
-    'kind\s*=\s*"error"\s*\?\s*0x10[\s\S]{0,80}kind\s*=\s*"capacity"\s*\?\s*0x30[\s\S]{0,80}kind\s*=\s*"wash_complete"\s*\?\s*0x40[\s\S]{0,40}:\s*0' -and
+    'kind\s*=\s*"error"\s*\?\s*0x10[\s\S]{0,80}kind\s*=\s*"capacity"\s*\?\s*0x30[\s\S]{0,80}\(kind\s*=\s*"wash_complete"[\s\S]{0,100}kind\s*=\s*"gold_complete"\)\s*\?\s*0x40[\s\S]{0,40}:\s*0' -and
     $source -match
     'AutomationAlertSoundType\("capacity"\)\s*=\s*0x30[\s\S]{0,100}AutomationAlertSoundType\("error"\)\s*=\s*0x10[\s\S]{0,100}AutomationAlertSoundType\("wash_complete"\)\s*=\s*0x40[\s\S]{0,100}AutomationAlertSoundType\("other"\)\s*=\s*0') `
     'Compiled --validate no longer rejects unsupported alert kinds.'
@@ -404,8 +404,8 @@ Assert-Contract ($transition -match
     'previousState\s*!=\s*nextState[\s\S]{0,900}nextState\s*=\s*"ERROR"[\s\S]{0,300}EmitAutomationAlert\(') `
     'INVENTORY_FULL/ERROR alerts are not restricted to state-entry edges.'
 Assert-Contract (([regex]::Matches($source,
-    'EmitAutomationAlert\(')).Count -eq 4 -and
-    $source -match 'if\s+washBatchCompleted\s*\{[\s\S]{0,240}EmitAutomationAlert\("wash_complete"') `
-    'Automation alert call sites are not limited to two state-entry edges and the verified final-wash edge.'
+    'EmitAutomationAlert\(')).Count -eq 3 -and
+    $source -match 'if\s+washBatchCompleted\s*&&\s*IsCurrentRun\(expectedGeneration\)\s*\{[\s\S]{0,240}NotifyExeBatchComplete\(expectedGeneration,\s*"washing"') `
+    'Unexpected direct alert site: completion voices must go through generation-bound notification guards.'
 
 Write-Host 'Farm recovery and alert safety source contract tests passed.'

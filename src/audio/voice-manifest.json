@@ -1,0 +1,71 @@
+{
+  "schema": 1,
+  "credit": "VOICEVOX:四国めたん",
+  "generation": "Build-time synthesis; runtime playback is offline. No voice model or engine redistributed.",
+  "terms": [
+    "https://voicevox.hiroshiba.jp/term/",
+    "https://zunko.jp/con_ongen_kiyaku.html"
+  ],
+  "clips": [
+    {
+      "file": "mining-complete-sweet.wav",
+      "text": "石掘りが終わったよ。",
+      "voice": "VOICEVOX:四国めたん",
+      "style": "あまあま",
+      "speakerId": 0,
+      "engineVersion": "0.25.2",
+      "durationSeconds": 1.5466666666666666,
+      "sha256": "b851d5f5ebec3d69029774a551e18d5099b4c335d080c4c379a6c45e440522ca"
+    },
+    {
+      "file": "washing-complete-sweet.wav",
+      "text": "石洗いが終わったよ。",
+      "voice": "VOICEVOX:四国めたん",
+      "style": "あまあま",
+      "speakerId": 0,
+      "engineVersion": "0.25.2",
+      "durationSeconds": 1.6,
+      "sha256": "916acbf871c03a57669af4ed118b40eb68792a24d3e832cc83c187dbf05d8536"
+    },
+    {
+      "file": "gold-complete-sweet.wav",
+      "text": "砂金取りが終わりました。",
+      "voice": "VOICEVOX:四国めたん",
+      "style": "あまあま",
+      "speakerId": 0,
+      "engineVersion": "0.25.2",
+      "durationSeconds": 1.76,
+      "sha256": "ca50fe912650cbce9489991405d114885032f734c5d8d8376476653fda1072fd"
+    },
+    {
+      "file": "mining-complete-clear.wav",
+      "text": "石掘りが終わったよ。",
+      "voice": "VOICEVOX:四国めたん",
+      "style": "ノーマル",
+      "speakerId": 2,
+      "engineVersion": "0.25.2",
+      "durationSeconds": 1.4506666666666668,
+      "sha256": "05b7fd7ed36fc11e52d5621df6e2f7cb5aa08a48072a55ce51a04c71801deab1"
+    },
+    {
+      "file": "washing-complete-clear.wav",
+      "text": "石洗いが終わったよ。",
+      "voice": "VOICEVOX:四国めたん",
+      "style": "ノーマル",
+      "speakerId": 2,
+      "engineVersion": "0.25.2",
+      "durationSeconds": 1.5466666666666666,
+      "sha256": "f85e7adc739efcabc1668f4fc993194a5cd7f45694f427e70c596a40d61f4fbb"
+    },
+    {
+      "file": "gold-complete-clear.wav",
+      "text": "砂金取りが終わりました。",
+      "voice": "VOICEVOX:四国めたん",
+      "style": "ノーマル",
+      "speakerId": 2,
+      "engineVersion": "0.25.2",
+      "durationSeconds": 1.6533333333333333,
+      "sha256": "c25cbdfafdd91d406057a8bc574eec40fc7d37c0f86c40b89bd135bd7f5c65dd"
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+name: EXE-only route validation
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [fix/exe-only-routes-and-voices]
+    paths: [src/**, scripts/**, config/**, .github/workflows/exe-only-route-validation.yml]
+permissions:
+  contents: read
+concurrency:
+  group: exe-route-ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Test checked-in sources without rewriting them
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = [IO.File]::ReadAllText('src/mining-auto.ahk')
+          $match = [regex]::Match($source, '(?m)^global AppVersion := "(\d+\.\d+\.\d+)"')
+          if (-not $match.Success) { throw 'Application version not found.' }
+          New-Item -ItemType Directory -Force artifacts/exe-only-validation | Out-Null
+          Start-Transcript -Path artifacts/exe-only-validation/validation.txt
+          try {
+            ./scripts/Test-ExeRoutes.ps1
+            ./scripts/Build.ps1 -Version $match.Groups[1].Value
+            Write-Host 'PASS: Windows build, voice phrase/asset checks, helper self-tests and regression. Live FiveM navigation is not tested by CI.'
+          } finally { Stop-Transcript }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: exe-only-validation-evidence
+          path: |
+            artifacts/exe-only-validation/
+            build/staging/*.txt
+            build/staging/*.log
+          retention-days: 7
+          if-no-files-found: warn

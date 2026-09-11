@@ -50,7 +50,7 @@
   const fixtureState = {
     ...baseState,
     revision: 1,
-    version: '9.1.7',
+    version: '9.1.8',
     controls: {
       overviewSubtitle: { text: modeDetails.gold.subtitle },
       runStatus: { text: '停止中', tone: 'neutral' },
@@ -146,7 +146,7 @@
     'metric-correction-value', 'metric-storage-value', 'shortcut-hint', 'vehicle-status',
     'vehicle-enabled', 'capacity-value', 'capacity-fill', 'capacity-detail',
     'companion-status', 'companion-detail', 'vehicle-register', 'vehicle-register-label',
-    'vehicle-delete', 'start-hotkey', 'stop-hotkey', 'setting-background', 'setting-hide',
+    'vehicle-delete', 'vehicle-route', 'start-hotkey', 'stop-hotkey', 'setting-background', 'setting-hide',
     'setting-correction', 'setting-auto-eat', 'food-key', 'setting-auto-update',
     'minimum-free-weight', 'storage-trigger-percent', 'estimated-reward-weight',
     'minimum-free-slots', 'storage-max-retries', 'farm-watchdog-seconds',
@@ -298,11 +298,7 @@
   }
 
   function localVehicleDetail(item) {
-    const text = textOf(item);
-    if (!text || /補助リソース|サーバー管理者|サーバー側/i.test(text)) {
-      return '登録を押したあと、FiveMで目的の車両ストレージを一度開いてください。';
-    }
-    return text;
+    return textOf(item) || '荷台を登録後、「徒歩ルート・音声設定」で往復を教え、自動試走してください。サーバー導入は不要です。';
   }
 
   function setTone(element, tone) {
@@ -918,6 +914,7 @@
       setPending(elements.vehicleRegister, 'vehicle', state.revision);
       sendAction('vehicle.register');
     });
+    elements.vehicleRoute.addEventListener('click', () => sendAction('vehicle.route'));
     elements.vehicleDelete.addEventListener('click', () => {
       app.dialog.confirm(
         '登録情報だけを削除します。車両や荷台の中身は変更しません。',

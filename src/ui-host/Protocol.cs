@@ -52,6 +52,7 @@ namespace AiMiner.UiHost
 
                     case "run.toggle":
                     case "vehicle.register":
+                    case "vehicle.route":
                     case "vehicle.delete":
                     case "update.check":
                     case "window.close":

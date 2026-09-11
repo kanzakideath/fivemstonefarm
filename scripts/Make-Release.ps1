@@ -58,6 +58,10 @@ Copy-Item -LiteralPath (Join-Path $repoRoot 'config\AI採掘機.ini') -Destinati
 Copy-Item -LiteralPath (Join-Path $repoRoot 'docs\AI採掘機_使い方.txt') -Destination $packageRoot -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination $packageRoot -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot 'THIRD_PARTY_NOTICES.md') -Destination $packageRoot -Force
+# Distribute route prerequisites and voice reuse terms with the release ZIP.
+Copy-Item -LiteralPath (Join-Path $repoRoot 'docs\EXE_ONLY_ROUTES.md') -Destination $packageRoot -Force
+Copy-Item -LiteralPath (Join-Path $repoRoot 'src\audio\CREDITS.txt') -Destination (Join-Path $packageRoot 'VOICE-CREDITS.txt') -Force
+Copy-Item -LiteralPath (Join-Path $repoRoot 'src\audio\voice-manifest.json') -Destination $packageRoot -Force
 $autoHotkeyLicense = Join-Path $repoRoot 'tools\AutoHotkey\license.txt'
 if (-not (Test-Path -LiteralPath $autoHotkeyLicense -PathType Leaf)) {
     throw 'AutoHotkey license.txt was not found in the verified toolchain.'

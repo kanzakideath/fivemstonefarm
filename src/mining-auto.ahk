@@ -9,9 +9,10 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "9.1.7"
+global AppVersion := "9.1.8"
 ;@Ahk2Exe-SetVersion %A_PriorLine~U)^.*"([^"]+)".*$~$1%
 processId := DllCall("GetCurrentProcessId")
+global LocalNav := {busy: false, pid: 0, cancel: "", taskId: 0, dialog: 0, lastBatchKey: "", lastActionKey: ""}
 isUiSmokeTest := HasCommandLineArgument("--smoke-test")
 isVisualTest := HasCommandLineArgument("--visual-test")
 isUiTestRun := isUiSmokeTest || isVisualTest
@@ -38,6 +39,8 @@ FileInstall "hunger-icon-template.png", hungerTemplatePath, true
 FileInstall "stone-marker-template.png", stoneMarkerTemplatePath, true
 FileInstall "AI採掘機_Background.exe", backgroundBridgePath, true
 FileInstall "AI採掘機_Updater.exe", updaterHelperPath, true
+#Include exe-route-navigation.ahk
+InitExeRouteAssets()
 settingsPath := isUiTestRun
     ? A_Temp "\ai-miner-ui-test-" testRunId ".ini"
     : A_ScriptDir "\AI採掘機.ini"
@@ -1848,6 +1851,10 @@ if A_Args.Length && A_Args[1] = "--validate" {
         : !testWashingRewardEvidenceOk ? 172
         : !testAmbiguousTransferNoRetryOk ? 173
         : !testWashingBatchCompleteOk ? 174 : 0
+    if exitCode = 0 && (CompletionPhrase("mining") != "石掘りが終わったよ"
+        || CompletionPhrase("washing") != "石洗いが終わったよ"
+        || CompletionPhrase("gold") != "砂金取りが終わりました")
+        exitCode := 175
     if exitCode = 19
         try FileAppend "UPDATER_CAPS=" updaterCapabilities "`r`n",
             State.diagnosticPath, "UTF-8"
@@ -2353,6 +2360,9 @@ ProcessWebUiActions(*) {
                     State.vehicleStatusLabel.Text := "登録する車両のストレージを開いてください"
                 else
                     BeginVehicleRegistration()
+            } else if action = "vehicle.route" && parts.Length = 3 {
+                if !State.visualTest
+                    ShowExeRoutePanel()
             } else if action = "vehicle.delete" && parts.Length = 3 {
                 if State.visualTest {
                     State.vehicleStatusLabel.Text := "未登録"
@@ -5393,9 +5403,11 @@ EmitAutomationAlert(kind, message := "") {
     if isUiTestRun || HasCommandLineArgument("--validate")
         return true
     played := false
-    if kind = "wash_complete" {
+    if kind = "wash_complete" || kind = "mining_complete" || kind = "gold_complete" {
         try TrayTip message, "AI採掘機", 1
-        played := SpeakAutomationMessage(message)
+        played := PlayExeCompletionVoice(kind)
+        if !played
+            played := SpeakAutomationMessage(message)
     }
     if !played
         try played := DllCall("user32\MessageBeep", "UInt", soundType, "Int") != 0
@@ -5626,7 +5638,7 @@ WorkViewDownModeSupported(mode) {
 AutomationAlertSoundType(kind) {
     return kind = "error" ? 0x10
         : kind = "capacity" ? 0x30
-        : kind = "wash_complete" ? 0x40 : 0
+        : (kind = "wash_complete" || kind = "mining_complete" || kind = "gold_complete") ? 0x40 : 0
 }
 
 BackgroundCameraDownRoute(durationMs) {
@@ -8465,7 +8477,7 @@ RunUpdaterCapabilities() {
 }
 
 StartMining(*) {
-    global State, Config
+    global State, Config, LocalNav
 
     ; UI・トレイ・設定可能なショートカットのどこから呼ばれても、
     ; 車両登録・通常run・別の開始preflightと同時実行しません。
@@ -8473,6 +8485,8 @@ StartMining(*) {
     ; 最初の開始がまだrunning=falseの間も必ず拒否されます。
     if !TryClaimStartOperation(&startToken)
         return
+    if IsObject(LocalNav.dialog)
+        try LocalNav.dialog.Hide()
     runInitializationOwned := false
     try {
     if !ShowStartPreparationState(startToken)
@@ -8863,6 +8877,7 @@ StopMining(faultContext := 0, *) {
     State.stopInProgress := true
     if !criticalWasOn
         Critical "Off"
+    CancelExeRouteOperation()
 
     try {
     startCancelled := CancelStartOperation()
@@ -9281,6 +9296,8 @@ MaybeHandleVehicleCapacity(expectedGeneration) {
         State.storagePending := true
         State.storageRecoveryAttempted := false
     }
+    if State.runMode = "mining" || State.runMode = "gold"
+        NotifyExeBatchComplete(expectedGeneration, State.runMode)
     State.storageReason := capacityReason
     if !refillOnly
         State.storageOutputsVerified := false
@@ -10677,6 +10694,8 @@ InitializeLocalVehicleRun(expectedGeneration) {
         return false
     }
 
+    if !RequireExeRouteForRun(expectedGeneration)
+        return false
     State.statusLabel.Text := "開始前の所持品を保護しています"
     snapshotResult := RunBackgroundBridgeCancelable(expectedGeneration, "inventory-snapshot")
     if !IsCurrentRun(expectedGeneration)
@@ -11258,9 +11277,9 @@ RunLocalVehicleStorageCycle(expectedGeneration, reuseStoragePose := false) {
     try {
         if reuseStoragePose {
             recoveryViewRoute := ""
-            storageFound := TryRegisteredStorageViews(expectedGeneration,
-                ["", "420:80", "420:144", "520:16"],
-                &recoveryViewRoute, &searchFailure, &fatalSearch)
+            storageFound := ProbeExeRouteCargo(expectedGeneration, &recoveredId, &recoveredType)
+            searchFailure := storageFound ? "" : "復旧位置で登録した荷台を確認できません"
+            fatalSearch := !storageFound
             if recoveryViewRoute
                 matchedViewRoute := JoinLocalRoutes([matchedViewRoute,
                     recoveryViewRoute])
@@ -11630,15 +11649,14 @@ CompleteVerifiedStorageReturn(expectedGeneration) {
     TransitionFarmState("RETURNING_TO_FARM", "元の作業地点へ復帰",
         expectedGeneration, 0, true)
     State.statusLabel.Text := "作業位置へ戻っています"
-    poseRestored := RestoreLocalSearchPose(expectedGeneration,
-        State.storageMovementHistory, State.storageMatchedViewRoute)
+    poseRestored := ExecuteExeRouteLeg(expectedGeneration, "return")
     if !IsCurrentRun(expectedGeneration)
         return false
     if !poseRestored {
         StopAutomationWithFault("作業位置へ安全に戻れないため停止しました", "vehicle")
         return false
     }
-    TransitionFarmState("VERIFY_FARM_REACHED", "往路の逆操作完了を確認",
+    TransitionFarmState("VERIFY_FARM_REACHED", "登録した復路の実画面照合を確認",
         expectedGeneration, 0, true)
     if !ValidateServerEpochCheckpoint(expectedGeneration, "local_work_return") {
         StopAutomationWithFault("収納中のサーバー再起動または再接続を検知しました",
@@ -11656,12 +11674,11 @@ CompleteVerifiedStorageReturn(expectedGeneration) {
     WriteDiagnostic("LOCAL_FARM_RETURN_ROUTE_CONFIRMED refill="
         . (State.storageRefillVerified ? 1 : 0))
     State.statusLabel.Text := "作業ボタンを再確認しています"
-    workRecovered := RecoverLocalWorkTarget(expectedGeneration)
+    workRecovered := ProbeExeRouteWork(expectedGeneration, State.runMode)
     if !IsCurrentRun(expectedGeneration)
         return false
     if !workRecovered {
-        EnterFarmRecovery(expectedGeneration, "RESUMING_FARM",
-            "return_target_not_found")
+        StopAutomationWithFault("復路終点の作業ボタンを確認できません。徒歩をやり直さず停止しました", "vehicle", "EXE_ROUTE_WORK_NOT_VERIFIED")
         return false
     }
     State.storageTrips += 1
@@ -11694,57 +11711,22 @@ CompleteVerifiedStorageReturn(expectedGeneration) {
 
 FindRegisteredStorageNearby(expectedGeneration, &movementHistory,
     &matchedViewRoute, &failureMessage) {
-    global State, Config
+    global State
     movementHistory := []
     matchedViewRoute := ""
     failureMessage := ""
-
-    primaryViews := ["", "520:16", "420:80", "420:144",
-        "700:64", "700:128", "1000:64", "1000:128"]
-    if TryRegisteredStorageViews(expectedGeneration, primaryViews,
-        &matchedViewRoute, &viewFailure, &fatalFailure)
-        return true
-    if fatalFailure {
-        ; 解放・close・bridgeの結果が不確定なときは、追加の視点/移動入力を
-        ; 一切送らず停止します。復元を試す方がNUIへ入力される危険があります。
-        failureMessage := viewFailure
-            ? viewFailure : "探索画面を安全に閉じられないため停止しました"
+    TransitionFarmState("MOVING_TO_TRUCK", "登録した往路を実画面照合しながら徒歩移動", expectedGeneration, 0, true)
+    if !ExecuteExeRouteLeg(expectedGeneration, "outbound") {
+        failureMessage := "EXE徒歩往路の実画面照合に失敗しました。盲目的な再走はしません。"
         return false
     }
-
-    pulse := Config.vehicleSearchPulseMs
-    movementSteps := [(pulse * 2) ":2", (pulse * 2) ":4",
-        (pulse * 4) ":1", (pulse * 4) ":8", (pulse * 4) ":2"]
-    nearbyViews := ["", "520:16", "440:80", "440:144", "820:16"]
-    for movementRoute in movementSteps {
-        TransitionFarmState("MOVING_TO_TRUCK",
-            "登録車両を再観測しながら近距離移動 " . A_Index . "/"
-                . movementSteps.Length, expectedGeneration, 0, true)
-        State.statusLabel.Text := "登録車両を近距離で再探索しています ("
-            . A_Index "/" movementSteps.Length ")"
-        if !PlayLocalRoute(expectedGeneration, movementRoute) {
-            failureMessage := "車両探索の移動を確認できないため安全停止しました"
-            return false
-        }
-        movementHistory.Push(movementRoute)
-        if TryRegisteredStorageViews(expectedGeneration, nearbyViews,
-            &matchedViewRoute, &viewFailure, &fatalFailure)
-            return true
-        if fatalFailure {
-            failureMessage := viewFailure
-                ? viewFailure : "探索画面を安全に閉じられないため停止しました"
-            return false
-        }
-    }
-
-    restored := RestoreLocalSearchPose(expectedGeneration, movementHistory, "")
-    movementHistory := []
-    if !restored {
-        failureMessage := "登録車両を見つけられず、元の位置も確認できないため停止しました"
+    if !ProbeExeRouteCargo(expectedGeneration, &id, &type) {
+        failureMessage := "徒歩経路の終点で登録した荷台を確認できませんでした。"
+        if IsCurrentRun(expectedGeneration)
+            StopAutomationWithFault(failureMessage, "vehicle", "EXE_ROUTE_CARGO_NOT_VERIFIED")
         return false
     }
-    failureMessage := "近くに登録した車両のストレージを確認できませんでした"
-    return false
+    return true
 }
 
 TryRegisteredStorageViews(expectedGeneration, viewCandidates,
@@ -13738,13 +13720,13 @@ CompleteVerifiedFarmReward(expectedGeneration, actionMode, completionAt,
     }
     ; Timer/input side effects happen after the atomic visible commit. Both paths
     ; revalidate generation ownership, so an intervening F9 cannot touch a new run.
+    NotifyExeActionComplete(expectedGeneration, actionMode, attemptId)
     if startWashRecovery {
         recoveryStarted := BeginWashCompletionRecovery(expectedGeneration,
             attemptId)
-        if washBatchCompleted {
+        if washBatchCompleted && IsCurrentRun(expectedGeneration) {
             State.statusLabel.Text := "●  持っている石を全部洗い終わりました"
-            EmitAutomationAlert("wash_complete",
-                "持ってる石、全部洗い終わったよ")
+            NotifyExeBatchComplete(expectedGeneration, "washing")
         }
         return recoveryStarted
     }
@@ -15462,6 +15444,7 @@ IsFiveMWindow(hwnd) {
 }
 
 Cleanup(*) {
+    CancelExeRouteOperation()
     global State, Config
 
     previousPhase := State.automationPhase
