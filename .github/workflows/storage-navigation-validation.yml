@@ -1,0 +1,22 @@
+name: Storage navigation validation
+on:
+  push:
+    branches: [fix/verified-storage-navigation]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Export tracked source for local review
+        run: git archive --format=zip HEAD -o navigation-source.zip
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: navigation-source
+          path: navigation-source.zip
+          retention-days: 3
+          if-no-files-found: error
