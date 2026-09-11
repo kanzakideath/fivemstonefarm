@@ -506,7 +506,7 @@ $uiArgumentLine = '--self-test "' + $uiTestResult.Replace('"', '""') `
     + '" --assets "' + $uiWebOutput.Replace('"', '""') + '"'
 $uiTestProcess = Start-Process -FilePath $uiHostExecutable -ArgumentList $uiArgumentLine `
     -PassThru -WindowStyle Hidden
-if (-not $uiTestProcess.WaitForExit(20000)) {
+if (-not $uiTestProcess.WaitForExit(60000)) {
     try { $uiTestProcess.Kill() } catch { }
     throw 'UI host self-test timed out.'
 }

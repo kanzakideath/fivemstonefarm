@@ -9,7 +9,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "9.1.6"
+global AppVersion := "9.1.7"
 ;@Ahk2Exe-SetVersion %A_PriorLine~U)^.*"([^"]+)".*$~$1%
 processId := DllCall("GetCurrentProcessId")
 isUiSmokeTest := HasCommandLineArgument("--smoke-test")
@@ -5064,7 +5064,9 @@ RefreshNavigationSelection() {
 
 RunUiSmokeTest() {
     global State
-    deadline := MonotonicMs() + 15000
+    ; Keep the in-app readiness budget inside the updater's 60 s validation window.
+    ; A cold WebView2 profile on a busy FiveM/GTA machine can legitimately exceed 15 s.
+    deadline := MonotonicMs() + 38000
     while !State.uiReady && MonotonicMs() < deadline
         Sleep 50
     if !State.uiReady || !State.uiHwnd
