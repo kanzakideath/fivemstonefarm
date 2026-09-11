@@ -1,5 +1,6 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
+#Include verified-storage-navigation.ahk
 
 SendMode "Event"
 SetMouseDelay 25
@@ -1648,6 +1649,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
         false) && StorageReturnAllowed("washing", true, true)
         && StorageReturnAllowed("washing", false, false)
         && StorageReturnAllowed("mining", true, false)
+    testVerifiedNavigationOk := RunVerifiedNavigationSelfTest()
     exitCode := !FileExist(State.buttonTemplates[1].path) ? 11
         : !FileExist(State.buttonTemplates[2].path) ? 12
         : !FileExist(State.hungerTemplatePath) ? 13
@@ -1847,7 +1849,8 @@ if A_Args.Length && A_Args[1] = "--validate" {
         : !testFarmTimerHandoffPolicyOk ? 171
         : !testWashingRewardEvidenceOk ? 172
         : !testAmbiguousTransferNoRetryOk ? 173
-        : !testWashingBatchCompleteOk ? 174 : 0
+        : !testWashingBatchCompleteOk ? 174
+        : !testVerifiedNavigationOk ? 175 : 0
     if exitCode = 19
         try FileAppend "UPDATER_CAPS=" updaterCapabilities "`r`n",
             State.diagnosticPath, "UTF-8"
@@ -2353,6 +2356,11 @@ ProcessWebUiActions(*) {
                     State.vehicleStatusLabel.Text := "登録する車両のストレージを開いてください"
                 else
                     BeginVehicleRegistration()
+            } else if action = "vehicle.register-local" && parts.Length = 3 {
+                if State.visualTest
+                    State.vehicleStatusLabel.Text := "近接収納のみ。徒歩移動は行いません"
+                else
+                    BeginLocalVehicleRegistration()
             } else if action = "vehicle.delete" && parts.Length = 3 {
                 if State.visualTest {
                     State.vehicleStatusLabel.Text := "未登録"
@@ -5395,7 +5403,7 @@ EmitAutomationAlert(kind, message := "") {
     played := false
     if kind = "wash_complete" {
         try TrayTip message, "AI採掘機", 1
-        played := SpeakAutomationMessage(message)
+        played := PlayWashingCompletionVoice(message)
     }
     if !played
         try played := DllCall("user32\MessageBeep", "UInt", soundType, "Int") != 0
@@ -6843,23 +6851,35 @@ RefreshLocalVehicleUi(*) {
         && !State.startInProgress
     State.vehicleRegisterButton.Enabled := !State.running
         && !State.registrationActive && !State.startInProgress
-    State.vehicleRegisterButton.Text := valid ? "別の車両を登録" : "車両を登録"
+    State.vehicleRegisterButton.Text := "徒歩往復する車両を登録"
     State.vehicleDeleteButton.Enabled := valid && !State.running
         && !State.registrationActive && !State.startInProgress
 
     if State.registrationActive {
-        State.vehicleStatusLabel.Text := "登録する車両のストレージを開いてください"
-        State.routeStatusLabel.Text := "ストレージを待っています"
-        State.routeDetailLabel.Text := "通常どおり荷台を開くと、端末内への登録が自動で完了します。"
+        nativeRegistration := State.HasOwnProp("registrationNavigation")
+            && State.registrationNavigation
+        State.vehicleStatusLabel.Text := nativeRegistration
+            ? "徒歩連携用の車両を選択してください" : "登録する車両のストレージを開いてください"
+        State.routeStatusLabel.Text := nativeRegistration
+            ? "徒歩ナビ用の車両登録中" : "ストレージを待っています"
+        State.routeDetailLabel.Text := nativeRegistration
+            ? "車両を狙ってE、またはox_targetの登録項目を選択してください。F9で中止できます。"
+            : "通常どおり荷台を開くと、端末内への登録が自動で完了します。"
     } else if valid {
         State.vehicleStatusLabel.Text := "登録済み　" Config.vehicleName
-        State.routeStatusLabel.Text := "ローカル登録　準備完了"
-        State.routeDetailLabel.Text := "満重量になると近くの同じストレージだけを探し、採集分を収納して作業へ戻ります。"
+        State.routeStatusLabel.Text := Config.vehicleCompanionProtocol = 1
+            ? "徒歩ナビ連携　登録済み" : "近接収納のみ・徒歩ナビ未設定"
+        State.routeDetailLabel.Text := Config.vehicleCompanionProtocol = 1
+            ? "ゲーム内連携で車両の現在位置まで歩き、収納・石補充後に開始地点へ戻ります。開始時に連携を再検証します。"
+            : "従来登録は荷台IDだけで位置を持ちません。徒歩往復にはサーバー管理者のai_miner_companion導入後、上のボタンで登録し直してください。"
     } else {
         State.vehicleStatusLabel.Text := "未登録"
-        State.routeStatusLabel.Text := "サーバー側への導入は不要です"
-        State.routeDetailLabel.Text := "登録を開始し、対象車両のストレージを一度だけ手動で開いてください。"
+        State.routeStatusLabel.Text := "徒歩連携または近接収納を選択"
+        State.routeDetailLabel.Text := "徒歩往復にはサーバー管理者によるai_miner_companion導入が必要です。近接収納だけの従来登録とは異なります。"
     }
+    if !State.registrationActive && State.HasOwnProp("navigationRegistrationMessage")
+        && State.navigationRegistrationMessage
+        State.vehicleStatusLabel.Text := State.navigationRegistrationMessage
     RefreshCapacityUi()
     QueueWebUiFlush()
 }
@@ -6901,6 +6921,8 @@ BeginLocalVehicleRegistration(*) {
         return
     }
 
+    State.navigationRegistrationMessage := ""
+    State.registrationNavigation := false
     previousProfile := SnapshotVehicleProfile()
     finalStatus := ""
     registrationSucceeded := false
@@ -7370,7 +7392,7 @@ ActionModeLabel(mode) {
 }
 
 BeginVehicleRegistration(*) {
-    BeginLocalVehicleRegistration()
+    BeginCompanionVehicleRegistration()
 }
 
 CancelVehicleRegistration(*) {
@@ -8737,7 +8759,13 @@ StartMining(*) {
     if Config.vehicleStorageEnabled && Config.vehicleCompanionProtocol = 1
         && IsCurrentRun(runGeneration) {
         State.statusLabel.Text := "現在の作業地点をゲーム内連携へ登録しています"
-        workTargetPresent := ProbeWorkTarget(State.runMode, runGeneration)
+        startWithEmptyRawStone := State.runMode = "washing"
+            && Config.rawStoneItemName != "" && IsSet(primedInventory)
+            && IsObject(primedInventory)
+            && InventorySpecNameCount(primedInventory.items,
+                Config.rawStoneItemName) = 0
+        workTargetPresent := startWithEmptyRawStone
+            || ProbeWorkTarget(State.runMode, runGeneration)
         if !IsCurrentRun(runGeneration)
             return
         if !workTargetPresent {
@@ -8791,6 +8819,17 @@ StartMining(*) {
             if !startCapacityBlocked {
                 State.nextCapacityCheckAt := MonotonicMs()
                     + Config.capacityCheckIntervalMs
+                if State.runMode = "washing" && Config.rawStoneItemName
+                    && InventorySpecNameCount(inventoryInfo.items,
+                        Config.rawStoneItemName) = 0 {
+                    State.lastRawStoneCount := 0
+                    State.storagePending := true
+                    State.storageReason := "raw_stone_empty"
+                    State.storagePreSnapshot := inventoryInfo
+                    State.storageOutputsVerified := true
+                    State.storageRefillVerified := false
+                    State.nextCapacityCheckAt := 0
+                }
             }
         } finally {
             if !criticalWasOn
@@ -11256,7 +11295,14 @@ RunLocalVehicleStorageCycle(expectedGeneration, reuseStoragePose := false) {
         ? State.storageMovementHistory : []
     matchedViewRoute := reuseStoragePose ? State.storageMatchedViewRoute : ""
     try {
-        if reuseStoragePose {
+        if Config.vehicleCompanionProtocol = 1 {
+            ; Real game-confirmed walking must run BEFORE any local camera search.
+            ; The existing deposit/refill ledger below is shared by both adapters.
+            movementHistory := []
+            matchedViewRoute := ""
+            storageFound := FindRegisteredStorageByCompanion(expectedGeneration,
+                &searchFailure)
+        } else if reuseStoragePose {
             recoveryViewRoute := ""
             storageFound := TryRegisteredStorageViews(expectedGeneration,
                 ["", "420:80", "420:144", "520:16"],
@@ -11286,6 +11332,14 @@ RunLocalVehicleStorageCycle(expectedGeneration, reuseStoragePose := false) {
         if !cleanupOk {
             StopAutomationWithFault("探索画面を安全に閉じられないため停止しました",
                 "vehicle")
+            return
+        }
+        if Config.vehicleCompanionProtocol = 1 {
+            ; A failed, cancelled or stale navigation receipt must not fall back
+            ; to guessing movement from screen coordinates or timed key pulses.
+            StopAutomationWithFault(searchFailure ? searchFailure
+                : "登録車両への徒歩到着を確認できませんでした",
+                "vehicle", "NAVIGATION_UNVERIFIED")
             return
         }
         EnterFarmRecovery(expectedGeneration,
@@ -11630,15 +11684,19 @@ CompleteVerifiedStorageReturn(expectedGeneration) {
     TransitionFarmState("RETURNING_TO_FARM", "元の作業地点へ復帰",
         expectedGeneration, 0, true)
     State.statusLabel.Text := "作業位置へ戻っています"
-    poseRestored := RestoreLocalSearchPose(expectedGeneration,
-        State.storageMovementHistory, State.storageMatchedViewRoute)
+    poseRestored := Config.vehicleCompanionProtocol = 1
+        ? ReturnToWorkByCompanion(expectedGeneration)
+        : RestoreLocalSearchPose(expectedGeneration,
+            State.storageMovementHistory, State.storageMatchedViewRoute)
     if !IsCurrentRun(expectedGeneration)
         return false
     if !poseRestored {
         StopAutomationWithFault("作業位置へ安全に戻れないため停止しました", "vehicle")
         return false
     }
-    TransitionFarmState("VERIFY_FARM_REACHED", "往路の逆操作完了を確認",
+    TransitionFarmState("VERIFY_FARM_REACHED",
+        Config.vehicleCompanionProtocol = 1
+            ? "ゲーム内の開始地点到着を確認" : "近接探索の逆入力完了・対象再検出待ち",
         expectedGeneration, 0, true)
     if !ValidateServerEpochCheckpoint(expectedGeneration, "local_work_return") {
         StopAutomationWithFault("収納中のサーバー再起動または再接続を検知しました",
@@ -11699,51 +11757,16 @@ FindRegisteredStorageNearby(expectedGeneration, &movementHistory,
     matchedViewRoute := ""
     failureMessage := ""
 
-    primaryViews := ["", "520:16", "420:80", "420:144",
-        "700:64", "700:128", "1000:64", "1000:128"]
+    ; Legacy registration knows only an opaque trunk ID, not its coordinates.
+    ; One bounded in-place check remains available for backward compatibility.
+    ; Do not spend minutes turning or send random walking inputs toward no target.
+    primaryViews := ["", "400:16"]
     if TryRegisteredStorageViews(expectedGeneration, primaryViews,
         &matchedViewRoute, &viewFailure, &fatalFailure)
         return true
-    if fatalFailure {
-        ; 解放・close・bridgeの結果が不確定なときは、追加の視点/移動入力を
-        ; 一切送らず停止します。復元を試す方がNUIへ入力される危険があります。
-        failureMessage := viewFailure
-            ? viewFailure : "探索画面を安全に閉じられないため停止しました"
-        return false
-    }
-
-    pulse := Config.vehicleSearchPulseMs
-    movementSteps := [(pulse * 2) ":2", (pulse * 2) ":4",
-        (pulse * 4) ":1", (pulse * 4) ":8", (pulse * 4) ":2"]
-    nearbyViews := ["", "520:16", "440:80", "440:144", "820:16"]
-    for movementRoute in movementSteps {
-        TransitionFarmState("MOVING_TO_TRUCK",
-            "登録車両を再観測しながら近距離移動 " . A_Index . "/"
-                . movementSteps.Length, expectedGeneration, 0, true)
-        State.statusLabel.Text := "登録車両を近距離で再探索しています ("
-            . A_Index "/" movementSteps.Length ")"
-        if !PlayLocalRoute(expectedGeneration, movementRoute) {
-            failureMessage := "車両探索の移動を確認できないため安全停止しました"
-            return false
-        }
-        movementHistory.Push(movementRoute)
-        if TryRegisteredStorageViews(expectedGeneration, nearbyViews,
-            &matchedViewRoute, &viewFailure, &fatalFailure)
-            return true
-        if fatalFailure {
-            failureMessage := viewFailure
-                ? viewFailure : "探索画面を安全に閉じられないため停止しました"
-            return false
-        }
-    }
-
-    restored := RestoreLocalSearchPose(expectedGeneration, movementHistory, "")
-    movementHistory := []
-    if !restored {
-        failureMessage := "登録車両を見つけられず、元の位置も確認できないため停止しました"
-        return false
-    }
-    failureMessage := "近くに登録した車両のストレージを確認できませんでした"
+    failureMessage := fatalFailure ? viewFailure
+        : "近接範囲に登録荷台がありません。徒歩往復にはサーバー管理者のai_miner_companion導入と徒歩連携での再登録が必要です"
+    WriteDiagnostic("LOCAL_STORAGE_LIMIT mode=proximity_only walking=unavailable")
     return false
 }
 
@@ -11971,6 +11994,12 @@ RecoverLocalWorkTarget(expectedGeneration, cameraAlreadySent := false) {
         return false
     }
 
+    if Config.vehicleCompanionProtocol = 1 {
+        ; The native return already restored the anchor and camera. Do not wander
+        ; away with blind movement pulses when the work interaction is unavailable.
+        WriteDiagnostic("NAVIGATION_WORK_TARGET_PENDING anchor=verified")
+        return false
+    }
     pulse := Max(120, Min(250, Config.vehicleSearchPulseMs))
     correctionSteps := [pulse ":1", (pulse * 2) ":2", pulse ":1",
         pulse ":4", (pulse * 2) ":8", pulse ":4"]
@@ -13520,6 +13549,13 @@ RunWashCompletionRecoveryCycle(expectedGeneration, expectedTaskId) {
             return
         }
         WriteDiagnostic("attempt=" attemptId " WASH_SETTLE_DONE")
+        if Config.rawStoneItemName && State.lastRawStoneCount = 0 {
+            ; Finish the animation's root motion, then depart for refill directly.
+            ; No forward correction or missing work-button search at zero stock.
+            ResumeAfterWashCompletionRecovery(expectedGeneration,
+                expectedTaskId, "WASH_SETTLING", attemptId)
+            return
+        }
         if Config.washForwardCorrection {
             if !TransitionFarmState("WASH_CORRECTING",
                 "洗浄後退停止後の前進補正", expectedGeneration,
@@ -13744,7 +13780,7 @@ CompleteVerifiedFarmReward(expectedGeneration, actionMode, completionAt,
         if washBatchCompleted {
             State.statusLabel.Text := "●  持っている石を全部洗い終わりました"
             EmitAutomationAlert("wash_complete",
-                "持ってる石、全部洗い終わったよ")
+                "石洗いが終わったよ")
         }
         return recoveryStarted
     }
@@ -14631,6 +14667,9 @@ ValidateActiveCompanionCommandEpochs(expectedGeneration) {
         WriteDiagnostic("COMPANION_LONG_SERVER_REGISTRATION_NOT_SYNCHRONIZED")
         return false
     }
+    WriteDiagnostic("NAVIGATION_PROGRESS status=" companionInfo.status
+        " distanceCm=" companionInfo.distanceCm
+        " code=" companionInfo.lastCode " sequence=" companionInfo.sequence)
     ; 通常runでは途中で未確定候補へ切り替わった時点で停止します。
     ; expectedGeneration=0は登録候補へ移動中なのでpending=trueが正しい状態です。
     if expectedGeneration && !CompanionProfileMatches(companionInfo) {
@@ -15676,8 +15715,10 @@ ReadVehicleWorkMode(settingsFile) {
 
 IsValidVehicleProfile(config) {
     return config.vehicleRegistered = 1
-        && config.vehicleCompanionProtocol = 0
-        && config.vehicleRegistrationId = ""
+        && ((config.vehicleCompanionProtocol = 0
+                && config.vehicleRegistrationId = "")
+            || (config.vehicleCompanionProtocol = 1
+                && IsValidCompanionRegistrationId(config.vehicleRegistrationId)))
         && IsValidBase64Token(config.vehicleStorageId)
         && config.vehicleStorageType = "dHJ1bms="
         && (config.vehicleWorkMode = "mining" || config.vehicleWorkMode = "washing"

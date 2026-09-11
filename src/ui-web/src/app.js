@@ -145,7 +145,7 @@
     'metric-primary-label', 'metric-primary-value', 'metric-correction-label',
     'metric-correction-value', 'metric-storage-value', 'shortcut-hint', 'vehicle-status',
     'vehicle-enabled', 'capacity-value', 'capacity-fill', 'capacity-detail',
-    'companion-status', 'companion-detail', 'vehicle-register', 'vehicle-register-label',
+    'companion-status', 'companion-detail', 'vehicle-register', 'vehicle-register-label', 'vehicle-register-local',
     'vehicle-delete', 'start-hotkey', 'stop-hotkey', 'setting-background', 'setting-hide',
     'setting-correction', 'setting-auto-eat', 'food-key', 'setting-auto-update',
     'minimum-free-weight', 'storage-trigger-percent', 'estimated-reward-weight',
@@ -299,10 +299,7 @@
 
   function localVehicleDetail(item) {
     const text = textOf(item);
-    if (!text || /補助リソース|サーバー管理者|サーバー側/i.test(text)) {
-      return '登録を押したあと、FiveMで目的の車両ストレージを一度開いてください。';
-    }
-    return text;
+    return text || '徒歩往復にはサーバー管理者によるai_miner_companion導入が必要です。';
   }
 
   function setTone(element, tone) {
@@ -510,6 +507,7 @@
     setText(elements.companionDetail, localVehicleDetail(companionDetail), animate);
     setText(elements.vehicleRegisterLabel, textOf(register, '車両登録を開始'), animate);
     elements.vehicleRegister.disabled = !enabledOf(register);
+    elements.vehicleRegisterLocal.disabled = !enabledOf(register);
     setText(elements.vehicleDelete, textOf(remove, '登録を削除'), animate);
     elements.vehicleDelete.disabled = !enabledOf(remove, false);
   }
@@ -846,10 +844,10 @@
       };
     }
     if (action === 'vehicle.toggle') next.controls.vehicleEnabled.value = payload.enabled === true;
-    if (action === 'vehicle.register') {
+    if (action === 'vehicle.register' || action === 'vehicle.register-local') {
       next.registrationActive = true;
       next.controls.companionStatus = { text: '取り込み待機中', tone: 'progress' };
-      next.controls.companionDetail = { text: 'FiveMで目的の車両ストレージを一度開いてください。' };
+      next.controls.companionDetail = { text: 'プレビューです。徒歩往復には実際のFiveMサーバー連携が必要です。' };
       next.controls.vehicleRegister = { text: 'ストレージを待っています', enabled: false };
     }
     if (action === 'vehicle.delete') {
@@ -917,6 +915,13 @@
       if (elements.vehicleRegister.classList.contains('is-pending')) return;
       setPending(elements.vehicleRegister, 'vehicle', state.revision);
       sendAction('vehicle.register');
+    });
+    elements.vehicleRegisterLocal.addEventListener('click', () => {
+      app.dialog.confirm(
+        '荷台が近くにある場合だけの収納です。車両の位置を取得できないため徒歩移動は行いません。',
+        '近接収納のみ登録',
+        () => sendAction('vehicle.register-local'),
+      );
     });
     elements.vehicleDelete.addEventListener('click', () => {
       app.dialog.confirm(

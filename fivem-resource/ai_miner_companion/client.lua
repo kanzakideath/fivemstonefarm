@@ -634,6 +634,7 @@ local function startVehicleNavigation(requestId, command, registrationId)
 end
 
 local function runReturnNavigation(operation)
+    local arrivalDistance = math.max(0.15, math.min(0.75, tonumber(Config.Navigation.WorkArrivalDistance) or 0.40))
     local ped = PlayerPedId()
     local destination = vector3(state.workAnchor.x, state.workAnchor.y, state.workAnchor.z)
     if distanceBetween(GetEntityCoords(ped), destination) > Config.Navigation.MaxReturnDistance then
@@ -667,7 +668,7 @@ local function runReturnNavigation(operation)
         state.navigation.distance = roundedDistance(targetDistance)
         state.navigation.attempt = attempt
         state.navigation.status = 'moving'
-        if targetDistance <= Config.Navigation.ArrivalDistance then
+        if targetDistance <= arrivalDistance then
             ClearPedTasks(ped)
             SetEntityHeading(ped, state.workAnchor.heading)
             SetGameplayCamRelativeHeading(state.workAnchor.cameraHeading)
@@ -698,7 +699,7 @@ local function runReturnNavigation(operation)
 
         if now - lastTaskAt >= Config.Navigation.RetaskIntervalMs then
             TaskFollowNavMeshToCoord(ped, destination.x, destination.y, destination.z,
-                Config.Navigation.Speed, -1, Config.Navigation.ArrivalDistance * 0.70, false, 0.0)
+                Config.Navigation.Speed, -1, arrivalDistance * 0.70, false, 0.0)
             lastTaskAt = now
         end
         if now % 750 < 250 then publishState() end

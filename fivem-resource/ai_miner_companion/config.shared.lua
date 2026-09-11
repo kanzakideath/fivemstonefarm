@@ -27,6 +27,8 @@ Config.Navigation = {
     StreamTimeoutMs = 8000,
     Speed = 1.65,
     ArrivalDistance = 1.75,
+    -- Work anchors require a tighter stop than a vehicle cargo interaction.
+    WorkArrivalDistance = 0.40,
     RetaskIntervalMs = 1200,
     VehicleMoveRetaskDistance = 1.25,
     -- A small parking adjustment is retargeted. A driven/teleported vehicle is not

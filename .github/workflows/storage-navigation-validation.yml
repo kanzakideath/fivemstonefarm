@@ -1,0 +1,72 @@
+name: Storage navigation validation
+on:
+  push:
+    branches: [fix/verified-storage-navigation]
+    paths:
+      - .github/workflows/storage-navigation-validation.yml
+      - src/**
+      - scripts/**
+      - fivem-resource/**
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/storage-navigation-validation.yml
+      - src/**
+      - scripts/**
+      - fivem-resource/**
+permissions:
+  contents: read
+concurrency:
+  group: navigation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Validate the checked-in source without rewriting it
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = [IO.File]::ReadAllText('src/mining-auto.ahk')
+          if ($source -notmatch '(?m)^global AppVersion := "([0-9]+\.[0-9]+\.[0-9]+)"') {
+            throw 'Could not determine the checked-in application version.'
+          }
+          $version = $Matches[1]
+          New-Item -ItemType Directory -Force artifacts/navigation-validation | Out-Null
+          Start-Transcript -Path artifacts/navigation-validation/validation.txt
+          try {
+            node scripts/Test-VerifiedNavigation.mjs
+            if ($LASTEXITCODE -ne 0) { throw 'Navigation source/JS tests failed.' }
+            ./fivem-resource/ai_miner_companion/tests/Validate-Resource.ps1
+            ./scripts/Build.ps1 -Version $version
+            $sha = (& git rev-parse HEAD).Trim()
+            $hash = (Get-FileHash dist/ai-miner-win-x64.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+            "source_commit=$sha`nsha256=$hash`nUNRELEASED TEST CANDIDATE. Requires administrator-installed companion. No live FiveM validation." | Set-Content artifacts/navigation-validation/CANDIDATE.txt -Encoding utf8
+            Write-Host 'NAVIGATION_VALIDATION_OK: compiled adapter mocks and regression suite; no live FiveM test performed.'
+          } finally { Stop-Transcript }
+      - name: Retain validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: navigation-validation-evidence
+          path: |
+            artifacts/navigation-validation/
+            build/staging/ui-host-test.txt
+            build/staging/*.stdout.log
+            build/staging/*.stderr.log
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Retain unreleased candidate executable
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: unreleased-navigation-candidate
+          path: |
+            dist/ai-miner-win-x64.exe
+            artifacts/navigation-validation/CANDIDATE.txt
+          retention-days: 7
+          if-no-files-found: error
