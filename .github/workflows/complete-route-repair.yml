@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - name: Apply audited changes, not obsolete prepare scripts
+      - name: Apply audited changes and validate the browser production bundle
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -35,6 +35,7 @@ jobs:
           New-Item -ItemType Directory -Force artifacts/route-ui | Out-Null
           Start-Transcript artifacts/route-ui/windows-validation.txt
           try { ./scripts/Build.ps1 -Version 9.1.9 } finally { Stop-Transcript }
+          if ([IO.File]::ReadAllText('src/ui-web/www/stoneverse-host.js').Contains('process.env.NODE_ENV')) { throw 'Node environment reference leaked into the browser bundle.' }
       - name: Render actual native overlay without game input
         shell: pwsh
         run: |
