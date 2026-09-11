@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - name: Apply explicit integration and corrected anchor DTO
+      - name: Apply explicit integration and both guarded pre-click contracts
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -43,6 +43,9 @@ jobs:
           New-Item -ItemType Directory -Force artifacts/observed-wash | Out-Null
           Start-Transcript artifacts/observed-wash/windows-validation.txt
           try { ./scripts/Build.ps1 -Version 9.1.10 } finally { Stop-Transcript }
+      - name: Exercise production capture and native W input on a synthetic desktop target
+        shell: pwsh
+        run: ./scripts/Test-WashPositionDesktop.ps1
       - name: Native overlay and four-viewport route interactions
         shell: pwsh
         run: |
