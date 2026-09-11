@@ -45,8 +45,7 @@ jobs:
           [System.IO.File]::WriteAllText($sourcePath, $text, [System.Text.UTF8Encoding]::new($false))
 
           # Build-time UI-host validation had the same optimistic assumption: a
-          # 20-second hard kill.  The release pipeline itself reproduced this timeout.
-          # Give the standalone host one minute, matching the updater's validation budget.
+          # 20-second hard kill. The release pipeline itself reproduced this timeout.
           $buildPath = 'scripts/Build.ps1'
           $buildText = [System.IO.File]::ReadAllText($buildPath)
           $buildOld = 'if (-not $uiTestProcess.WaitForExit(20000)) {'
@@ -100,17 +99,20 @@ jobs:
         timeout-minutes: 18
         run: .\scripts\Build.ps1 -Version 9.1.7 -SkipToolBootstrap
 
-      - name: Commit validated hotfix and remove one-shot workflow
+      - name: Commit validated hotfix
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          Remove-Item -LiteralPath '.github/workflows/one-shot-update-validation-hotfix.yml' -Force
+          # Vite rewrites already-validated generated STONEVERSE/vendor files with
+          # runner-specific line endings. Keep the checked-in generated artifacts
+          # untouched; Build.ps1 already validated them against their source inputs.
+          git restore --worktree --source=HEAD -- src/ui-web/www/stoneverse src/ui-web/www/stoneverse-host.js src/ui-web/www/vendor
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
           git diff --cached --check
           if ($LASTEXITCODE -ne 0) { throw 'Staged diff validation failed.' }
-          git commit -m 'Fix false rollback during slow WebView2 startup'
+          git commit -m 'Fix false rollback during slow WebView2 startup [skip ci]'
           if ($LASTEXITCODE -ne 0) { throw 'Hotfix commit failed.' }
           git push origin HEAD:fix/update-validation-timeout-9.1.7
           if ($LASTEXITCODE -ne 0) { throw 'Hotfix push failed.' }
