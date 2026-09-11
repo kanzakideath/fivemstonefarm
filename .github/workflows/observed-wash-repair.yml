@@ -2,7 +2,7 @@ name: Observed washing validation
 on:
   push:
     branches: [fix/washing-observed-position]
-    paths: [.github/workflows/observed-wash-repair.yml]
+    paths: [.github/workflows/observed-wash-repair.yml, 'src/**', 'scripts/**']
 permissions:
   contents: write
 concurrency:
@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - name: Apply explicit integration and validation stage traces
+      - name: Apply explicit integration and correct compiled validation dispatch
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
