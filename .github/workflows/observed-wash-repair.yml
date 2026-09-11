@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - name: Apply explicit integration on its known baseline
+      - name: Apply explicit integration and corrected anchor DTO
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -24,15 +24,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Unexpected baseline.' }
           if ((Get-FileHash src/wash-position/WashPosition.cs -Algorithm SHA256).Hash.ToLowerInvariant() -ne '451fcced7bdb9ac4097b4d48b8e5959f7856bf0147e4b8a470649e8afc1ff4cb') { throw 'Observed helper source differs from local audit.' }
           if ((Get-FileHash src/wash-position.ahk -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'eb076d5c83d2808b377087053b1175d576a7914e012bbaf915be8b19075bb483') { throw 'Observed wrapper source differs from local audit.' }
-          if (-not ([IO.File]::ReadAllText('src/mining-auto.ahk').Contains('RunObservedWashHelper("wash-correct"'))) {
-            foreach ($name in @('record','backend','ui','finalize')) {
-              python "scripts/passive-route-repair/$name.py"
-              if ($LASTEXITCODE -ne 0) { throw "Pending source boundary failed: $name" }
-            }
-            python scripts/Apply-ObservedWash.py
-            if ($LASTEXITCODE -ne 0) { throw 'Observed integration failed.' }
-            python scripts/Apply-ObservedWashUi.py
-            if ($LASTEXITCODE -ne 0) { throw 'Observed UI integration failed.' }
+          foreach ($name in @('record','backend','ui','finalize')) {
+            python "scripts/passive-route-repair/$name.py"
+            if ($LASTEXITCODE -ne 0) { throw "Pending source boundary failed: $name" }
+          }
+          foreach ($name in @('Apply-ObservedWash','Apply-ObservedWashUi','Fix-ObservedWashCompile')) {
+            python "scripts/$name.py"
+            if ($LASTEXITCODE -ne 0) { throw "Observed repair failed: $name" }
           }
           node --check src/ui-web/src/app.js
           if ($LASTEXITCODE -ne 0) { throw 'Invalid UI JavaScript.' }
@@ -73,10 +71,10 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           Remove-Item scripts/passive-route-repair -Recurse -Force
-          Remove-Item scripts/Apply-ObservedWash.py,scripts/Apply-ObservedWashUi.py -Force
+          Remove-Item scripts/Apply-ObservedWash.py,scripts/Apply-ObservedWashUi.py,scripts/Fix-ObservedWashCompile.py -Force
           Remove-Item .github/workflows/passive-route-repair.yml,.github/workflows/wash-source-export.yml,.github/workflows/observed-wash-repair.yml -Force
           git add -u
-          git diff --cached --check
+          git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --cached --check
           if ($LASTEXITCODE -ne 0) { throw 'Staged source diff failed.' }
           git commit -m 'Use observed foreground wash correction and retain tested nearby storage and passive routes [skip ci]'
           if ($LASTEXITCODE -ne 0) { throw 'Could not commit validated changes.' }
