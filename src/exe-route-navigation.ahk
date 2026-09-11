@@ -6,6 +6,10 @@ InitExeRouteAssets() {
     LocalNav.runtime := A_Temp "\ai-miner-local-navigation-" processId
     DirCreate LocalNav.root
     DirCreate LocalNav.runtime
+    LocalNav.washHelper := LocalNav.runtime "\WashPosition.exe"
+    LocalNav.washAnchorGeneration := 0
+    LocalNav.washFeedback := "未計測。石洗いはFiveMを前面にして開始してください"
+    FileInstall "WashPosition.exe", LocalNav.washHelper, true
     LocalNav.helper := LocalNav.runtime "\LocalNavigation.exe"
     FileInstall "LocalNavigation.exe", LocalNav.helper, true
     FileInstall "audio\mining-complete-sweet.wav", LocalNav.runtime "\mining-complete-sweet.wav", true
@@ -33,19 +37,25 @@ ExeRouteSetupStateJson(mode) {
     hasVehicle := IsValidVehicleProfile(Config) && Config.vehicleCompanionProtocol = 0
     recorded := false
     trialSaved := false
+    method := "walking"
     try {
         bound := hasVehicle
             && IniRead(meta, "Route", "StorageId", "") == Config.vehicleStorageId
             && IniRead(meta, "Route", "StorageType", "") == Config.vehicleStorageType
-        recorded := bound && !!FileExist(root "\outbound.json") && !!FileExist(root "\return.json")
-        trialSaved := recorded && ExeRouteFilesMatch(root)
+        method := IniRead(meta, "Route", "Method", "walking")
+        recorded := bound && (method = "stationary"
+            ? IniRead(meta, "Route", "Schema", "0") = "2"
+            : !!FileExist(root "\outbound.json") && !!FileExist(root "\return.json"))
+        trialSaved := recorded && (method = "stationary" || ExeRouteFilesMatch(root))
             && IniRead(meta, "Route", "Verified", "0") = "1"
     }
     return '{"hasVehicle":' (hasVehicle ? "true" : "false")
         . ',"recorded":' (recorded ? "true" : "false")
         . ',"trialSaved":' (trialSaved ? "true" : "false")
         . ',"busy":' ((LocalNav.busy || LocalNav.requestActive || State.running || State.registrationActive || State.startInProgress) ? "true" : "false")
+        . ',"method":' JsonQuote(method)
         . ',"cycle":' StorageCycleProofJson(LocalNav.cycle)
+        . ',"washFeedback":' JsonQuote(LocalNav.washFeedback)
         . ',"feedback":' JsonQuote(LocalNav.feedback) '}'
 }
 
@@ -62,6 +72,8 @@ RequestExeRouteSetup(operation, mode, *) {
             TeachExeRoute()
         else if operation = "trial"
             TrialExeRoute()
+        else if operation = "stationary"
+            SetupStationaryStorage()
         else
             return false
     } finally {
@@ -118,8 +130,9 @@ ShowExeRoutePanel(*) {
     panel.SetFont("s10", "Yu Gothic UI")
     panel.AddButton("w640 h40", "ルート設定の専用画面を開く").OnEvent("Click", (*) => (panel.Hide(), OpenExeRouteSettings()))
     panel.AddText("w640", "サーバー導入は不要です。作業モードごとに、同じ作業場所と停車車両の往路・復路を記録します。`n徒歩中だけFiveMを前面で使用します。他アプリへ切替／F9／手動操作で停止します。")
-    panel.AddText("y+12 w640", "① 先に通常の車両登録を行う。`n② 作業場所で下の「往復を教える」。W/A/S/Dとマウスだけで歩く。4秒以内ごとに立ち止まると照合点を保存。各終点でF7。`n③ 元の現場で「自動試走」。往復の画面照合・荷台ID・作業ボタンが確認できた経路だけ有効になります。")
+    panel.AddText("y+12 w640", "① 先に通常の車両登録を行う。`n② 荷台がその場で開くなら近接収納。歩く場合は「往復を教える」で準備後F6。W/A/S/Dとマウスだけで歩く。4秒以内ごとに立ち止まると照合点を保存。各終点でF7。`n③ 元の現場で「自動試走」。往復の画面照合・荷台ID・作業ボタンが確認できた経路だけ有効になります。")
     panel.AddText("y+10 w640 cA34512", "車両の移動、別サーバー／再接続、画面サイズ・カメラ設定変更時は再登録が必要です。天候・照明・遮蔽物で画面照合できない場合も停止します。任意の車両を自動追跡する方式ではありません。")
+    panel.AddButton("y+12 w640 h40", "この位置で近接収納を確認（歩かない）").OnEvent("Click", RequestExeRouteSetup.Bind("stationary", Config.actionMode))
     panel.AddText("y+10 w640", "現在の作業：" BackgroundActionDisplayName(Config.actionMode))
     panel.AddButton("y+12 w305 h36", "1. 往復を教える").OnEvent("Click", RequestExeRouteSetup.Bind("teach", Config.actionMode))
     panel.AddButton("x+12 yp w305 h36", "2. 自動試走（収納しない）").OnEvent("Click", RequestExeRouteSetup.Bind("trial", Config.actionMode))
@@ -222,7 +235,10 @@ ExeRouteFilesMatch(root) {
                 return false
             if FileGetSize(file) > 4 * 1024 * 1024 || FileGetSize(proof) > 4 * 1024 * 1024
                 return false
-            if !(FileRead(file, "UTF-8") == FileRead(proof, "UTF-8"))
+            content := FileRead(file, "UTF-8")
+            if !RegExMatch(content, '"schema"\s*:\s*2\b')
+                || !InStr(content, '"recorded-view"')
+                || !(content == FileRead(proof, "UTF-8"))
                 return false
         }
         return true
@@ -239,7 +255,9 @@ ExeRouteBindingValid(mode, epoch, verified := true) {
             && IniRead(meta, "Route", "StorageType", "") == Config.vehicleStorageType
             && (!verified || IniRead(meta, "Route", "Epoch", "") = epoch)
             && (!verified || IniRead(meta, "Route", "Verified", "0") = "1")
-            && ExeRouteFilesMatch(root)
+            && (IniRead(meta, "Route", "Method", "walking") = "stationary"
+                ? IniRead(meta, "Route", "Schema", "0") = "2"
+                : ExeRouteFilesMatch(root))
     } catch
         return false
 }
@@ -253,7 +271,15 @@ RequireExeRouteForRun(expectedGeneration) {
         ShowPage("routes")
         return false
     }
+    if ExeStorageMethod(State.runMode) = "stationary"
+        WriteDiagnostic("STATIONARY_MODE_READY liveCargoCheckRequired=1")
     return IsCurrentRun(expectedGeneration)
+}
+
+ExeStorageMethod(mode) {
+    try return IniRead(ExeRouteModeRoot(mode) "\route.ini", "Route", "Method", "walking")
+    catch
+        return "walking"
 }
 
 ExeRouteContextValid(generation) {
@@ -290,10 +316,15 @@ RunExeRouteHelper(operation, routePath, generation := 0) {
             return "ERROR CANCELLED"
         ; The route setup explicitly discloses foreground use. Never type into
         ; another application after a user switches away during navigation.
-        try WinActivate "ahk_id " State.targetHwnd
+        washOperation := operation = "wash-anchor" || operation = "wash-correct" || operation = "wash-check"
+        if washOperation && !WinActive("ahk_id " State.targetHwnd)
+            return "ERROR GAME_NOT_FOREGROUND"
+        if !washOperation
+            try WinActivate "ahk_id " State.targetHwnd
         if !WinWaitActive("ahk_id " State.targetHwnd,, 3)
             return "ERROR GAME_NOT_FOREGROUND"
-        command := QuoteCommandArg(LocalNav.helper) " " operation " " QuoteCommandArg(resultPath)
+        helper := washOperation ? LocalNav.washHelper : LocalNav.helper
+        command := QuoteCommandArg(helper) " " operation " " QuoteCommandArg(resultPath)
             . " " State.targetHwnd " " processId " " QuoteCommandArg(cancelPath)
             . " " QuoteCommandArg(routePath) " " Config.workViewMouseDirection " " State.targetPid
         Critical "On"
@@ -304,7 +335,7 @@ RunExeRouteHelper(operation, routePath, generation := 0) {
         try Run command,, "Hide", &helperPid
         finally Critical "Off"
         LocalNav.pid := helperPid
-        deadline := MonotonicMs() + 365000
+        deadline := MonotonicMs() + (washOperation ? 24000 : 365000)
         while ProcessExist(helperPid) {
             if !ExeRouteContextValid(generation) || MonotonicMs() >= deadline {
                 CancelExeRouteOperation()
@@ -383,6 +414,9 @@ FinishExeRouteSetupContext(message) {
     LocalNav.busy := false
     State.vehicleStatusLabel.Text := message
     LocalNav.feedback := message
+    try {
+        FileAppend A_NowUTC " " message "`n", LocalNav.root "\setup-diagnostics.log", "UTF-8"
+    }
     ShowPage("routes")
     ShowMainWindow()
     QueueWebUiFlush(true)
@@ -390,7 +424,7 @@ FinishExeRouteSetupContext(message) {
 
 TeachExeRoute(*) {
     global LocalNav, State, Config
-    if MsgBox("作業場所で、通常の作業ボタンを出せる位置に立ってください。石洗いは手持ちに未洗浄石が必要です。`n`n往路：トラックの荷台前へ歩いてF7。`n復路：同じ作業場所へ歩いてF7。`n4秒以内ごとに立ち止まり、照合用の景色を保存してください。`n記録中はW/A/S/Dとマウスだけ。走る・乗車・UI操作はしないでください。`n`n徒歩中にFiveMを前面にすることへ同意して開始します。", "EXE徒歩ルートの記録", "OKCancel") != "OK"
+    if MsgBox("作業場所で、通常の作業ボタンを出せる位置に立ってください。石洗いは手持ちに未洗浄石が必要です。`n`n往路：トラックの荷台前へ歩いてF7。`n復路：同じ作業場所へ歩いてF7。`n各片道の準備画面でF6を押して記録開始。視点は勝手に動かしません。`n4秒以内ごとに立ち止まり、照合用の景色を保存してください。`n記録中はW/A/S/Dとマウスだけ。走る・乗車・UI操作はしないでください。`n`n徒歩中にFiveMを前面にすることへ同意して開始します。", "EXE徒歩ルートの記録", "OKCancel") != "OK"
         return
     if !BeginExeRouteSetupContext()
         return
@@ -427,6 +461,8 @@ TeachExeRoute(*) {
         ; new leg enabled with the old trial receipt.
         meta := root "\route.ini"
         IniWrite "0", meta, "Route", "Verified"
+        IniWrite "walking", meta, "Route", "Method"
+        IniWrite "2", meta, "Route", "Schema"
         FileMove outPath, root "\outbound.json", true
         FileMove backPath, root "\return.json", true
         FileCopy root "\outbound.json", root "\outbound.verified", true
@@ -446,6 +482,10 @@ TeachExeRoute(*) {
 
 TrialExeRoute(*) {
     global State, Config
+    if ExeStorageMethod(Config.actionMode) = "stationary" {
+        SetupStationaryStorage()
+        return
+    }
     if !BeginExeRouteSetupContext()
         return
     root := ExeRouteModeRoot(Config.actionMode)
@@ -483,6 +523,20 @@ TrialExeRoute(*) {
 }
 
 ExeRouteErrorMessage(result) {
+    if InStr(result, "LEGACY_ROUTE")
+        return "旧ルートは今回の自然視点方式で再記録してください。荷台がその場で開く場合は近接収納を確認できます。 [" result "]"
+    if InStr(result, "WORK_NOT_VISIBLE")
+        return "今の視点で作業ボタンを確認できません。手動で見える向きにして再確認してください。石洗いは手持ち石も必要です。 [" result "]"
+    if InStr(result, "REGISTERED_CARGO_NOT_VISIBLE")
+        return "今の位置・視点で登録荷台を確認できません。作業と荷台の両方に届く位置にするか徒歩ルートを記録してください。 [" result "]"
+    if InStr(result, "UI_NOT_CLOSED")
+        return "荷台画面を閉じたことを確認できません。ゲーム画面を確認してください。 [" result "]"
+    if InStr(result, "RECORDING_LAG")
+        return "移動中の記録が遅延したため停止しました。低負荷状態で短い区間を再記録してください。アプリの再起動ではありません。 [" result "]"
+    if InStr(result, "RECORDING_MOVED_DURING")
+        return "目印の撮影中に移動を検出しました。保存完了まで一度止まってください。 [" result "]"
+    if InStr(result, "ROUTE_BUDGET_OR_NO_WALK")
+        return "徒歩区間が記録されていません。荷台がその場で開く場合は近接収納を使用してください。 [" result "]"
     if InStr(result, "VISUAL_CHECKPOINT")
         return "記録した景色に一致しません。視点だけではなく立ち位置・照明・車両位置・カメラ設定を確認し、短い区間で記録し直してください。"
     if InStr(result, "FOREGROUND")
@@ -508,6 +562,11 @@ ExecuteExeRouteLeg(generation, leg) {
         return false
     if !ValidateServerEpochCheckpoint(generation, "exe_route_" leg)
         return false
+    if ExeStorageMethod(State.runMode) = "stationary" {
+        ; No input. Caller must still verify the live cargo/work endpoint.
+        WriteDiagnostic("STATIONARY_LEG_NO_INPUT leg=" leg)
+        return IsCurrentRun(generation)
+    }
     result := RunExeRouteHelper("play", ExeRouteModeRoot(State.runMode) "\" leg ".json", generation)
     if !IsCurrentRun(generation)
         return false
@@ -538,40 +597,109 @@ ProbeExeRouteCargo(generation, &storageId, &storageType) {
     global State, Config
     storageId := ""
     storageType := ""
-    ; The taught route supplies position/yaw. Only bounded pitch adjustment is
-    ; permitted here; this is not the old in-place search pretending to navigate.
-    Loop 9 {
-        if !ExeRouteContextValid(generation)
-            return false
-        if OpenStorageAndCapture(&id, &type, generation, &fatal) {
-            if id != Config.vehicleStorageId || type != Config.vehicleStorageType {
-                CloseLocalStorageUi()
-                WriteDiagnostic("EXE_ROUTE_WRONG_CARGO")
-                return false
-            }
-            storageId := id
-            storageType := type
-            return true
-        }
-        if fatal
-            return false
-        if !ExeRouteCameraStep(generation, 0, -Config.workViewMouseDirection * 100)
-            return false
-        Sleep 100
+    ; Probe only the current view; no unrecorded pitch sweep or second cargo.
+    if !ExeRouteContextValid(generation)
+        return false
+    if !OpenStorageAndCapture(&id, &type, generation, &fatal)
+        return false
+    if !ExeRouteContextValid(generation)
+        return false
+    if id != Config.vehicleStorageId || type != Config.vehicleStorageType {
+        CloseLocalStorageUi()
+        WriteDiagnostic("EXE_ROUTE_WRONG_CARGO")
+        return false
     }
-    return false
+    storageId := id
+    storageType := type
+    return true
 }
 
 ProbeExeRouteWork(generation, mode) {
-    global Config
-    if !ExeRouteContextValid(generation)
-        return false
-    if ProbeWorkTarget(mode, generation)
-        return true
-    if !ExeRouteCameraStep(generation, 0, Config.workViewMouseDirection * 2200)
-        return false
-    Sleep 200
     return ExeRouteContextValid(generation) && ProbeWorkTarget(mode, generation)
+}
+
+StationaryCargoProbe(generation) {
+    return ProbeExeRouteCargo(generation, &id, &type)
+}
+
+; Shared real/test workflow. No move, camera or item-transfer callback exists.
+EvaluateStationarySpot(guard, work, cargo, close) {
+    try {
+        if !guard.Call()
+            return "CANCELLED"
+        if !work.Call() || !guard.Call()
+            return "WORK_NOT_VISIBLE"
+        if !cargo.Call() || !guard.Call()
+            return "REGISTERED_CARGO_NOT_VISIBLE"
+        if !close.Call() || !guard.Call()
+            return "UI_NOT_CLOSED"
+        if !work.Call() || !guard.Call()
+            return "WORK_NOT_VISIBLE_AFTER_CARGO"
+        return "STATIONARY_VERIFIED"
+    } finally {
+        if guard.Call()
+            close.Call()
+    }
+}
+
+SetupStationaryStorage(*) {
+    global State, Config, LocalNav
+    if MsgBox("徒歩ルートを使わず、同じ立ち位置から作業と荷台を操作する設定です。`n`n画面に作業ボタンと登録した荷台のボタンが出る位置・視点にしてください。石洗いは未洗浄石を持ってください。`n移動・視点変更・アイテムの転送は行わず、作業→登録荷台→作業を確認します。`n確認に成功しても自動収納ONは別操作です。", "近接収納の確認（移動なし）", "OKCancel") != "OK"
+        return
+    if !BeginExeRouteSetupContext()
+        return
+    root := ExeRouteModeRoot(Config.actionMode)
+    meta := root "\route.ini"
+    temp := root "\stationary.tmp.ini"
+    epoch := State.serverEpoch
+    message := "近接収納の確認は未完了です。自動収納は有効にしていません。"
+    try {
+        IniWrite "0", meta, "Route", "Verified"
+        SetExeSetupGuide("近接収納：移動せずに確認中", "作業ボタン → 登録した荷台ID → 作業ボタンを確認します。視点を動かさず待ってください。")
+        result := EvaluateStationarySpot(ExeRouteContextValid.Bind(0),
+            ProbeExeRouteWork.Bind(0, Config.actionMode), StationaryCargoProbe.Bind(0), CloseLocalStorageUi)
+        if result != "STATIONARY_VERIFIED"
+            throw Error("近接確認停止：" ExeRouteErrorMessage(result))
+        if !ParseServerHealth(RunBackgroundBridge("health"), &liveEpoch)
+            || liveEpoch != epoch || !ExeRouteContextValid(0)
+            throw Error("接続変更／中止を検出したため、近接確認を保存しません。")
+        if FileExist(temp)
+            FileDelete temp
+        IniWrite "2", temp, "Route", "Schema"
+        IniWrite "stationary", temp, "Route", "Method"
+        IniWrite Config.vehicleStorageId, temp, "Route", "StorageId"
+        IniWrite Config.vehicleStorageType, temp, "Route", "StorageType"
+        IniWrite epoch, temp, "Route", "Epoch"
+        IniWrite "1", temp, "Route", "Verified"
+        FileMove temp, meta, true
+        message := "近接収納を確認しました。歩かず・視点を動かさず登録荷台へ収納／石補充を行います。「自動収納・補充をON」にしてください。実行時も毎回荷台IDと転送結果を確認します。"
+    } catch as err {
+        message := err.Message
+    } finally {
+        try FileDelete temp
+        FinishExeRouteSetupContext(message)
+    }
+}
+
+StationaryWorkflowTestProbe(trace, failAt, name, *) {
+    trace.Push(name)
+    return trace.Length != failAt
+}
+
+ValidateStationaryWorkflow() {
+    for failAt in [0, 1, 2, 3, 4] {
+        trace := []
+        probe := StationaryWorkflowTestProbe.Bind(trace, failAt)
+        result := EvaluateStationarySpot(() => true, probe.Bind("work"), probe.Bind("cargo"), probe.Bind("close"))
+        if (failAt = 0) != (result = "STATIONARY_VERIFIED")
+            return false
+        if failAt && trace.Length > failAt + 1
+            return false
+    }
+    calls := []
+    result := EvaluateStationarySpot(() => false, StationaryWorkflowTestProbe.Bind(calls, 0, "work"),
+        StationaryWorkflowTestProbe.Bind(calls, 0, "cargo"), StationaryWorkflowTestProbe.Bind(calls, 0, "close"))
+    return result = "CANCELLED" && calls.Length = 0
 }
 
 

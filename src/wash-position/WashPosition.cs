@@ -27,7 +27,7 @@ internal sealed class WashPosition : Form
         public int support;
         public double quality;
     }
-    internal sealed class Anchor
+    internal sealed class PositionAnchor
     {
         public int schema = 1, width, height, pid, owner;
         public long hwnd;
@@ -119,7 +119,7 @@ internal sealed class WashPosition : Form
                 byte[] masked=new byte[W*H];
                 foreach (Point tile in Tiles) for(int y=0;y<TileSize;y++)
                     Array.Copy(frame,(tile.Y+y)*W+tile.X,masked,(tile.Y+y)*W+tile.X,TileSize);
-                AtomicWrite(anchorPath,Json.Serialize(new Anchor {width=clientWidth,height=clientHeight,
+                AtomicWrite(anchorPath,Json.Serialize(new PositionAnchor {width=clientWidth,height=clientHeight,
                     pid=gamePid,owner=parentPid,hwnd=target.ToInt64(),reference=Convert.ToBase64String(masked),createdUtc=DateTime.UtcNow.ToString("O")}));
                 Result="WASH_ANCHORED"; Event("ANCHOR_SAVED input=0");
             }
@@ -127,7 +127,7 @@ internal sealed class WashPosition : Form
             {
                 var file=new FileInfo(anchorPath);
                 if (!file.Exists || file.Length > 150000) throw new Exception("ANCHOR_MISSING");
-                Anchor anchor=Json.Deserialize<Anchor>(File.ReadAllText(anchorPath,Encoding.UTF8));
+                PositionAnchor anchor=Json.Deserialize<PositionAnchor>(File.ReadAllText(anchorPath,Encoding.UTF8));
                 if(anchor==null || anchor.schema!=1 || anchor.pid!=gamePid || anchor.owner!=parentPid
                     || anchor.hwnd!=target.ToInt64() || anchor.width!=clientWidth || anchor.height!=clientHeight)
                     throw new Exception("ANCHOR_IDENTITY_CHANGED");
@@ -272,7 +272,7 @@ internal sealed class WashPosition : Form
             sa+=av;sb+=bv;aa+=av*av;bb+=bv*bv;ab+=av*bv;
         }
         double va=aa-sa*sa/n,vb=bb-sb*sb/n;
-        return va/n<36 || vb/n<36 ? -1 : (ab-sa*sb/n)/Math.Sqrt(va*vb);
+        return va/n<4 || vb/n<4 ? -1 : (ab-sa*sb/n)/Math.Sqrt(va*vb);
     }
     private static double Subpixel(double left,double centre,double right)
     {double d=left-2*centre+right;return Math.Abs(d)<1e-9?0:Math.Max(-.5,Math.Min(.5,.5*(left-right)/d));}
@@ -338,6 +338,10 @@ internal sealed class WashPosition : Form
     {
         var random=new Random(4412);var a=new byte[W*H];for(int n=0;n<a.Length;n++)a[n]=(byte)random.Next(25,205);
         if(!AtAnchor(Estimate(a,a)) || !AtAnchor(Estimate(a,Shift(a,0,0,20))))throw new Exception("STABLE_BRIGHTNESS_TEST");
+        var dark=new byte[a.Length];
+        for(int n=0;n<a.Length;n++)dark[n]=(byte)(10+a[n]/16);
+        if(!AtAnchor(Estimate(dark,dark)) || !Estimate(dark,Shift(dark,0,3,0)).valid)
+            throw new Exception("LOW_LIGHT_UNIQUE_TEXTURE_TEST");
         Match m=Estimate(a,Shift(a,0,4,0));if(!m.valid || Math.Abs(m.error-4)>.1)throw new Exception("SHIFT_TEST");
         if(Estimate(a,new byte[W*H]).valid || Estimate(new byte[W*H],new byte[W*H]).valid)throw new Exception("TEXTURE_TEST");
         var r=new Report();int shift=4;

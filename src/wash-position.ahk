@@ -98,3 +98,13 @@ FailObservedWash(generation, result) {
     StopAutomationWithFault(LocalNav.washFeedback, "routes", "WASH_POSITION_UNVERIFIED")
     return false
 }
+
+
+; Validation must exit non-zero with a trace, never wait on an invisible dialog.
+; This handler is installed only by --validate / UI test modes.
+ValidationFatalError(err, mode) {
+    message := "VALIDATION_ERROR " mode
+    try message .= " line=" err.Line " " err.Message "`n" err.Stack
+    try FileAppend message "`n", "**", "UTF-8-RAW"
+    ExitApp(146)
+}

@@ -1,4 +1,4 @@
-# AI採掘機 v9.1.9
+# AI採掘機 v9.1.10
 
 【EXE単独の徒歩収納・初回ルート登録必須】車両画面の「徒歩ルート・音声設定」で各現場の往復を教え、自動試走してください。サーバー側導入は不要です。移動中はFiveMを前面で使います。以前の「その場の視点探索・短いランダム移動」ではありません。音声：VOICEVOX:四国めたん。詳細は docs/EXE_ONLY_ROUTES.md を参照してください。
 
@@ -68,7 +68,7 @@ FiveMの対象UIを構造的に検出し、採掘・石洗い・砂金採りを�
 
 ## 導入
 
-1. [Releases](https://github.com/kanzakideath/fivemstonefarm/releases) から `AI-Miner-v9.1.9.zip` を取得します。
+1. [Releases](https://github.com/kanzakideath/fivemstonefarm/releases) から `AI-Miner-v9.1.10.zip` を取得します。
 2. 書き込み可能なフォルダーへ展開します。
 3. `AI採掘機.exe` を起動します。
 4. 「設定」でバックグラウンド操作、キー、視点補正、自動食事・食料スロット、自動収納のしきい値を確認します。
@@ -96,14 +96,14 @@ FiveMのウィンドウ/PIDと対象・インベントリNUIのセッション�
 - Git
 
 ```powershell
-pwsh -File .\scripts\Build.ps1 -Version 9.1.9
+pwsh -File .\scripts\Build.ps1 -Version 9.1.10
 ```
 
 ビルドは依存ロック、Web UI、WebView2ホスト、FiveM bridge、更新helper、完成EXEの自己テストを実行します。
 
 ## 確認上の制約
 
-v9.1.9の統合テストと模擬Farm状態試験は、実際のFiveMサーバーへ入力しないローカル環境で実行できます。一方、サーバー固有のox_inventory表示、車両配置、通信遅延を含む実地動作は利用先ごとに異なるため、配布前に許可されたFiveM環境での確認が必要です。
+v9.1.10の統合テストと模擬Farm状態試験は、実際のFiveMサーバーへ入力しないローカル環境で実行できます。一方、サーバー固有のox_inventory表示、車両配置、通信遅延を含む実地動作は利用先ごとに異なるため、配布前に許可されたFiveM環境での確認が必要です。
 
 ## 構成
 

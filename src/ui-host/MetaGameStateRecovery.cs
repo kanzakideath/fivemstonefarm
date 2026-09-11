@@ -379,6 +379,8 @@ namespace AiMiner.UiHost
                     + x.State.Gacha.History.Count)
                 .ThenByDescending(x => x.State.Mining.TotalStoneMined)
                 .ThenByDescending(x => x.State.Gacha.TotalDraws)
+                .ThenByDescending(x => !String.IsNullOrWhiteSpace(x.State.Profile.Name)
+                    && !String.Equals(x.State.Profile.Name, "Miner", StringComparison.Ordinal))
                 .ThenByDescending(x => x.State.Collection.Count)
                 .ThenByDescending(x => x.State.RewardGrants.Count)
                 .ThenBy(x => x.RequestedPath, StringComparer.OrdinalIgnoreCase)
@@ -1009,6 +1011,16 @@ namespace AiMiner.UiHost
                 string canonical = Path.Combine(root, "saved-games", "state.json");
                 SeedBranch(dataPath, first, "branchA", "Alpha", "draw:test:branchA");
                 SeedBranch(dataPath, second, "branchB", "Miner", "draw:test:branchB");
+                var customState = new MetaGameStateStore(first).LoadOrCreate(DateTimeOffset.UtcNow);
+                var defaultState = new MetaGameStateStore(second).LoadOrCreate(DateTimeOffset.UtcNow);
+                var expectedCustom = new Candidate { RequestedPath = "z-custom", State = customState };
+                var moreCosmetics = new Candidate { RequestedPath = "a-default", State = defaultState };
+                customState.RewardGrants.Clear();
+                if (!Object.ReferenceEquals(SelectBase(new[] { moreCosmetics, expectedCustom }), expectedCustom))
+                {
+                    error = "default profile outranked custom profile at equal progression";
+                    return false;
+                }
 
                 RecoveryReport report = PrepareCore(dataPath, canonical,
                     new[] { first, second }, false);

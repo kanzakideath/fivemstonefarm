@@ -1293,3 +1293,7 @@ input:focus-visible,
 .route-notice p { margin:5px 0 0; }
 @media (max-width:600px) { .route-step { padding:14px 12px; gap:9px; } .route-journey { flex-wrap:wrap; justify-content:center; } .route-button { width:100%; margin-top:5px; } .route-launch { padding:12px; gap:9px; } }
 @media (max-width:699px) { .sidebar-item > span { white-space:nowrap; } }
+
+.route-nearby-option { padding: 16px; margin: 12px 0 18px; border: 1px solid #83bab1; border-radius: 12px; background: #eef8f5; color: #184e43; }
+.route-nearby-option .route-button { background: #126755; color: #fff; }
+.route-feedback { overflow-wrap: anywhere; }

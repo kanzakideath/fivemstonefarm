@@ -49,6 +49,7 @@ def main():
             page.wait_for_function('window.aiMinerTest.getState().page === "routes"')
             assert page.locator('#screen-routes').is_visible()
             assert page.locator('#route-teach').is_disabled()
+            assert page.locator('#route-stationary').is_disabled()
             assert page.locator('#route-trial').is_disabled()
             assert page.locator('#route-enable').is_disabled()
             page.evaluate('''() => {
@@ -57,6 +58,7 @@ def main():
                 window.aiMinerTest.setState(s);
             }''')
             assert page.locator('#route-teach').is_enabled()
+            assert page.locator('#route-stationary').is_enabled()
             assert page.locator('#route-trial').is_disabled()
             page.locator('[data-route-mode="washing"]').click()
             page.wait_for_function('window.aiMinerTest.getState().actionMode === "washing"')
@@ -83,12 +85,29 @@ def main():
                 const s = window.aiMinerTest.getState(); s.revision += 10; s.routes.busy = true;
                 window.aiMinerTest.setState(s);
             }''')
-            for selector in ['#route-register','#route-teach','#route-trial','#route-enable','[data-route-mode="gold"]']:
+            for selector in ['#route-register','#route-teach','#route-stationary','#route-trial','#route-enable','[data-route-mode="gold"]']:
                 assert page.locator(selector).is_disabled(), selector
             page.evaluate('''() => {
                 const s = window.aiMinerTest.getState(); s.revision += 10; s.routes.busy = false;
                 window.aiMinerTest.setState(s);
             }''')
+            page.locator('#route-stationary').click()
+            assert page.evaluate("window.__sent.some(m => m.action === 'route.stationary' && m.payload.mode === 'washing')")
+            page.evaluate('''() => {
+                const s = window.aiMinerTest.getState(); s.revision += 10;
+                s.routes = {hasVehicle:true,recorded:true,trialSaved:true,busy:false,method:'stationary',feedback:'近接モードの表示試験です。実際の荷台確認ではありません。'};
+                window.aiMinerTest.setState(s);
+            }''')
+            page.evaluate("""() => {
+                const s = window.aiMinerTest.getState(); s.revision += 1;
+                s.routes.washFeedback = '補正確認 / W入力 2回・計80ms / ずれ 0.1px';
+                window.aiMinerTest.setState(s);
+            }""")
+            assert '80ms' in page.locator('#route-wash-position').inner_text()
+            assert '近接' in page.locator('#route-trial').inner_text()
+            assert '近接モード' in page.locator('#route-record-badge').inner_text()
+            assert page.locator('#route-enable').is_enabled()
+            page.screenshot(path=str(output / f'nearby-{width}.png'), full_page=True)
             page.locator('#route-return-home').click()
             page.locator('#tab-vehicle').click()
             assert page.locator('#vehicle-route').is_visible()

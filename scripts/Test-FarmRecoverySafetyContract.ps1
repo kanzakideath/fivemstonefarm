@@ -358,7 +358,10 @@ foreach ($modeContract in @(
     Assert-Contract ($modeContract.Body -notmatch 'ProbeWorkTarget\(') `
         ("{0} still performs a duplicate target pre-probe before try-* proof." -f
             $modeContract.Name)
-    $failureGuard = 'if\s+!EnsureWorkViewDown\(expectedGeneration,\s*"' +
+    $conditionPrefix = if ($modeContract.Name -eq 'washing') {
+        'if\s+!Config\.washForwardCorrection\s+&&\s+'
+    } else { 'if\s+' }
+    $failureGuard = $conditionPrefix + '!EnsureWorkViewDown\(expectedGeneration,\s*"' +
         [regex]::Escape($modeContract.Name) + '"[^)]*\)\s*\{[\s\S]{0,220}' +
         'DiscardPendingFarmAttempt\("' + [regex]::Escape($modeContract.Name) +
         '_view_down_failed"\)[\s\S]{0,80}return'
@@ -409,3 +412,12 @@ Assert-Contract (([regex]::Matches($source,
     'Unexpected direct alert site: completion voices must go through generation-bound notification guards.'
 
 Write-Host 'Farm recovery and alert safety source contract tests passed.'
+
+# Observed washing must stop before baseline/click on missing visual anchor.
+Assert-Contract ($washAttempt -match 'if\s+!EnsureObservedWashAnchor\(expectedGeneration\)\s*\r?\n\s*return' -and
+    $washAttempt.IndexOf('EnsureObservedWashAnchor(') -lt $washAttempt.IndexOf('CaptureFarmAttemptBaseline(')) `
+    'Observed washing can capture/click after visual anchor preparation failed.'
+$washCorrection = Get-AhkFunctionBody 'PerformWashCompletionCorrection'
+Assert-Contract ($washCorrection -match 'IsTargetForeground' -and $washCorrection -match 'RunObservedWashHelper\("wash-correct"' -and
+    $washCorrection -match 'WASH_STABLE' -and $washCorrection -notmatch 'play-route-health') `
+    'Observed washing lost its foreground/visual confirmation gate.'

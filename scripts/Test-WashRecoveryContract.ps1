@@ -68,7 +68,7 @@ $confirmReward = Get-AhkFunctionBody 'TryConfirmPendingFarmRewardSnapshot'
 
 Assert-Contract ($source -match
     'washPostCompletionSettleMs:\s*ReadIntegerSetting\(settingsPath,\s*"Washing",\s*"PostCompletionSettleMs",\s*2000,\s*2000,\s*4000\)') `
-    'The post-wash no-input window is not loaded with the safe 2.0 second minimum.'
+    'The fallback without visual observation must preserve the 2.0 second minimum.'
 Assert-Contract (([regex]::Matches($source,
     'IniWrite\s+Config\.washPostCompletionSettleMs,\s*temporarySettingsPath,\s*"Washing",\s*"PostCompletionSettleMs"')).Count -ge 2) `
     'The post-wash settle setting is not preserved by both settings save paths.'
@@ -128,7 +128,7 @@ Assert-Contract ($resumeAfterWash -match 'TransitionFarmState\("FARMING"' -and
 
 $sentLatch = $correct.IndexOf('State.washCorrectionSent := true',
     [StringComparison]::Ordinal)
-$movement = $correct.IndexOf('"play-route-health"',
+$movement = $correct.IndexOf('RunObservedWashHelper(',
     [StringComparison]::Ordinal)
 Assert-Contract ($correct -match
     'IsCurrentFarmTask\(expectedGeneration,\s*expectedTaskId,\s*\r?\n\s*"WASH_CORRECTING"\)') `
@@ -142,7 +142,7 @@ Assert-Contract (([regex]::Matches($source,
     'PerformWashCompletionCorrection\(')).Count -eq 2) `
     'Forward correction has more than one runtime call site.'
 $bridgeResponse = $correct.IndexOf(
-    'nudgeResult := RunBackgroundBridgeCancelable(expectedGeneration,',
+    'nudgeResult := RunObservedWashHelper(',
     [StringComparison]::Ordinal)
 $responseCritical = $correct.IndexOf(
     'criticalWasOn := EnterMetagameOutboxCritical()', $bridgeResponse,
@@ -234,3 +234,13 @@ Assert-Contract ($beginSession -ge 0 -and $schedule -gt $beginSession -and
     'A failed durable STONE session can still reach the first Farm timer.'
 
 Write-Output 'Washing completion recovery source contract tests passed.'
+
+Assert-Contract ($correct -notmatch 'play-route-health|washForwardPulseMs') 'Washing must not use unobserved transport nudges.'
+Assert-Contract ($correct -match 'WASH_STABLE' -and $correct -match 'if visualOk') 'Movement success must require visual evidence.'
+Assert-Contract ($begin -match 'settleDelay := Config.washForwardCorrection \? 1 : Config.washPostCompletionSettleMs') 'Observed settling must avoid adding the old unconditional wait.'
+$attempt = Get-AhkFunctionBody 'WashAttemptBackground'
+Assert-Contract ($attempt -match 'EnsureObservedWashAnchor' -and $attempt -match '!Config.washForwardCorrection && !EnsureWorkViewDown') 'Observed camera must not be pitch-clamped every wash.'
+$vision = [IO.File]::ReadAllText((Join-Path (Split-Path $resolvedSource) 'wash-position\WashPosition.cs'))
+Assert-Contract ($vision.Contains('FORWARD_NO_OBSERVED_EFFECT') -and $vision.Contains('WRONG_DIRECTION_OR_CAMERA_MOVED')) 'Observed correction must reject no-effect and worsening pulses.'
+Assert-Contract ($vision.Contains('finally {ReleaseKey();') -and $vision.Contains('GetForegroundWindow()!=target')) 'Physical input must be released and foreground guarded.'
+Assert-Contract ($vision -notmatch 'move_up_only|ReadProcessMemory|MoveCamera') 'Washing helper may not use guessed game commands or camera injection.'

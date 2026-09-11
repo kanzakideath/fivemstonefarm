@@ -66,6 +66,7 @@ namespace AiMiner.UiHost
 
                     case "route.teach":
                     case "route.trial":
+                    case "route.stationary":
                     case "action.select":
                         EnsureOnlyKeys(payload, "mode");
                         values.Add(GetEnum(payload, "mode", "mining", "washing", "gold"));
@@ -228,6 +229,9 @@ namespace AiMiner.UiHost
                     "route.trial", new[] { "gold" });
                 AssertAction(@"{""type"":""action"",""action"":""vehicle.route"",""payload"":{}}",
                     "vehicle.route", new string[0]);
+                AssertAction(@"{""type"":""action"",""action"":""route.stationary"",""payload"":{""mode"":""washing""}}",
+                    "route.stationary", new[] { "washing" });
+                AssertRejected(@"{""type"":""action"",""action"":""route.stationary"",""payload"":{""mode"":""external""}}");
                 AssertRejected(@"{""type"":""action"",""action"":""route.teach"",""payload"":{""mode"":""external""}}");
                 AssertRejected(@"{""type"":""action"",""action"":""route.trial"",""payload"":{""mode"":""gold"",""command"":""bad""}}");
                 const string settingsFixture = @"{""type"":""action"",""action"":""settings.save"",""payload"":{""startHotkey"":""F8"",""stopHotkey"":""F9"",""backgroundMode"":true,""hideWhileRunning"":false,""correctionEnabled"":true,""autoEat"":true,""foodKey"":1,""autoCheckUpdates"":true,""minimumFreeWeight"":2000,""storageTriggerPercent"":90,""estimatedRewardWeight"":2000,""minimumFreeSlots"":1,""storageMaxRetries"":3,""farmWatchdogMs"":45000,""targetLostRecoveryMs"":12000,""debugOverlay"":false}}";

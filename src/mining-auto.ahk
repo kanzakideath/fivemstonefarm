@@ -9,7 +9,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "9.1.9"
+global AppVersion := "9.1.10"
 ;@Ahk2Exe-SetVersion %A_PriorLine~U)^.*"([^"]+)".*$~$1%
 processId := DllCall("GetCurrentProcessId")
 global LocalNav := {busy: false, pid: 0, cancel: "", taskId: 0, dialog: 0, guide: 0, feedback: "", requestActive: false, cycle: 0, lastBatchKey: "", lastActionKey: ""}
@@ -18,6 +18,10 @@ isVisualTest := HasCommandLineArgument("--visual-test")
 isUiTestRun := isUiSmokeTest || isVisualTest
 isValidationRun := HasCommandLineArgument("--validate")
 isHistoryImportTestRun := HasCommandLineArgument("--history-import-self-test")
+if isValidationRun || isUiTestRun
+    OnError(ValidationFatalError)
+if isValidationRun
+    FileAppend "VALIDATION_PHASE entry " A_Args.Length "`n", "**", "UTF-8-RAW"
 ; Windows reuses process IDs. Validation artifacts keyed only by PID could be
 ; mistaken for the current run after an earlier test left a receipt behind.
 testRunId := processId "-" (A_TickCount & 0xFFFFFFFF) "-" Random(100000, 999999)
@@ -40,6 +44,7 @@ FileInstall "stone-marker-template.png", stoneMarkerTemplatePath, true
 FileInstall "AI採掘機_Background.exe", backgroundBridgePath, true
 FileInstall "AI採掘機_Updater.exe", updaterHelperPath, true
 #Include exe-route-navigation.ahk
+#Include wash-position.ahk
 InitExeRouteAssets()
 settingsPath := isUiTestRun
     ? A_Temp "\ai-miner-ui-test-" testRunId ".ini"
@@ -432,11 +437,13 @@ if HasCommandLineArgument("--history-import-self-test") {
 }
 
 ; コンパイル前後の構文・埋め込み画像チェック用です。
-if A_Args.Length && A_Args[1] = "--validate" {
-    if !ValidateStorageCycleProof() {
+if isValidationRun {
+    FileAppend "VALIDATION_PHASE proofs " A_TickCount "`n", "**", "UTF-8-RAW"
+    if !ValidateStorageCycleProof() || !ValidateStationaryWorkflow() {
         DeleteExtractedTemplates()
         ExitApp(145)
     }
+    FileAppend "VALIDATION_PHASE updater " A_TickCount "`n", "**", "UTF-8-RAW"
     updaterCapabilities := RunUpdaterCapabilities()
     testRegistrationId := "YW12X2FhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYQ=="
     testCompanionResult := "COMPANION 1 1.0.0 ame_aaaaaaaaaaaaaaaa 42 ready 1 "
@@ -713,6 +720,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
         "0001.tool.eyJxIjoxfQ=1", &testMetadataMutationAdded)
         && testMetadataMutationAdded = 0
         && !FarmOutputLedgerHasPending(testMetadataMutationLedger)
+    FileAppend "VALIDATION_PHASE inventory-tests " A_TickCount "`n", "**", "UTF-8-RAW"
     testWashOutputLedger := NewExactInventoryCountMap()
     testWashOutputOnlyOk := AccumulateVerifiedFarmOutputLedger(
         testWashOutputLedger, "0001.raw_stone.e30=2",
@@ -1191,6 +1199,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
     ; process must atomically restore BEGIN + reward + END and tombstone the intent.
     State.metagameOutboxPath := testRewardRetryPath
     State.metagameJournalReady := false
+    FileAppend "VALIDATION_PHASE reward-wal " A_TickCount "`n", "**", "UTF-8-RAW"
     testRewardReloadedWalOk := LoadVerifiedRewardWal(testRewardWalPath,
         &testRewardReloadedPending, &testRewardReloadedOps)
     State.verifiedRewardWalPending := testRewardReloadedPending
@@ -1542,7 +1551,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
         && BackgroundCameraDownRoute(1) = "100:32"
         && BackgroundCameraDownRoute(2000) = "1500:32"
     testVisualFixtureVersionOk := VisualFixtureNewerVersion("9.1.0") = "9.1.1"
-        && VisualFixtureNewerVersion("9.1.9") = "9.1.10"
+        && VisualFixtureNewerVersion("12.34.99") = "12.34.100"
         && VisualFixtureNewerVersion("09.1.0") = ""
     testConsumedSingleOk := DetectConsumedInventoryItem(
         "0001.raw_stone.e30=6,0002.food.e30=2,0003.washed_stone.e30=1",
@@ -1585,6 +1594,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
             "0001.raw_stone.e30=2", "0001.raw_stone.e30=1", "raw_stone")
         && !WashingBatchWasCompleted(
             "0002.food.e30=2", "0002.food.e30=2", "raw_stone")
+    FileAppend "VALIDATION_PHASE mode-workflows " A_TickCount "`n", "**", "UTF-8-RAW"
     testMiningWorkflowOk := RunFarmStorageResumeModeMockTest("mining", 100,
         &testMiningWorkflowStats)
     testGoldWorkflowOk := RunFarmStorageResumeModeMockTest("gold", 100,
@@ -1655,6 +1665,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
         false) && StorageReturnAllowed("washing", true, true)
         && StorageReturnAllowed("washing", false, false)
         && StorageReturnAllowed("mining", true, false)
+    FileAppend "VALIDATION_PHASE final-checks " A_TickCount "`n", "**", "UTF-8-RAW"
     exitCode := !FileExist(State.buttonTemplates[1].path) ? 11
         : !FileExist(State.buttonTemplates[2].path) ? 12
         : !FileExist(State.hungerTemplatePath) ? 13
@@ -1855,6 +1866,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
         : !testWashingRewardEvidenceOk ? 172
         : !testAmbiguousTransferNoRetryOk ? 173
         : !testWashingBatchCompleteOk ? 174 : 0
+    FileAppend "VALIDATION_PHASE final-result " A_TickCount "`n", "**", "UTF-8-RAW"
     if exitCode = 0 && (CompletionPhrase("mining") != "石掘りが終わったよ"
         || CompletionPhrase("washing") != "石洗いが終わったよ"
         || CompletionPhrase("gold") != "砂金取りが終わりました")
@@ -2342,6 +2354,8 @@ ProcessWebUiActions(*) {
             if action = "nav" && parts.Length = 4 {
                 ShowPage(parts[4])
             } else if action = "action.select" && parts.Length = 4 {
+                if LocalNav.busy || LocalNav.requestActive || State.registrationActive
+                    continue
                 mode := parts[4]
                 if mode = "mining" || mode = "washing" || mode = "gold" {
                     State.actionControl.Choose(mode = "washing" ? 2 : mode = "gold" ? 3 : 1)
@@ -2368,7 +2382,7 @@ ProcessWebUiActions(*) {
             } else if action = "vehicle.route" && parts.Length = 3 {
                 if !State.visualTest
                     ShowExeRoutePanel()
-            } else if (action = "route.teach" || action = "route.trial") && parts.Length = 4 {
+            } else if (action = "route.teach" || action = "route.trial" || action = "route.stationary") && parts.Length = 4 {
                 mode := parts[4]
                 if mode != "mining" && mode != "washing" && mode != "gold"
                     continue
@@ -2379,7 +2393,7 @@ ProcessWebUiActions(*) {
                 } else if State.visualTest {
                     LocalNav.feedback := "表示テストです。実際のFiveM操作は開始しません。"
                 } else
-                    RequestExeRouteSetup(action = "route.teach" ? "teach" : "trial", mode)
+                    RequestExeRouteSetup(action = "route.teach" ? "teach" : action = "route.stationary" ? "stationary" : "trial", mode)
             } else if action = "vehicle.delete" && parts.Length = 3 {
                 if State.visualTest {
                     State.vehicleStatusLabel.Text := "未登録"
@@ -6435,8 +6449,10 @@ UpdateRuntimeStatusOverlay(*) {
 }
 
 RuntimeStatusOverlayShouldBeVisible(&bounds) {
-    global State, Config
+    global State, Config, LocalNav
     bounds := 0
+    if LocalNav.pid
+        return false
     if !State.running || !State.targetHwnd
         return false
     if !DllCall("user32\IsWindow", "Ptr", State.targetHwnd, "Int")
@@ -8730,9 +8746,11 @@ StartMining(*) {
     UpdateActionUi()
     State.statusLabel.Text := "●  準備中"
     State.connectionLabel.Text := "FiveM: 接続済み"
-    State.modeLabel.Text := Config.backgroundMode
-        ? "バックグラウンド操作: オン（他の作業を妨げません）"
-        : "バックグラウンド操作: オフ（前面操作）"
+    State.modeLabel.Text := State.runMode = "washing" && Config.washForwardCorrection
+        ? "石洗いの画面補正: FiveMを前面にしてください"
+        : Config.backgroundMode
+            ? "バックグラウンド操作: オン（徒歩・画面補正時は前面が必要）"
+            : "バックグラウンド操作: オフ（前面操作）"
     if Config.hideWhileRunning
         State.gui.Hide()
     } finally LeaveMetagameOutboxCritical(criticalWasOn)
@@ -11677,7 +11695,7 @@ CompleteVerifiedStorageReturn(expectedGeneration) {
         expectedGeneration, 0, true)
     TransitionFarmState("RETURNING_TO_FARM", "元の作業地点へ復帰",
         expectedGeneration, 0, true)
-    State.statusLabel.Text := "作業位置へ戻っています"
+    State.statusLabel.Text := ExeStorageMethod(State.runMode) = "stationary" ? "近接位置の作業状態を確認しています" : "作業位置へ戻っています"
     poseRestored := ExecuteExeRouteLeg(expectedGeneration, "return")
     if !IsCurrentRun(expectedGeneration)
         return false
@@ -11747,11 +11765,11 @@ FindRegisteredStorageNearby(expectedGeneration, &movementHistory,
     failureMessage := ""
     TransitionFarmState("MOVING_TO_TRUCK", "登録した往路を実画面照合しながら徒歩移動", expectedGeneration, 0, true)
     if !ExecuteExeRouteLeg(expectedGeneration, "outbound") {
-        failureMessage := "EXE徒歩往路の実画面照合に失敗しました。盲目的な再走はしません。"
+        failureMessage := ExeStorageMethod(State.runMode) = "stationary" ? "近接設定の荷台・接続を確認できません。近接確認をやり直してください。" : "EXE徒歩往路の実画面照合に失敗しました。盲目的な再走はしません。"
         return false
     }
     if !ProbeExeRouteCargo(expectedGeneration, &id, &type) {
-        failureMessage := "徒歩経路の終点で登録した荷台を確認できませんでした。"
+        failureMessage := ExeStorageMethod(State.runMode) = "stationary" ? "今の位置・視点で登録荷台を確認できません。両方のボタンが見える位置で近接収納を再確認してください。" : "徒歩経路の終点で登録した荷台を確認できませんでした。"
         if IsCurrentRun(expectedGeneration)
             StopAutomationWithFault(failureMessage, "vehicle", "EXE_ROUTE_CARGO_NOT_VERIFIED")
         return false
@@ -12798,7 +12816,11 @@ RestartFarmAfterRecoveryExhausted(expectedGeneration, reason) {
 
 MaintainBackgroundWorkView(expectedGeneration, force := false,
     ignoreVerifiedTarget := false) {
-    global State, Config
+    global State, Config, LocalNav
+    if State.runMode = "washing" && Config.washForwardCorrection {
+        WriteDiagnostic("WASH_VIEW_PRESERVED generation=" expectedGeneration " camera_input=0")
+        return IsCurrentRun(expectedGeneration)
+    }
     if !Config.workViewLock
         return true
     now := MonotonicMs()
@@ -13389,7 +13411,8 @@ BeginWashCompletionRecovery(expectedGeneration, attemptId) {
             transitionFailed := true
         } else {
             taskId := State.farmStateTaskId
-            settleDeadline := MonotonicMs() + Config.washPostCompletionSettleMs
+            settleDelay := Config.washForwardCorrection ? 1 : Config.washPostCompletionSettleMs
+            settleDeadline := MonotonicMs() + settleDelay
             if !IsCurrentFarmTask(expectedGeneration, taskId, "WASH_SETTLING")
                 return false
             State.washRecoveryGeneration := expectedGeneration
@@ -13411,19 +13434,21 @@ BeginWashCompletionRecovery(expectedGeneration, attemptId) {
     }
     State.statusLabel.Text := "●  洗浄完了。後退が止まるまで待機中"
     WriteDiagnostic("attempt=" attemptId " WASH_SETTLE_BEGIN delay="
-        Config.washPostCompletionSettleMs " deadline=" settleDeadline)
-    ScheduleNext(expectedGeneration, Config.washPostCompletionSettleMs)
+        settleDelay " deadline=" settleDeadline " observed=" Config.washForwardCorrection)
+    ScheduleNext(expectedGeneration, Config.washForwardCorrection ? 1 : Config.washPostCompletionSettleMs)
     return true
 }
 
 PerformWashCompletionCorrection(expectedGeneration, expectedTaskId,
     expectedAttemptId) {
-    global State, Config
+    global State, Config, LocalNav
     if !Config.washForwardCorrection
         return true
-
-    ; Set the in-flight latch before any helper work. A second timer may observe the
-    ; operation, but it can never dispatch another forward route for this reward.
+    if !IsTargetForeground(expectedGeneration) {
+        State.statusLabel.Text := "●  石洗いの位置確認待ち。FiveMを前面にしてください"
+        ScheduleNext(expectedGeneration, 300)
+        return false
+    }
     Critical "On"
     if !IsCurrentFarmTask(expectedGeneration, expectedTaskId,
         "WASH_CORRECTING")
@@ -13434,79 +13459,47 @@ PerformWashCompletionCorrection(expectedGeneration, expectedTaskId,
     }
     if State.washCorrectionSent {
         Critical "Off"
-        return true
+        return !State.washCorrectionInFlight
     }
     if State.washCorrectionInFlight {
         Critical "Off"
         return false
     }
     State.washCorrectionInFlight := true
-    Critical "Off"
-
-    portReady := EnsureDevConPort(false)
-    if !IsCurrentFarmTask(expectedGeneration, expectedTaskId,
-        "WASH_CORRECTING")
-        return false
-    if !portReady {
-        WriteDiagnostic("attempt=" expectedAttemptId
-            " WASH_FORWARD_PORT_MISSING")
-        StopAutomationWithFault(
-            "洗浄直後の位置補正を開始できないため安全停止しました")
-        return false
-    }
-    port := State.lastDevConPort
-    forwardPulseMs := Config.washForwardPulseMs
-    Critical "On"
-    if !IsCurrentFarmTask(expectedGeneration, expectedTaskId,
-        "WASH_CORRECTING")
-        || State.washRecoveryAttemptId != expectedAttemptId {
-        Critical "Off"
-        return false
-    }
-    ; Commit at-most-once before the external input. An uncertain helper result
-    ; therefore fails closed instead of replaying a possibly delivered movement.
+    ; This latches the entire observed transaction, not each native micro-pulse.
+    ; Only that helper can take another measured step within its small budget.
     State.washCorrectionSent := true
     Critical "Off"
-
-    State.statusLabel.Text := "●  後退停止を確認。位置を少し前へ補正中"
-    WriteDiagnostic("attempt=" expectedAttemptId " WASH_FORWARD_BEGIN pulse="
-        forwardPulseMs)
-    nudgeResult := RunBackgroundBridgeCancelable(expectedGeneration,
-        "play-route-health", port, forwardPulseMs ":1",
-        State.serverEpoch)
-    routeOk := nudgeResult = "ROUTE " port " " forwardPulseMs
-    ; The route helper is interruptible. Its response belongs to this exact
-    ; generation/task/reward only: commit the latch, counter, label and diagnostic
-    ; together so an F9 -> F8 run cannot receive stale correction state.
+    if LocalNav.washAnchorGeneration != expectedGeneration
+        return FailObservedWash(expectedGeneration, "ERROR ANCHOR_MISSING")
+    State.statusLabel.Text := "●  画面で静止・位置ずれ・前進の効果を確認しています"
+    WriteDiagnostic("attempt=" expectedAttemptId " WASH_VISUAL_BEGIN settle=observed input=foreground_scancode")
+    nudgeResult := RunObservedWashHelper("wash-correct", expectedGeneration)
+    visualOk := RegExMatch(nudgeResult, "^WASH_STABLE (\d+) (\d+) (\d+) (\d+)$", &observed)
     criticalWasOn := EnterMetagameOutboxCritical()
     try {
         if !IsCurrentFarmTask(expectedGeneration, expectedTaskId,
             "WASH_CORRECTING")
             || State.washRecoveryGeneration != expectedGeneration
             || State.washRecoveryAttemptId != expectedAttemptId
-            || !State.washCorrectionSent
             return false
         State.washCorrectionInFlight := false
-        if routeOk {
-            State.nudges += 1
-            State.mealLabel.Text := "後退補正`n" State.nudges
-            WriteDiagnostic("attempt=" expectedAttemptId
-                " WASH_FORWARD_SENT pulse=" forwardPulseMs)
-        } else {
-            WriteDiagnostic("attempt=" expectedAttemptId
-                " WASH_FORWARD_ERROR=" nudgeResult)
+        if visualOk {
+            if observed[1] + 0 > 0 {
+                State.nudges += 1
+                State.mealLabel.Text := "画面確認済み補正`n" State.nudges
+            }
+            LocalNav.washFeedback := (observed[1] + 0 > 0 ? "補正確認" : "補正不要")
+                . " / W入力 " observed[1] "回・計" observed[2] "ms / ずれ "
+                . (observed[3] / 1000) "px / 確認時間 " observed[4] "ms"
+            WriteDiagnostic("attempt=" expectedAttemptId " WASH_VISUAL_VERIFIED " nudgeResult)
         }
     } finally LeaveMetagameOutboxCritical(criticalWasOn)
-    if !routeOk {
-        ; 入力が一部届いた可能性を否定できないため、補正を再送しません。
-        if IsCurrentFarmTask(expectedGeneration, expectedTaskId,
-            "WASH_CORRECTING")
-            StopAutomationWithFault(
-                "洗浄位置の補正結果を確認できないため安全停止しました")
-        return false
-    }
-    return WaitWhileBackgroundReady(Config.washForwardSettleMs + 50,
-        expectedGeneration)
+    if !visualOk
+        return FailObservedWash(expectedGeneration, nudgeResult)
+    ; Stable scene was independently checked after the last input. No additional
+    ; unconditional 2-second delay or camera sweep is added here.
+    return IsCurrentRun(expectedGeneration)
 }
 
 RunWashCompletionRecoveryCycle(expectedGeneration, expectedTaskId) {
@@ -13888,6 +13881,8 @@ WashAttemptBackground(expectedGeneration) {
         State.statusLabel.Text := "●  FiveMが終了したため停止"
         return
     }
+    if !EnsureObservedWashAnchor(expectedGeneration)
+        return
     State.attempts += 1
     if !CaptureFarmAttemptBaseline(expectedGeneration, "washing") {
         EnterFarmRecovery(expectedGeneration,
@@ -13895,10 +13890,9 @@ WashAttemptBackground(expectedGeneration) {
             "wash_reward_baseline_unavailable")
         return
     }
-    ; Inventory capture may take long enough for the game camera to drift.  Make
-    ; the real, verified down pulse the final operation immediately before the
-    ; atomic target scan/click, on every single washing attempt.
-    if !EnsureWorkViewDown(expectedGeneration, "washing", true) {
+    ; Observed correction preserves the captured camera. The legacy view-only
+    ; mode remains opt-out; never pitch-clamp the visual anchor on every attempt.
+    if !Config.washForwardCorrection && !EnsureWorkViewDown(expectedGeneration, "washing", true) {
         if IsCurrentRun(expectedGeneration)
             DiscardPendingFarmAttempt("washing_view_down_failed")
         return

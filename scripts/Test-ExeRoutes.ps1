@@ -55,3 +55,14 @@ foreach ($mode in $phrases.Keys) {
     }
 }
 Write-Host 'All three exact completion phrases and six embedded WAV headers verified.'
+
+Assert-Check (-not $helper.Contains('NormalisePitch')) 'Forced camera normalization returned.'
+Assert-Check ($helper.Contains('RequirePlayback(mode); Guard();') -and $helper.Contains('RECORDING_INJECTION_POLICY_TEST')) 'Passive recording input policy missing.'
+Assert-Check ($helper.Contains('LEGACY_ROUTE_RERECORD_NO_PITCH')) 'Legacy route needs explicit re-recording.'
+Assert-Check ($module.Contains('EvaluateStationarySpot(') -and $main.Contains('ValidateStationaryWorkflow()')) 'Stationary workflow/compiled test missing.'
+$start = $module.IndexOf('ProbeExeRouteCargo(generation,')
+$end = $module.IndexOf('; This receipt', $start)
+Assert-Check ($start -ge 0 -and $end -gt $start) 'Endpoint boundary missing.'
+$endpoints = $module.Substring($start, $end - $start)
+Assert-Check (-not $endpoints.Contains('ExeRouteCameraStep(')) 'Endpoint check must not change the recorded view.'
+Write-Host 'Passive recording and stationary source contracts passed. Live game checks are separate.'
