@@ -1,0 +1,137 @@
+name: Publish v9.1.8 verified update
+on:
+  push:
+    branches: [release/v9.1.8-publish]
+    paths: [.github/workflows/publish-v9.1.8-once.yml]
+permissions:
+  contents: write
+concurrency:
+  group: release-refs/tags/v9.1.8
+  cancel-in-progress: false
+jobs:
+  release:
+    name: Build, sign, download-verify, and publish
+    runs-on: windows-latest
+    timeout-minutes: 25
+    environment: release
+    steps:
+      - name: Check out exact merged release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 566d41399a9f31ca2fbf4268e78c832084c9681d
+          fetch-depth: 0
+      - name: Validate source, version and publication preconditions
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expected = '566d41399a9f31ca2fbf4268e78c832084c9681d'
+          $head = (& git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head -cne $expected) { throw 'Unexpected release source.' }
+          $source = [IO.File]::ReadAllText('src/mining-auto.ahk')
+          if ($source -notmatch '(?m)^global AppVersion := "9\.1\.8"') { throw 'Application version is not 9.1.8.' }
+          if (-not $source.Contains('#Include exe-route-navigation.ahk')) { throw 'EXE-only module missing.' }
+          $tags = @(& git tag --list v9.1.8)
+          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect tags.' }
+          if ($tags.Count -gt 0) {
+            $target = (& git rev-parse 'refs/tags/v9.1.8^{commit}').Trim()
+            if ($LASTEXITCODE -ne 0 -or $target -cne $expected) { throw 'Existing v9.1.8 tag targets another commit; refusing to move it.' }
+          }
+          $releaseTags = @(& gh api --paginate "repos/$env:GH_REPO/releases" --jq '.[].tag_name')
+          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect existing releases.' }
+          if ($releaseTags -contains 'v9.1.8') { throw 'v9.1.8 release already exists; refusing to overwrite.' }
+      - name: Full build, executable tests, signed manifest and package validation
+        shell: pwsh
+        timeout-minutes: 18
+        env:
+          UPDATE_SIGNING_KEY_PKCS8_B64: ${{ secrets.UPDATE_SIGNING_KEY_PKCS8_B64 }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force artifacts/release-validation | Out-Null
+          Start-Transcript -Path artifacts/release-validation/build.txt
+          try {
+            ./scripts/Make-Release.ps1 -Version 9.1.8
+            ./scripts/Verify-Release.ps1 -ArtifactDirectory artifacts/v9.1.8
+          } finally { Stop-Transcript }
+      - name: Create exact tag and upload draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = 'v9.1.8'
+          $expected = '566d41399a9f31ca2fbf4268e78c832084c9681d'
+          $tags = @(& git tag --list $tag)
+          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect tag.' }
+          if ($tags.Count -eq 0) {
+            git tag $tag $expected
+            if ($LASTEXITCODE -ne 0) { throw 'Tag creation failed.' }
+            git push origin "refs/tags/$tag"
+            if ($LASTEXITCODE -ne 0) { throw 'Tag push failed.' }
+          }
+          $target = (& git rev-parse "refs/tags/$tag^{commit}").Trim()
+          if ($LASTEXITCODE -ne 0 -or $target -cne $expected) { throw 'Release tag mismatch.' }
+          $root = Join-Path $PWD "artifacts/$tag"
+          $assets = @('ai-miner-win-x64.exe', 'AI-Miner-v9.1.8.zip', 'update-manifest.json', 'update-manifest.sig', 'SHA256SUMS.txt') | ForEach-Object { Join-Path $root $_ }
+          foreach ($asset in $assets) {
+            if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) { throw "Missing asset: $asset" }
+          }
+          gh release create $tag @assets --repo $env:GH_REPO --verify-tag --target $expected --title 'AI採掘機 v9.1.8' --notes-file docs/RELEASE_v9.1.8.md --draft
+          if ($LASTEXITCODE -ne 0) { throw 'Draft creation or upload failed; release remains unpublished.' }
+      - name: Download uploaded files and verify before publishing Latest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = 'v9.1.8'
+          $download = Join-Path $PWD 'artifacts/downloaded-v9.1.8'
+          New-Item -ItemType Directory -Path $download -ErrorAction Stop | Out-Null
+          gh release download $tag --repo $env:GH_REPO --dir $download
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download uploaded assets. Draft not published.' }
+          ./scripts/Verify-Release.ps1 -ArtifactDirectory $download
+          $manifest = Get-Content -LiteralPath (Join-Path $download 'update-manifest.json') -Raw | ConvertFrom-Json
+          if ($manifest.version -cne '9.1.8') { throw 'Downloaded manifest has wrong version.' }
+          $localRoot = Join-Path $PWD 'artifacts/v9.1.8'
+          $names = @('ai-miner-win-x64.exe', 'AI-Miner-v9.1.8.zip', 'update-manifest.json', 'update-manifest.sig', 'SHA256SUMS.txt')
+          if (@(Get-ChildItem -LiteralPath $download -File).Count -ne $names.Count) { throw 'Unexpected downloaded asset count.' }
+          foreach ($name in $names) {
+            $local = (Get-FileHash -LiteralPath (Join-Path $localRoot $name) -Algorithm SHA256).Hash
+            $remote = (Get-FileHash -LiteralPath (Join-Path $download $name) -Algorithm SHA256).Hash
+            if ($local -cne $remote) { throw "Uploaded bytes mismatch: $name" }
+          }
+          gh release edit $tag --repo $env:GH_REPO --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Verified release could not be published.' }
+          $latestJson = & gh api "repos/$env:GH_REPO/releases/latest"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not confirm published Latest.' }
+          $latest = $latestJson | ConvertFrom-Json
+          if ($latest.tag_name -cne $tag -or $latest.draft -or $latest.prerelease -or @($latest.assets).Count -ne 5) { throw 'Published Latest metadata mismatch.' }
+          foreach ($name in $names) {
+            $asset = @($latest.assets | Where-Object { $_.name -ceq $name -and $_.state -ceq 'uploaded' })
+            if ($asset.Count -ne 1) { throw "Published asset missing: $name" }
+          }
+          $latestJson | Set-Content artifacts/release-validation/published-release.json -Encoding utf8
+          "Published $tag from 566d41399a9f31ca2fbf4268e78c832084c9681d. Five uploaded assets re-downloaded; signatures and hashes verified. Live FiveM navigation not tested." | Set-Content artifacts/release-validation/RESULT.txt -Encoding utf8
+      - name: Retain build and publication evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: v9.1.8-release-validation
+          path: |
+            artifacts/release-validation/
+            build/staging/*.log
+            build/staging/*.txt
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Retain exact verified release assets
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: v9.1.8-published-assets
+          path: artifacts/v9.1.8/*
+          retention-days: 14
+          if-no-files-found: error
