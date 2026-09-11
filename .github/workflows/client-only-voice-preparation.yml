@@ -21,12 +21,16 @@ jobs:
       - name: Obtain the pinned build-only synthesis toolchain
         env:
           GH_TOKEN: ${{ github.token }}
+          COLUMNS: '160'
+          LINES: '40'
         run: |
           set -euo pipefail
           mkdir -p build/voice-toolchain
           curl --fail --location --retry 3 https://github.com/VOICEVOX/voicevox_core/releases/download/0.16.4/download-linux-x64 -o build/voice-download
           chmod +x build/voice-download
-          build/voice-download --only onnxruntime models dict --models-version 0.16.0 --models-pattern 0.vvm --onnxruntime-version voicevox_onnxruntime-1.17.3 --output build/voice-toolchain
+          # Terms permit attributed generated audio in applications. The generation
+          # script preserves the character credit and pass-through audio terms.
+          printf 'y\n' | build/voice-download --only onnxruntime models dict --models-version 0.16.0 --models-pattern 0.vvm --onnxruntime-version voicevox_onnxruntime-1.17.3 --output build/voice-toolchain
           python3 -m venv build/voice-venv
           build/voice-venv/bin/pip install 'https://github.com/VOICEVOX/voicevox_core/releases/download/0.16.4/voicevox_core-0.16.4-cp310-abi3-manylinux_2_34_x86_64.whl'
       - name: Synthesize actual WAV assets
