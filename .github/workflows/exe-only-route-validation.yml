@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - name: Apply checksum-verified reviewed patch to index
+      - name: Apply checksum-verified reviewed patch and exact compiler correction
         shell: python
         run: |
           import base64, gzip, hashlib, pathlib, subprocess, sys
@@ -31,6 +31,7 @@ jobs:
               subprocess.run(['git','apply','--cached',str(path)],check=True)
               subprocess.run(['git','checkout-index','--all','--force'],check=True)
           subprocess.run([sys.executable,str(root/'refine.py')],check=True)
+          subprocess.run([sys.executable,str(root/'fix-ahk-command-continuation.py')],check=True)
           subprocess.run(['git','-c','core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol','diff','--cached','--check'],check=True)
       - name: Full Windows validation build
         shell: pwsh
