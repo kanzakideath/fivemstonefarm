@@ -6,8 +6,10 @@ def once(a,c):
  global s
  if s.count(a)!=1:raise RuntimeError('Unexpected phase boundary: '+a[:90])
  s=s.replace(a,c)
-# Compiled AHK passes interpreter-only switches through as ordinary arguments.
 once('if A_Args.Length && A_Args[1] = "--validate" {','if isValidationRun {')
+# A release-marker substitution changed both input and expected output of this
+# old version test to 9.1.10. Keep the actual increment/carry test release-neutral.
+once('VisualFixtureNewerVersion("9.1.10") = "9.1.10"', 'VisualFixtureNewerVersion("12.34.99") = "12.34.100"')
 once('    OnError(ValidationFatalError)', '    OnError(ValidationFatalError)\nif isValidationRun\n    FileAppend "VALIDATION_PHASE entry " A_Args.Length "`n", "**", "UTF-8-RAW"')
 for label,needle in [
  ('proofs','    if !ValidateStorageCycleProof() || !ValidateStationaryWorkflow() {'),
@@ -24,9 +26,8 @@ a="-ArgumentList @('/ErrorStdOut=UTF-8', $testMode)"
 if s.count(a)!=1:raise RuntimeError('Compiled test launch boundary missing')
 s=s.replace(a,'-ArgumentList $testMode')
 p.write_bytes((b'\xef\xbb\xbf' if b.startswith(b'\xef\xbb\xbf') else b'')+s.encode('utf-8'))
-# AHK's callback must explicitly bind the current loop value. The prior lambda
-# reached production EvaluateStationarySpot but threw UnsetError for failAt.
-# Do not skip the tests: preserve all four injected failures and pre-cancel.
+# Explicitly bind each failure case rather than referencing a loop-local through
+# an AHK callback. Keep all four injected failures and the pre-cancel assertion.
 p=R/'src/exe-route-navigation.ahk';b=p.read_bytes();s=b.decode('utf-8-sig').replace('\r\n','\n')
 a='        probe := (name, *) => (trace.Push(name), trace.Length != failAt)'
 if s.count(a)!=1:raise RuntimeError('Stationary probe closure missing')
