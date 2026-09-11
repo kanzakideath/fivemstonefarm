@@ -25,21 +25,104 @@ InitExeRouteAssets() {
         LocalNav.voiceScope := "batch"
 }
 
+; A saved trial is not a live position/connection proof. Execution guards remain unchanged.
+ExeRouteSetupStateJson(mode) {
+    global State, Config, LocalNav
+    root := ExeRouteModeRoot(mode)
+    meta := root "\route.ini"
+    hasVehicle := IsValidVehicleProfile(Config) && Config.vehicleCompanionProtocol = 0
+    recorded := false
+    trialSaved := false
+    try {
+        bound := hasVehicle
+            && IniRead(meta, "Route", "StorageId", "") == Config.vehicleStorageId
+            && IniRead(meta, "Route", "StorageType", "") == Config.vehicleStorageType
+        recorded := bound && !!FileExist(root "\outbound.json") && !!FileExist(root "\return.json")
+        trialSaved := recorded && ExeRouteFilesMatch(root)
+            && IniRead(meta, "Route", "Verified", "0") = "1"
+    }
+    return '{"hasVehicle":' (hasVehicle ? "true" : "false")
+        . ',"recorded":' (recorded ? "true" : "false")
+        . ',"trialSaved":' (trialSaved ? "true" : "false")
+        . ',"busy":' ((LocalNav.busy || LocalNav.requestActive || State.running || State.registrationActive || State.startInProgress) ? "true" : "false")
+        . ',"cycle":' StorageCycleProofJson(LocalNav.cycle)
+        . ',"feedback":' JsonQuote(LocalNav.feedback) '}'
+}
+
+RequestExeRouteSetup(operation, mode, *) {
+    global State, Config, LocalNav
+    if LocalNav.requestActive || LocalNav.busy || State.running || State.registrationActive || State.startInProgress
+        return false
+    if mode != Config.actionMode
+        return false
+    LocalNav.requestActive := true
+    QueueWebUiFlush(true)
+    try {
+        if operation = "teach"
+            TeachExeRoute()
+        else if operation = "trial"
+            TrialExeRoute()
+        else
+            return false
+    } finally {
+        LocalNav.requestActive := false
+        QueueWebUiFlush(true)
+    }
+    return true
+}
+
+OpenExeRouteSettings(*) {
+    global State, LocalNav
+    if LocalNav.busy {
+        TrayTip "記録・試走中です。中止する場合はF9を押してください。", "ルート設定", 1
+        return
+    }
+    ShowPage("routes")
+    ShowMainWindow()
+}
+
+SetExeSetupGuide(title, detail) {
+    global LocalNav, State
+    HideExeSetupGuide()
+    guide := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x08000020", "ルート設定ガイド")
+    guide.BackColor := "14283F"
+    guide.SetFont("s12 cFFFFFF", "Yu Gothic UI")
+    guide.AddText("x18 y14 w470", title)
+    guide.SetFont("s10 cC7DAED")
+    guide.AddText("x18 y45 w470 h70", detail "`n中止：F9　／　サーバー追加導入なし")
+    if State.targetHwnd {
+        WinGetClientPos &x, &y, &w, &h, "ahk_id " State.targetHwnd
+        guide.Show("NoActivate x" (x + 16) " y" (y + 16) " w510 h126")
+    } else
+        guide.Show("NoActivate w510 h126")
+    LocalNav.guide := guide
+}
+
+HideExeSetupGuide() {
+    global LocalNav
+    if IsObject(LocalNav.guide)
+        try LocalNav.guide.Destroy()
+    LocalNav.guide := 0
+}
+
 ShowExeRoutePanel(*) {
     global LocalNav, State, Config
-    if State.running || State.registrationActive || State.startInProgress
-        || LocalNav.busy
+    if State.running || State.registrationActive || State.startInProgress || LocalNav.busy {
+        LocalNav.feedback := "作業・登録中です。F9で停止してからルート設定を開いてください。"
+        QueueWebUiFlush(true)
         return
+    }
     if IsObject(LocalNav.dialog)
         try LocalNav.dialog.Destroy()
     panel := Gui("+AlwaysOnTop", "EXEだけで徒歩往復・完了ボイス")
     panel.SetFont("s10", "Yu Gothic UI")
+    panel.AddButton("w640 h40", "ルート設定の専用画面を開く").OnEvent("Click", (*) => (panel.Hide(), OpenExeRouteSettings()))
     panel.AddText("w640", "サーバー導入は不要です。作業モードごとに、同じ作業場所と停車車両の往路・復路を記録します。`n徒歩中だけFiveMを前面で使用します。他アプリへ切替／F9／手動操作で停止します。")
     panel.AddText("y+12 w640", "① 先に通常の車両登録を行う。`n② 作業場所で下の「往復を教える」。W/A/S/Dとマウスだけで歩く。4秒以内ごとに立ち止まると照合点を保存。各終点でF7。`n③ 元の現場で「自動試走」。往復の画面照合・荷台ID・作業ボタンが確認できた経路だけ有効になります。")
     panel.AddText("y+10 w640 cA34512", "車両の移動、別サーバー／再接続、画面サイズ・カメラ設定変更時は再登録が必要です。天候・照明・遮蔽物で画面照合できない場合も停止します。任意の車両を自動追跡する方式ではありません。")
     panel.AddText("y+10 w640", "現在の作業：" BackgroundActionDisplayName(Config.actionMode))
-    panel.AddButton("y+12 w305 h36", "1. 往復を教える").OnEvent("Click", TeachExeRoute)
-    panel.AddButton("x+12 yp w305 h36", "2. 自動試走（収納しない）").OnEvent("Click", TrialExeRoute)
+    panel.AddButton("y+12 w305 h36", "1. 往復を教える").OnEvent("Click", RequestExeRouteSetup.Bind("teach", Config.actionMode))
+    panel.AddButton("x+12 yp w305 h36", "2. 自動試走（収納しない）").OnEvent("Click", RequestExeRouteSetup.Bind("trial", Config.actionMode))
     panel.AddText("xm y+20 w600", "完了ボイス　VOICEVOX:四国めたん")
     voice := panel.AddDropDownList("w305", ["アニメ調・甘め", "クリアな女性音声（標準）", "音声なし"])
     voice.Choose(LocalNav.voiceStyle = "clear" ? 2 : LocalNav.voiceStyle = "off" ? 3 : 1)
@@ -130,18 +213,33 @@ ExeRouteModeRoot(mode) {
     return path
 }
 
+ExeRouteFilesMatch(root) {
+    try {
+        for leg in ["outbound", "return"] {
+            file := root "\" leg ".json"
+            proof := root "\" leg ".verified"
+            if !FileExist(file) || !FileExist(proof)
+                return false
+            if FileGetSize(file) > 4 * 1024 * 1024 || FileGetSize(proof) > 4 * 1024 * 1024
+                return false
+            if !(FileRead(file, "UTF-8") == FileRead(proof, "UTF-8"))
+                return false
+        }
+        return true
+    } catch
+        return false
+}
+
 ExeRouteBindingValid(mode, epoch, verified := true) {
     global Config
     root := ExeRouteModeRoot(mode)
     meta := root "\route.ini"
     try {
-        return IniRead(meta, "Route", "StorageId", "") = Config.vehicleStorageId
-            && IniRead(meta, "Route", "StorageType", "") = Config.vehicleStorageType
-            && IniRead(meta, "Route", "Epoch", "") = epoch
+        return IniRead(meta, "Route", "StorageId", "") == Config.vehicleStorageId
+            && IniRead(meta, "Route", "StorageType", "") == Config.vehicleStorageType
+            && (!verified || IniRead(meta, "Route", "Epoch", "") = epoch)
             && (!verified || IniRead(meta, "Route", "Verified", "0") = "1")
-            && FileExist(root "\outbound.json") && FileExist(root "\return.json")
-            && FileRead(root "\outbound.json", "UTF-8") = FileRead(root "\outbound.verified", "UTF-8")
-            && FileRead(root "\return.json", "UTF-8") = FileRead(root "\return.verified", "UTF-8")
+            && ExeRouteFilesMatch(root)
     } catch
         return false
 }
@@ -152,6 +250,7 @@ RequireExeRouteForRun(expectedGeneration) {
         return true
     if !ExeRouteBindingValid(State.runMode, State.serverEpoch) {
         StopAutomationWithFault("この作業のEXE徒歩ルートが未登録・未試走か、接続が変わりました。車両画面の「徒歩ルート・音声設定」で往復を教え、自動試走してください", "vehicle", "LOCAL_ROUTE_SETUP_REQUIRED")
+        ShowPage("routes")
         return false
     }
     return IsCurrentRun(expectedGeneration)
@@ -184,6 +283,7 @@ RunExeRouteHelper(operation, routePath, generation := 0) {
     LocalNav.cancel := cancelPath
     helperPid := 0
     try {
+        HideExeSetupGuide()
         if !ReleaseBackgroundTarget(true) || RunBridgeForContext(generation, "close-inventory") != "CLOSED"
             return "ERROR UI_NOT_CLOSED"
         if !ExeRouteContextValid(generation)
@@ -272,6 +372,7 @@ BeginExeRouteSetupContext() {
 FinishExeRouteSetupContext(message) {
     global LocalNav, State
     CancelExeRouteOperation()
+    HideExeSetupGuide()
     ReleaseBackgroundTarget(true)
     RunBackgroundBridge("close-inventory")
     State.registrationActive := false
@@ -281,9 +382,10 @@ FinishExeRouteSetupContext(message) {
     State.serverEpoch := ""
     LocalNav.busy := false
     State.vehicleStatusLabel.Text := message
+    LocalNav.feedback := message
+    ShowPage("routes")
     ShowMainWindow()
     QueueWebUiFlush(true)
-    MsgBox message, "EXE徒歩ルート"
 }
 
 TeachExeRoute(*) {
@@ -298,20 +400,24 @@ TeachExeRoute(*) {
     message := "記録は未完了です。以前の登録は変更していません。"
     epoch := State.serverEpoch
     try {
+        SetExeSetupGuide("準備：作業現場を確認中", "選択した作業のボタンが出る位置に立ってください。")
         if !ProbeExeRouteWork(0, Config.actionMode)
             throw Error("開始地点で作業ボタンを確認できません。作業可能な現場で開始してください。")
         result := RunExeRouteHelper("record", outPath)
         if result != "RECORDED"
             throw Error("往路記録：" ExeRouteErrorMessage(result))
+        SetExeSetupGuide("往路の終点：荷台を確認中", "登録した荷台IDを照合しています。完了後は復路の案内に切り替わります。")
         if !ProbeExeRouteCargo(0, &id, &type)
             || id != Config.vehicleStorageId || type != Config.vehicleStorageType
             throw Error("終点で登録した荷台を確認できません。記録は保存しません。")
         if !CloseLocalStorageUi()
             throw Error("荷台を閉じられません。停止しました。")
-        TrayTip "次は同じ作業現場へ歩いて戻り、到着したらF7を押してください。", "復路を記録します", 1
+        SetExeSetupGuide("次は復路：荷台 → 同じ作業現場", "これから帰り道を記録します。元の作業位置へ歩いて戻り、停止してF7。")
+        Sleep 1600
         result := RunExeRouteHelper("record", backPath)
         if result != "RECORDED"
             throw Error("復路記録：" ExeRouteErrorMessage(result))
+        SetExeSetupGuide("復路の終点：作業場所を確認中", "元の現場の作業ボタンを確認しています。まだアイテムは移動しません。")
         if !ProbeExeRouteWork(0, Config.actionMode)
             throw Error("復路終点で作業ボタンを確認できません。正しい現場で記録してください。")
         if !ParseServerHealth(RunBackgroundBridge("health"), &currentEpoch)
@@ -347,11 +453,12 @@ TrialExeRoute(*) {
     epoch := State.serverEpoch
     try {
         if !ExeRouteBindingValid(Config.actionMode, epoch, false)
-            throw Error("同じ作業・荷台・接続で往復を記録してから試走してください。")
+            throw Error("同じ作業と荷台の往復記録を確認できません。記録を作成・修復してから試走してください。")
         IniWrite "0", root "\route.ini", "Route", "Verified"
         result := RunExeRouteHelper("play", root "\outbound.json")
         if result != "ROUTE_REPLAYED"
             throw Error("往路試走：" ExeRouteErrorMessage(result))
+        SetExeSetupGuide("試走 1/2：到着先の荷台を確認", "荷台IDを照合します。試走では収納も補充もしません。")
         if !ProbeExeRouteCargo(0, &id, &type)
             || id != Config.vehicleStorageId || type != Config.vehicleStorageType
             throw Error("試走終点の荷台IDが一致しません。歩行を成功扱いにしません。")
@@ -360,11 +467,14 @@ TrialExeRoute(*) {
         result := RunExeRouteHelper("play", root "\return.json")
         if result != "ROUTE_REPLAYED"
             throw Error("復路試走：" ExeRouteErrorMessage(result))
+        SetExeSetupGuide("試走 2/2：帰還先の作業場所を確認", "最後の確認です。作業ボタンの確認後に試走結果を保存します。")
         if !ProbeExeRouteWork(0, Config.actionMode)
             throw Error("元の現場の作業ボタンを確認できません。経路を短い区間で記録し直してください。")
         if !ParseServerHealth(RunBackgroundBridge("health"), &liveEpoch)
             || liveEpoch != epoch || State.registrationCancelled
             throw Error("試走中に接続が変わったか、取り消されました。")
+        ; Renew a connection only AFTER a fresh trial verifies both endpoints.
+        IniWrite epoch, root "\route.ini", "Route", "Epoch"
         IniWrite "1", root "\route.ini", "Route", "Verified"
         message := "自動試走で往路・登録荷台・復路・作業ボタンを確認しました。今回の接続で、この作業の徒歩収納／石補充を使えます。車両を動かした場合は記録し直してください。"
     } catch as err {
@@ -462,4 +572,100 @@ ProbeExeRouteWork(generation, mode) {
         return false
     Sleep 200
     return ExeRouteContextValid(generation) && ProbeWorkTarget(mode, generation)
+}
+
+
+; This receipt reports observations. It is never authority to replay an item transfer.
+NewStorageCycleProof(generation, mode) {
+    return {generation: generation, mode: mode, phase: "departure", complete: false,
+        reason: "", updatedAt: A_NowUTC}
+}
+
+AdvanceStorageCycleProof(proof, phase) {
+    if !IsObject(proof) || proof.complete || proof.phase = "stopped"
+        return false
+    next := proof.phase = "departure" ? "truck_arrived"
+        : proof.phase = "truck_arrived" ? "deposit_verified"
+        : proof.phase = "deposit_verified" ? (proof.mode = "washing" ? "refill_verified" : "work_arrived")
+        : proof.phase = "refill_verified" ? "work_arrived"
+        : proof.phase = "work_arrived" ? "resumed_verified" : ""
+    if phase != next
+        return false
+    proof.phase := phase
+    proof.updatedAt := A_NowUTC
+    proof.complete := phase = "resumed_verified"
+    return true
+}
+
+StorageCycleProofJson(proof) {
+    if !IsObject(proof)
+        return "null"
+    return '{"mode":' JsonQuote(proof.mode) ',"phase":' JsonQuote(proof.phase)
+        . ',"complete":' (proof.complete ? "true" : "false")
+        . ',"reason":' JsonQuote(proof.reason) ',"updatedAt":' JsonQuote(proof.updatedAt) '}'
+}
+
+ObserveStorageCycle(generation, phase, reason := "") {
+    global LocalNav, State
+    criticalWasOn := A_IsCritical
+    if !criticalWasOn
+        Critical "On"
+    try {
+        if !IsCurrentRun(generation)
+            return false
+        if phase = "departure"
+            LocalNav.cycle := NewStorageCycleProof(generation, State.runMode)
+        else {
+            proof := LocalNav.cycle
+            if !IsObject(proof) || proof.generation != generation
+                return false
+            if phase = "stopped" && !proof.complete {
+                proof.phase := "stopped"
+                proof.reason := SubStr(reason, 1, 200)
+                proof.updatedAt := A_NowUTC
+            } else if !AdvanceStorageCycleProof(proof, phase) {
+                WriteDiagnostic("CYCLE_PROOF_REJECTED phase=" phase " previous=" proof.phase)
+                return false
+            }
+        }
+        try {
+            output := LocalNav.root "\last-cycle.json"
+            temp := output ".tmp"
+            if FileExist(temp)
+                FileDelete temp
+            FileAppend StorageCycleProofJson(LocalNav.cycle), temp, "UTF-8-RAW"
+            FileMove temp, output, true
+        } catch as err {
+            WriteDiagnostic("CYCLE_PROOF_SAVE_ERROR=" err.Message)
+        }
+        WriteDiagnostic("CYCLE_PROOF phase=" phase " mode=" State.runMode)
+        QueueWebUiFlush(true)
+        return true
+    } finally {
+        if !criticalWasOn
+            Critical "Off"
+    }
+}
+
+ValidateStorageCycleProof() {
+    for mode in ["mining", "washing", "gold"] {
+        Loop 100 {
+            proof := NewStorageCycleProof(7, mode)
+            if AdvanceStorageCycleProof(proof, "resumed_verified") || proof.complete
+                return false
+            if !AdvanceStorageCycleProof(proof, "truck_arrived") || !AdvanceStorageCycleProof(proof, "deposit_verified")
+                return false
+            if mode = "washing" {
+                if AdvanceStorageCycleProof(proof, "work_arrived") || !AdvanceStorageCycleProof(proof, "refill_verified")
+                    return false
+            }
+            if !AdvanceStorageCycleProof(proof, "work_arrived") || proof.complete
+                return false
+            if !AdvanceStorageCycleProof(proof, "resumed_verified") || !proof.complete
+                return false
+            if AdvanceStorageCycleProof(proof, "resumed_verified")
+                return false
+        }
+    }
+    return true
 }

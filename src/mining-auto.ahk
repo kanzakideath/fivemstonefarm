@@ -9,10 +9,10 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "9.1.8"
+global AppVersion := "9.1.9"
 ;@Ahk2Exe-SetVersion %A_PriorLine~U)^.*"([^"]+)".*$~$1%
 processId := DllCall("GetCurrentProcessId")
-global LocalNav := {busy: false, pid: 0, cancel: "", taskId: 0, dialog: 0, lastBatchKey: "", lastActionKey: ""}
+global LocalNav := {busy: false, pid: 0, cancel: "", taskId: 0, dialog: 0, guide: 0, feedback: "", requestActive: false, cycle: 0, lastBatchKey: "", lastActionKey: ""}
 isUiSmokeTest := HasCommandLineArgument("--smoke-test")
 isVisualTest := HasCommandLineArgument("--visual-test")
 isUiTestRun := isUiSmokeTest || isVisualTest
@@ -433,6 +433,10 @@ if HasCommandLineArgument("--history-import-self-test") {
 
 ; コンパイル前後の構文・埋め込み画像チェック用です。
 if A_Args.Length && A_Args[1] = "--validate" {
+    if !ValidateStorageCycleProof() {
+        DeleteExtractedTemplates()
+        ExitApp(145)
+    }
     updaterCapabilities := RunUpdaterCapabilities()
     testRegistrationId := "YW12X2FhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYQ=="
     testCompanionResult := "COMPANION 1 1.0.0 ame_aaaaaaaaaaaaaaaa 42 ready 1 "
@@ -2053,7 +2057,7 @@ BuildWebGui() {
     State.uiBackendGui.Show("Hide w1 h1")
     State.gui := WebUiWindow(State.uiBackendGui.Hwnd)
     State.pages := Map("overview", true, "vehicle", true, "settings", true,
-        "stone", true, "update", true)
+        "stone", true, "routes", true, "update", true)
     State.ui := {
         deleteArmed: false,
         capacitySurface: true
@@ -2122,6 +2126,7 @@ BuildWebGui() {
     State.updateButton := WebUiControl("updateButton", "アップデートを確認")
     State.ui.navUpdate := WebUiControl("navUpdate", "アップデート")
 
+    Hotkey "^!r", OpenExeRouteSettings
     OnMessage(0x004A, ReceiveWebUiCopyData)
     PrepareWebUiRuntime()
     EnsureWebUiHost()
@@ -2328,7 +2333,7 @@ ReceiveWebUiCopyData(wParam, lParam, *) {
 }
 
 ProcessWebUiActions(*) {
-    global State, Config
+    global State, Config, LocalNav
     State.uiActionPending := false
     while State.uiActionQueue.Length {
         parts := State.uiActionQueue.RemoveAt(1)
@@ -2363,6 +2368,18 @@ ProcessWebUiActions(*) {
             } else if action = "vehicle.route" && parts.Length = 3 {
                 if !State.visualTest
                     ShowExeRoutePanel()
+            } else if (action = "route.teach" || action = "route.trial") && parts.Length = 4 {
+                mode := parts[4]
+                if mode != "mining" && mode != "washing" && mode != "gold"
+                    continue
+                if State.running || State.registrationActive || State.startInProgress || LocalNav.busy {
+                    LocalNav.feedback := "作業・登録中です。F9で停止してから設定してください。"
+                } else if mode != Config.actionMode {
+                    LocalNav.feedback := "作業の選択が変わりました。現在の作業を確認して、もう一度開始してください。"
+                } else if State.visualTest {
+                    LocalNav.feedback := "表示テストです。実際のFiveM操作は開始しません。"
+                } else
+                    RequestExeRouteSetup(action = "route.teach" ? "teach" : "trial", mode)
             } else if action = "vehicle.delete" && parts.Length = 3 {
                 if State.visualTest {
                     State.vehicleStatusLabel.Text := "未登録"
@@ -2385,6 +2402,10 @@ ProcessWebUiActions(*) {
             }
         } catch as err {
             WriteDiagnostic("UI_ACTION_ERROR action=" action " error=" err.Message)
+            if InStr(action, "route") {
+                LocalNav.feedback := "ルート設定を開けませんでした：" err.Message
+                ShowPage("routes")
+            }
             State.settingsErrorLabel.Opt("cB42318")
             State.settingsErrorLabel.Text := "操作を完了できませんでした。"
         }
@@ -2544,6 +2565,7 @@ BuildWebUiStateJson() {
         . ',"farmRetry":' State.farmStateRetry
         . ',"windowVisible":' (State.uiWindowVisible ? "true" : "false")
         . ',"visualTest":' (State.visualTest ? "true" : "false")
+        . ',"routes":' ExeRouteSetupStateJson(actionMode)
         . ',"controls":{' controlsJson '}}'
 }
 
@@ -5094,7 +5116,7 @@ RunUiSmokeTest() {
         Sleep 50
     if State.uiSmokeResult != "OK"
         return 44
-    for pageName in ["overview", "stone", "vehicle", "settings", "update"] {
+    for pageName in ["overview", "stone", "vehicle", "routes", "settings", "update"] {
         ShowPage(pageName)
         if State.page != pageName
             return 45
@@ -6230,6 +6252,7 @@ ConfigureTrayMenu() {
     A_TrayMenu.Add("AI採掘機を開く", ShowMainWindow)
     A_TrayMenu.Add()
     A_TrayMenu.Add("自動操作を開始 / 停止", ToggleMining)
+    A_TrayMenu.Add("自動収納のルート設定", OpenExeRouteSettings)
     A_TrayMenu.Add("キー・動作設定", ShowSettings)
     A_TrayMenu.Add("アップデート", OpenUpdatePage)
     A_TrayMenu.Add()
@@ -11235,6 +11258,8 @@ RunLocalVehicleStorageCycle(expectedGeneration, reuseStoragePose := false) {
     if !IsCurrentRun(expectedGeneration)
         return
 
+    if !reuseStoragePose
+        ObserveStorageCycle(expectedGeneration, "departure")
     protectedSnapshot := IsObject(State.storagePreSnapshot)
         ? State.storagePreSnapshot : State.confirmedInventory
     ledgerUnits := PositiveInventoryCountTotal(State.farmOutputLedger)
@@ -11260,9 +11285,9 @@ RunLocalVehicleStorageCycle(expectedGeneration, reuseStoragePose := false) {
         return
     }
 
-    TransitionFarmState("LOCATING_TRUCK", "近くの登録車両を探索",
+    TransitionFarmState("LOCATING_TRUCK", "登録した往路で荷台へ移動",
         expectedGeneration, 0, true)
-    State.statusLabel.Text := "近くの登録車両を探しています"
+    State.statusLabel.Text := "登録ルートで荷台への徒歩移動を開始します"
     WriteDiagnostic("LOCAL_STORAGE_TRIP_START trip=" (State.storageTrips + 1))
     if !ValidateServerEpochCheckpoint(expectedGeneration,
         "local_vehicle_departure") {
@@ -11320,6 +11345,7 @@ RunLocalVehicleStorageCycle(expectedGeneration, reuseStoragePose := false) {
         "登録済み荷台との一致を確認", expectedGeneration, 0, true)
     TransitionFarmState("OPENING_STORAGE",
         "登録済み荷台を開いた状態を確認", expectedGeneration)
+    ObserveStorageCycle(expectedGeneration, "truck_arrived")
 
     depositOk := State.storageOutputsVerified
         && !FarmOutputLedgerHasPending(State.farmOutputLedger)
@@ -11631,6 +11657,9 @@ RunLocalVehicleStorageCycle(expectedGeneration, reuseStoragePose := false) {
         return
     }
 
+    ObserveStorageCycle(expectedGeneration, "deposit_verified")
+    if State.runMode = "washing"
+        ObserveStorageCycle(expectedGeneration, "refill_verified")
     CompleteVerifiedStorageReturn(expectedGeneration)
 }
 
@@ -11681,6 +11710,7 @@ CompleteVerifiedStorageReturn(expectedGeneration) {
         StopAutomationWithFault("復路終点の作業ボタンを確認できません。徒歩をやり直さず停止しました", "vehicle", "EXE_ROUTE_WORK_NOT_VERIFIED")
         return false
     }
+    ObserveStorageCycle(expectedGeneration, "work_arrived")
     State.storageTrips += 1
     State.vehicleTripLabel.Text := "自動収納`n" State.storageTrips
     State.waitingForStone := false
@@ -12122,6 +12152,7 @@ StopAutomationWithFault(message, pageName := "overview",
         if !criticalWasOn
             Critical "Off"
     }
+    ObserveStorageCycle(expectedGeneration, "stopped", resolvedCode)
     return StopMining({message: message, pageName: pageName,
         faultCode: resolvedCode, expectedGeneration: expectedGeneration,
         expectedTaskId: expectedTaskId})
@@ -13672,8 +13703,10 @@ CompleteVerifiedFarmReward(expectedGeneration, actionMode, completionAt,
         DiscardPendingFarmAttempt("reward_confirmed")
 
         wasResume := State.resumeVerificationPending
-        if wasResume
+        if wasResume {
             State.resumeVerificationPending := false
+            ObserveStorageCycle(expectedGeneration, "resumed_verified")
+        }
         if State.farmState = "RECOVERY" || State.farmState = "RESUMING_FARM" {
             transitionReason := wasResume
                 ? "収納後の実報酬を確認: " rewardReason

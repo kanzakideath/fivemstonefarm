@@ -2,13 +2,10 @@ name: EXE-only route validation
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [fix/exe-only-routes-and-voices]
-    paths: [src/**, scripts/**, config/**, .github/workflows/exe-only-route-validation.yml]
 permissions:
   contents: read
 concurrency:
-  group: exe-route-ci-${{ github.ref }}
+  group: route-ci-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 jobs:
   validate:
@@ -18,27 +15,50 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Test checked-in sources without rewriting them
+      - name: Build and test checked-in source without rewriting it
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $source = [IO.File]::ReadAllText('src/mining-auto.ahk')
-          $match = [regex]::Match($source, '(?m)^global AppVersion := "(\d+\.\d+\.\d+)"')
-          if (-not $match.Success) { throw 'Application version not found.' }
-          New-Item -ItemType Directory -Force artifacts/exe-only-validation | Out-Null
-          Start-Transcript -Path artifacts/exe-only-validation/validation.txt
-          try {
-            ./scripts/Test-ExeRoutes.ps1
-            ./scripts/Build.ps1 -Version $match.Groups[1].Value
-            Write-Host 'PASS: Windows build, voice phrase/asset checks, helper self-tests and regression. Live FiveM navigation is not tested by CI.'
-          } finally { Stop-Transcript }
+          $match = [regex]::Match([IO.File]::ReadAllText('src/mining-auto.ahk'), '(?m)^global AppVersion := "(\d+\.\d+\.\d+)"')
+          if (-not $match.Success) { throw 'Application version missing.' }
+          New-Item -ItemType Directory -Force artifacts/route-ui | Out-Null
+          Start-Transcript artifacts/route-ui/windows-validation.txt
+          try { ./scripts/Build.ps1 -Version $match.Groups[1].Value } finally { Stop-Transcript }
+          if ([IO.File]::ReadAllText('src/ui-web/www/stoneverse-host.js').Contains('process.env.NODE_ENV')) { throw 'Node global leaked into browser bundle.' }
+      - name: Render actual native overlay
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $result = Join-Path $PWD 'artifacts/route-ui/native-overlay-result.txt'
+          $image = Join-Path $PWD 'artifacts/route-ui/native-overlay.png'
+          $proc = Start-Process -FilePath (Join-Path $PWD 'build/staging/LocalNavigation.exe') -ArgumentList @('overlay-preview', "`"$result`"", "`"$image`"") -PassThru
+          if (-not $proc.WaitForExit(15000)) { $proc.Kill(); throw 'Overlay preview timeout.' }
+          if (-not (Test-Path $result) -or (Get-Content $result -Raw).Trim() -ne 'OVERLAY_PREVIEW_OK') { throw 'Overlay preview failed.' }
+          if (-not (Test-Path $image) -or (Get-Item $image).Length -lt 1000) { throw 'Overlay image missing.' }
+      - name: Exercise route setup in the browser at four viewport sizes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install playwright==1.57.0
+          if ($LASTEXITCODE -ne 0) { throw 'Browser dependency install failed.' }
+          $edge = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+          if (-not (Test-Path $edge)) { $edge = 'C:\Program Files\Microsoft\Edge\Application\msedge.exe' }
+          if (Test-Path $edge) {
+            python scripts/ui-tests/Test-RouteSetupBrowser.py --browser $edge --output artifacts/route-ui
+          } else {
+            python -m playwright install chromium
+            if ($LASTEXITCODE -ne 0) { throw 'Browser install failed.' }
+            python scripts/ui-tests/Test-RouteSetupBrowser.py --output artifacts/route-ui
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Browser interaction tests failed.' }
+          Write-Host 'PASS: compiled logic, UI and overlay tests. Live FiveM walking and transfers are NOT tested by CI.'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: exe-only-validation-evidence
+          name: route-system-validation
           path: |
-            artifacts/exe-only-validation/
+            artifacts/route-ui/
             build/staging/*.txt
             build/staging/*.log
-          retention-days: 7
+          retention-days: 14
           if-no-files-found: warn
