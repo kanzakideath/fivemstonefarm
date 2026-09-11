@@ -16,23 +16,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - name: Apply checksum-verified reviewed patch and exact compiler correction
+      - name: Apply reviewed corrections on the isolated branch
         shell: python
         run: |
           import base64, gzip, hashlib, pathlib, subprocess, sys
           root=pathlib.Path('scripts/exe-only-repair')
-          encoded=''.join((root/f'patch.part{n:02}').read_text().strip() for n in range(1,5))
-          patch=gzip.decompress(base64.b64decode(encoded,validate=True))
-          expected='2787a0af74f61753fd563634f9d9d9013e7e720b50b5c1ef80dd976015b528a8'
-          if hashlib.sha256(patch).hexdigest()!=expected: raise RuntimeError('Reviewed patch checksum mismatch')
-          path=pathlib.Path('.git/exe-only-repair.patch'); path.write_bytes(patch)
           if '#Include exe-route-navigation.ahk' not in pathlib.Path('src/mining-auto.ahk').read_text(encoding='utf-8-sig'):
+              raw=''.join((root/f'patch.part{n:02}').read_text().strip() for n in range(1,5))
+              patch=gzip.decompress(base64.b64decode(raw,validate=True))
+              assert hashlib.sha256(patch).hexdigest()=='2787a0af74f61753fd563634f9d9d9013e7e720b50b5c1ef80dd976015b528a8'
+              path=pathlib.Path('.git/exe-only-repair.patch'); path.write_bytes(patch)
               subprocess.run(['git','apply','--cached','--check',str(path)],check=True)
               subprocess.run(['git','apply','--cached',str(path)],check=True)
               subprocess.run(['git','checkout-index','--all','--force'],check=True)
-          subprocess.run([sys.executable,str(root/'refine.py')],check=True)
-          subprocess.run([sys.executable,str(root/'fix-ahk-command-continuation.py')],check=True)
-          subprocess.run(['git','-c','core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol','diff','--cached','--check'],check=True)
+          for name in ['refine.py','fix-ahk-command-continuation.py','finalize-release.py']:
+              subprocess.run([sys.executable,str(root/name)],check=True)
+          subprocess.run(['git','-c','core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol','diff','--check'],check=True)
       - name: Full Windows validation build
         shell: pwsh
         timeout-minutes: 18
@@ -43,7 +42,7 @@ jobs:
           try {
             ./scripts/Test-ExeRoutes.ps1
             ./scripts/Build.ps1 -Version 9.1.8
-            Write-Host 'EXE_ONLY_VALIDATION_OK: static wiring, compiled helper logic, existing regression and executable startup. No real FiveM route test was performed.'
+            Write-Host 'EXE_ONLY_VALIDATION_OK: compiled helper logic, phrase checks, regression and executable startup. No live FiveM route test was performed.'
           } finally { Stop-Transcript }
       - name: Commit only tested application changes
         shell: pwsh
@@ -51,19 +50,19 @@ jobs:
           $ErrorActionPreference = 'Stop'
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- src/mining-auto.ahk src/exe-route-navigation.ahk src/local-navigation/LocalNavigation.cs scripts/Build.ps1 scripts/Test-ExeRoutes.ps1 scripts/Test-FarmRecoverySafetyContract.ps1 src/ui-host/Protocol.cs src/ui-web/src/app.js src/ui-web/src/index.html src/ui-web/www/app.js src/ui-web/www/index.html src/ui-web/www/build-info.json
+          git add -- src/mining-auto.ahk src/exe-route-navigation.ahk src/local-navigation/LocalNavigation.cs scripts/Build.ps1 scripts/Make-Release.ps1 scripts/Test-ExeRoutes.ps1 scripts/Test-FarmRecoverySafetyContract.ps1 src/ui-host/Protocol.cs src/ui-web/src/app.js src/ui-web/src/index.html src/ui-web/www/app.js src/ui-web/www/index.html src/ui-web/www/build-info.json README.md docs/AI採掘機_使い方.txt docs/EXE_ONLY_ROUTES.md
           git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --cached --check
           if ($LASTEXITCODE -ne 0) { throw 'Source diff check failed.' }
           git diff --cached --quiet
           if ($LASTEXITCODE -eq 1) {
-            git commit -m 'Implement EXE-only taught walking routes and offline completion voices [skip ci]'
+            git commit -m 'Complete EXE-only route and voice release candidate [skip ci]'
             if ($LASTEXITCODE -ne 0) { throw 'Source commit failed.' }
             git push origin HEAD:fix/exe-only-routes-and-voices
             if ($LASTEXITCODE -ne 0) { throw 'Source push failed; branch moved.' }
           } elseif ($LASTEXITCODE -ne 0) { throw 'Could not inspect changes.' }
           $head = (& git rev-parse HEAD).Trim()
           $hash = (Get-FileHash dist/ai-miner-win-x64.exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          "source_commit=$head`nsha256=$hash`nEXE-only 9.1.8 TEST CANDIDATE. No server resource required. Initial per-mode teaching and automatic trial are mandatory. No live FiveM validation." | Set-Content artifacts/exe-only-validation/CANDIDATE.txt -Encoding utf8
+          "source_commit=$head`nsha256=$hash`nEXE-only 9.1.8 candidate. Per-mode route teaching and trial required. No live FiveM validation." | Set-Content artifacts/exe-only-validation/CANDIDATE.txt -Encoding utf8
           git archive --format=zip HEAD -o artifacts/exe-only-validation/tested-source.zip
           if ($LASTEXITCODE -ne 0) { throw 'Source archive failed.' }
       - name: Retain validation evidence
