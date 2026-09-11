@@ -1,0 +1,123 @@
+name: Publish v9.1.9 verified update
+on:
+  push:
+    branches: [release/v9.1.9-publish]
+    paths: [.github/workflows/publish-v9.1.9-once.yml]
+permissions:
+  contents: write
+concurrency:
+  group: publish-v9.1.9-verified
+  cancel-in-progress: false
+jobs:
+  publish:
+    name: Build, sign, download-verify, and publish
+    runs-on: windows-latest
+    timeout-minutes: 25
+    environment: release
+    steps:
+      - name: Check out exact merged release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: dc2f4bfbfb23a6ff1d30731f576a7c0d9a7d3ede
+          fetch-depth: 0
+      - name: Validate source and publication preconditions
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expected = 'dc2f4bfbfb23a6ff1d30731f576a7c0d9a7d3ede'
+          $head = (& git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head -ne $expected) { throw 'Unexpected build commit.' }
+          $remoteMain = gh api "repos/$env:GH_REPO/branches/main" --jq '.commit.sha'
+          if ($LASTEXITCODE -ne 0 -or $remoteMain.Trim() -ne $expected) { throw 'Main moved; stop rather than publish stale code.' }
+          $source = [IO.File]::ReadAllText('src/mining-auto.ahk')
+          if ($source -notmatch '(?m)^global AppVersion := "9\.1\.9"') { throw 'Version mismatch.' }
+          if (-not ([IO.File]::ReadAllText('src/ui-web/src/index.html').Contains('id="screen-routes"'))) { throw 'Route settings screen missing.' }
+          if (-not ([IO.File]::ReadAllText('src/exe-route-navigation.ahk').Contains('NewStorageCycleProof('))) { throw 'Cycle observation implementation missing.' }
+          $latest = gh api "repos/$env:GH_REPO/releases/latest" --jq '.tag_name'
+          if ($LASTEXITCODE -ne 0 -or $latest.Trim() -ne 'v9.1.8') { throw 'Latest release changed; do not supersede another publication.' }
+          $refsText = gh api "repos/$env:GH_REPO/git/matching-refs/tags/v9.1.9"
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect existing tags.' }
+          $matching = @($refsText | ConvertFrom-Json | Where-Object { $_.ref -eq 'refs/tags/v9.1.9' })
+          if ($matching.Count -ne 0) { throw 'v9.1.9 tag already exists; never overwrite.' }
+          New-Item -ItemType Directory -Force artifacts/release-evidence | Out-Null
+          "source_commit=$head`nLive FiveM walking, storage and refill have not been tested by CI." | Set-Content artifacts/release-evidence/SOURCE.txt -Encoding utf8
+      - name: Full build, executable tests, signed manifest and package verification
+        shell: pwsh
+        timeout-minutes: 16
+        env:
+          UPDATE_SIGNING_KEY_PKCS8_B64: ${{ secrets.UPDATE_SIGNING_KEY_PKCS8_B64 }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Start-Transcript artifacts/release-evidence/build.txt
+          try {
+            ./scripts/Make-Release.ps1 -Version 9.1.9
+            ./scripts/Verify-Release.ps1 -ArtifactDirectory artifacts/v9.1.9
+          } finally { Stop-Transcript }
+      - name: Create exact tag and upload draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expected = 'dc2f4bfbfb23a6ff1d30731f576a7c0d9a7d3ede'
+          $latest = gh api "repos/$env:GH_REPO/releases/latest" --jq '.tag_name'
+          if ($LASTEXITCODE -ne 0 -or $latest.Trim() -ne 'v9.1.8') { throw 'Another release appeared; leave existing release unchanged.' }
+          git tag v9.1.9 $expected
+          if ($LASTEXITCODE -ne 0) { throw 'Could not create new tag.' }
+          git push origin refs/tags/v9.1.9
+          if ($LASTEXITCODE -ne 0) { throw 'Tag push failed; never force a tag.' }
+          $assets = @('ai-miner-win-x64.exe','AI-Miner-v9.1.9.zip','update-manifest.json','update-manifest.sig','SHA256SUMS.txt') | ForEach-Object { Join-Path $PWD "artifacts/v9.1.9/$_" }
+          foreach ($asset in $assets) {
+            if (-not (Test-Path -LiteralPath $asset -PathType Leaf) -or (Get-Item -LiteralPath $asset).Length -le 0) { throw "Release asset missing: $asset" }
+          }
+          gh release create v9.1.9 @assets --repo $env:GH_REPO --verify-tag --draft --title 'AI採掘機 v9.1.9' --notes-file docs/RELEASE_v9.1.9.md
+          if ($LASTEXITCODE -ne 0) { throw 'Draft upload failed; release must remain unpublished.' }
+      - name: Re-download and verify uploaded assets before publishing Latest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $download = Join-Path $PWD 'artifacts/downloaded-v9.1.9'
+          New-Item -ItemType Directory -Path $download | Out-Null
+          gh release download v9.1.9 --repo $env:GH_REPO --dir $download
+          if ($LASTEXITCODE -ne 0) { throw 'Release asset re-download failed.' }
+          ./scripts/Verify-Release.ps1 -ArtifactDirectory $download
+          foreach ($asset in Get-ChildItem -LiteralPath $download -File) {
+            $original = Join-Path $PWD "artifacts/v9.1.9/$($asset.Name)"
+            if (-not (Test-Path -LiteralPath $original) -or (Get-FileHash -LiteralPath $asset.FullName).Hash -ne (Get-FileHash -LiteralPath $original).Hash) { throw 'Uploaded asset differs from verified build.' }
+          }
+          $latest = gh api "repos/$env:GH_REPO/releases/latest" --jq '.tag_name'
+          if ($LASTEXITCODE -ne 0 -or $latest.Trim() -ne 'v9.1.8') { throw 'Latest changed before publication; leave new release as draft.' }
+          gh release edit v9.1.9 --repo $env:GH_REPO --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Publication failed.' }
+          $publishedText = gh api "repos/$env:GH_REPO/releases/latest"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not verify Latest endpoint.' }
+          $published = $publishedText | ConvertFrom-Json
+          if ($published.tag_name -ne 'v9.1.9' -or $published.draft -or $published.prerelease -or $published.assets.Count -ne 5) { throw 'Published release metadata mismatch.' }
+          $publishedText | Set-Content artifacts/release-evidence/published.json -Encoding utf8
+          Write-Host 'PUBLISHED v9.1.9: uploaded package, ECDSA manifest signature and SHA-256 re-verified.'
+      - name: Retain build and publication evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: v9.1.9-release-validation
+          path: |
+            artifacts/release-evidence/
+            build/staging/*.txt
+            build/staging/*.log
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Retain exact published release assets
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: v9.1.9-published-assets
+          path: artifacts/downloaded-v9.1.9/
+          retention-days: 14
+          if-no-files-found: error
