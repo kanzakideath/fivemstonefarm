@@ -34,13 +34,15 @@ jobs:
           if ($matches.Count -ne 1) {
             throw "Expected exactly one RunUiSmokeTest 15-second readiness budget, found $($matches.Count)."
           }
-          $replacement = '$1; Keep the in-app readiness budget consistent with the updater''s 60 s validation window.`r`n    ; A cold WebView2 profile on a busy FiveM/GTA machine can legitimately exceed 15 s.`r`n    deadline := MonotonicMs() + 38000'
+          $replacement = '$1' + '; Keep the in-app readiness budget consistent with the updater''s 60 s validation window.' + [Environment]::NewLine +
+              '    ; A cold WebView2 profile on a busy FiveM/GTA machine can legitimately exceed 15 s.' + [Environment]::NewLine +
+              '    deadline := MonotonicMs() + 38000'
           $text = [regex]::Replace($text, $pattern, $replacement, 1)
           [System.IO.File]::WriteAllText($sourcePath, $text, [System.Text.UTF8Encoding]::new($false))
 
           $oldVersion = '9.1.6'
           $newVersion = '9.1.7'
-          $paths = @(& git grep -l -F $oldVersion -- .)
+          $paths = @(& git -c core.quotepath=false grep -l -F $oldVersion -- .)
           if ($LASTEXITCODE -ne 0 -or $paths.Count -eq 0) {
             throw "No tracked $oldVersion version markers were found."
           }
@@ -59,10 +61,10 @@ jobs:
           if ($patched -notmatch 'global AppVersion := "9\.1\.7"') {
             throw 'AppVersion was not bumped to 9.1.7.'
           }
-          if ($patched -notmatch 'RunUiSmokeTest\(\)[\s\S]{0,500}MonotonicMs\(\) \+ 38000') {
+          if ($patched -notmatch 'RunUiSmokeTest\(\)[\s\S]{0,700}MonotonicMs\(\) \+ 38000') {
             throw 'RunUiSmokeTest readiness budget was not patched to 38 seconds.'
           }
-          if ($patched -match 'RunUiSmokeTest\(\)[\s\S]{0,500}MonotonicMs\(\) \+ 15000') {
+          if ($patched -match 'RunUiSmokeTest\(\)[\s\S]{0,700}MonotonicMs\(\) \+ 15000') {
             throw 'The obsolete 15-second UI readiness budget is still present.'
           }
           git diff --check
