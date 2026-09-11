@@ -16,14 +16,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - name: Apply explicit source edits on verified baseline
+      - name: Apply explicit source edits and packaged version corrections
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           git merge-base --is-ancestor dc2f4bfbfb23a6ff1d30731f576a7c0d9a7d3ede HEAD
           if ($LASTEXITCODE -ne 0) { throw 'Unexpected baseline.' }
           if (-not ([IO.File]::ReadAllText('src/mining-auto.ahk').Contains('global AppVersion := "9.1.9"'))) { throw 'Unexpected version before repair.' }
-          foreach ($name in @('record','backend','ui')) {
+          foreach ($name in @('record','backend','ui','finalize')) {
             python -m py_compile "scripts/passive-route-repair/$name.py"
             if ($LASTEXITCODE -ne 0) { throw "Invalid repair script: $name" }
             python "scripts/passive-route-repair/$name.py"
@@ -63,13 +63,13 @@ jobs:
             python scripts/ui-tests/Test-RouteSetupBrowser.py --output artifacts/passive-route
           }
           if ($LASTEXITCODE -ne 0) { throw 'Browser interaction tests failed.' }
-      - name: Commit only tested application sources and remove temporary repair tooling
+      - name: Commit tested source and remove temporary repair tooling
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- src/local-navigation/LocalNavigation.cs src/exe-route-navigation.ahk src/mining-auto.ahk src/ui-host/Protocol.cs src/ui-web/src/index.html src/ui-web/src/app.js src/ui-web/src/app.css src/ui-web/package.json src/ui-web/package-lock.json src/ui-web/www/index.html src/ui-web/www/app.js src/ui-web/www/app.css src/ui-web/www/build-info.json scripts/Test-ExeRoutes.ps1 scripts/ui-tests/Test-RouteSetupBrowser.py README.md src/README.md config/AI採掘機.ini
+          git add -- src/local-navigation/LocalNavigation.cs src/exe-route-navigation.ahk src/mining-auto.ahk src/ui-host/Protocol.cs src/ui-web/src/index.html src/ui-web/src/app.js src/ui-web/src/app.css src/ui-web/package.json src/ui-web/package-lock.json src/ui-web/www/index.html src/ui-web/www/app.js src/ui-web/www/app.css src/ui-web/www/build-info.json scripts/Test-ExeRoutes.ps1 scripts/ui-tests/Test-RouteSetupBrowser.py README.md src/README.md config/AI採掘機.ini docs/AI採掘機_使い方.txt src/ui-web/README.md src/ui-web/screenshots/README.md
           git rm -r -- scripts/passive-route-repair .github/workflows/passive-route-repair.yml
           if ($LASTEXITCODE -ne 0) { throw 'Temporary tooling cleanup failed.' }
           git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --cached --check
