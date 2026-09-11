@@ -7,8 +7,6 @@ def once(a,c):
  if s.count(a)!=1:raise RuntimeError('Unexpected phase boundary: '+a[:90])
  s=s.replace(a,c)
 # Compiled AHK passes interpreter-only switches through as ordinary arguments.
-# A parsed --validate flag must never fall through to the interactive UI simply
-# because another argument precedes it. No validation assertion is bypassed.
 once('if A_Args.Length && A_Args[1] = "--validate" {','if isValidationRun {')
 once('    OnError(ValidationFatalError)', '    OnError(ValidationFatalError)\nif isValidationRun\n    FileAppend "VALIDATION_PHASE entry " A_Args.Length "`n", "**", "UTF-8-RAW"')
 for label,needle in [
@@ -25,4 +23,19 @@ p=R/'scripts/Build.ps1';b=p.read_bytes();s=b.decode('utf-8-sig').replace('\r\n',
 a="-ArgumentList @('/ErrorStdOut=UTF-8', $testMode)"
 if s.count(a)!=1:raise RuntimeError('Compiled test launch boundary missing')
 s=s.replace(a,'-ArgumentList $testMode')
+p.write_bytes((b'\xef\xbb\xbf' if b.startswith(b'\xef\xbb\xbf') else b'')+s.encode('utf-8'))
+# AHK's callback must explicitly bind the current loop value. The prior lambda
+# reached production EvaluateStationarySpot but threw UnsetError for failAt.
+# Do not skip the tests: preserve all four injected failures and pre-cancel.
+p=R/'src/exe-route-navigation.ahk';b=p.read_bytes();s=b.decode('utf-8-sig').replace('\r\n','\n')
+a='        probe := (name, *) => (trace.Push(name), trace.Length != failAt)'
+if s.count(a)!=1:raise RuntimeError('Stationary probe closure missing')
+s=s.replace(a,'        probe := StationaryWorkflowTestProbe.Bind(trace, failAt)')
+a='    result := EvaluateStationarySpot(() => false, (*) => calls.Push("work"),\n        (*) => calls.Push("cargo"), (*) => calls.Push("close"))'
+c='    result := EvaluateStationarySpot(() => false, StationaryWorkflowTestProbe.Bind(calls, 0, "work"),\n        StationaryWorkflowTestProbe.Bind(calls, 0, "cargo"), StationaryWorkflowTestProbe.Bind(calls, 0, "close"))'
+if s.count(a)!=1:raise RuntimeError('Stationary cancel closure missing')
+s=s.replace(a,c)
+a='ValidateStationaryWorkflow() {'
+if s.count(a)!=1:raise RuntimeError('Stationary test function missing')
+s=s.replace(a,'StationaryWorkflowTestProbe(trace, failAt, name, *) {\n    trace.Push(name)\n    return trace.Length != failAt\n}\n\n'+a)
 p.write_bytes((b'\xef\xbb\xbf' if b.startswith(b'\xef\xbb\xbf') else b'')+s.encode('utf-8'))
