@@ -7,7 +7,7 @@ VerifiedNavigationReceiptMatches(result, command, expectedId) {
         : command = "return-work" ? "ARRIVED_WORK" : ""
     return expectedCode != "" && IsValidCompanionRegistrationId(expectedId)
         && CompanionCommandSucceeded(result, command, &actualId, &code, &netId)
-        && actualId = expectedId && code = expectedCode && netId > 0
+        && actualId == expectedId && code == expectedCode && netId > 0
 }
 
 class VerifiedNavigationAdapter {
@@ -93,7 +93,7 @@ FindRegisteredStorageByCompanion(expectedGeneration, &failureMessage) {
     }
     if !IsCurrentRun(expectedGeneration)
         return false
-    if storageId != Config.vehicleStorageId || storageType != Config.vehicleStorageType {
+    if !(storageId == Config.vehicleStorageId) || !(storageType == Config.vehicleStorageType) {
         failureMessage := "開いた荷台IDが登録車両と一致しないため何も収納しません"
         WriteDiagnostic("NAVIGATION_CARGO_ID_MISMATCH")
         return false
@@ -125,6 +125,8 @@ BeginCompanionVehicleRegistration(*) {
             return
         State.registrationActive := true
         State.registrationCancelled := false
+        State.registrationNavigation := true
+        State.navigationRegistrationMessage := ""
     } finally {
         if !criticalWasOn
             Critical "Off"
@@ -180,13 +182,13 @@ BeginCompanionVehicleRegistration(*) {
         QueueWebUiFlush(true)
         State.gui.Hide()
         try WinActivate "ahk_id " State.targetHwnd
-        ownsCompanionOperation := true
         armed := RunCompanionCommandCancelable(0, "arm-register")
         if !CompanionCommandSucceeded(armed, "arm-register", &armedId,
             &armedCode, &armedNet) || armedCode != "ARMED" {
             statusText := CompanionFailureMessage(armed, "車両選択を開始できませんでした")
             return
         }
+        ownsCompanionOperation := true
         if !WaitForCompanionRegistration(initialInfo.sequence, initialInfo.epoch,
             epoch, &candidate, &registrationFailure) {
             statusText := CompanionFailureMessage(registrationFailure, "車両選択が完了しませんでした")
@@ -259,6 +261,8 @@ BeginCompanionVehicleRegistration(*) {
             ReleaseBackgroundTarget(true)
             RunBackgroundBridge("close-inventory")
         }
+        State.navigationRegistrationMessage := statusText
+        State.registrationNavigation := false
         State.registrationActive := false
         State.registrationCancelled := false
         State.targetHwnd := 0

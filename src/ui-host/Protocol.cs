@@ -52,6 +52,7 @@ namespace AiMiner.UiHost
 
                     case "run.toggle":
                     case "vehicle.register":
+                    case "vehicle.register-local":
                     case "vehicle.delete":
                     case "update.check":
                     case "window.close":
@@ -217,6 +218,8 @@ namespace AiMiner.UiHost
                     "vehicle.toggle", new[] { "1" });
                 AssertAction(@"{""type"":""action"",""action"":""vehicle.register"",""payload"":{}}",
                     "vehicle.register", new string[0]);
+                AssertAction(@"{""type"":""action"",""action"":""vehicle.register-local"",""payload"":{}}",
+                    "vehicle.register-local", new string[0]);
                 const string settingsFixture = @"{""type"":""action"",""action"":""settings.save"",""payload"":{""startHotkey"":""F8"",""stopHotkey"":""F9"",""backgroundMode"":true,""hideWhileRunning"":false,""correctionEnabled"":true,""autoEat"":true,""foodKey"":1,""autoCheckUpdates"":true,""minimumFreeWeight"":2000,""storageTriggerPercent"":90,""estimatedRewardWeight"":2000,""minimumFreeSlots"":1,""storageMaxRetries"":3,""farmWatchdogMs"":45000,""targetLostRecoveryMs"":12000,""debugOverlay"":false}}";
                 AssertAction(settingsFixture,
                     "settings.save", new[] { "F8", "F9", "1", "0", "1", "1", "1", "1", "2000",

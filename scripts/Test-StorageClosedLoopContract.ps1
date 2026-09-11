@@ -23,6 +23,12 @@ foreach ($requiredPath in @($resolvedSource, $resolvedBridgeSource)) {
 }
 
 $source = Get-Content -LiteralPath $resolvedSource -Raw -Encoding UTF8
+# Validate the same literal module that the compiled controller includes.
+# Missing modules remain a hard failure; do not waive production entry checks.
+if ($source -match '(?m)^#Include verified-storage-navigation\.ahk\s*$') {
+    $navigationModule = Join-Path (Split-Path -Parent $resolvedSource) 'verified-storage-navigation.ahk'
+    $source += "`n" + (Get-Content -LiteralPath $navigationModule -Raw -Encoding UTF8 -ErrorAction Stop)
+}
 $bridgeSource = Get-Content -LiteralPath $resolvedBridgeSource -Raw -Encoding UTF8
 
 function Assert-Contract {

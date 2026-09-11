@@ -27,7 +27,7 @@ assert.match(body('CompleteVerifiedStorageReturn'), /vehicleCompanionProtocol = 
 assert.doesNotMatch(body('FindRegisteredStorageNearby'), /movementSteps|PlayLocalRoute/);
 assert.match(module, /ExecuteVerifiedNavigation\(adapter, "go-vehicle"/);
 assert.match(module, /ExecuteVerifiedNavigation\(adapter, "return-work"/);
-assert.match(module, /actualId = expectedId && code = expectedCode && netId > 0/);
+assert.match(module, /actualId == expectedId && code == expectedCode && netId > 0/);
 assert.match(main, /testVerifiedNavigationOk := RunVerifiedNavigationSelfTest\(\)/);
 assert.match(main, /!testVerifiedNavigationOk \? 175/);
 assert.match(module, /ERROR COMPANION_MANUAL_OVERRIDE/);

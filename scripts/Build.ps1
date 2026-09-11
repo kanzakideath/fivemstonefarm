@@ -266,6 +266,7 @@ if (-not (Test-Path -LiteralPath $appIcon -PathType Leaf)) {
 
 $stagedMain = Join-Path $stageRoot 'mining-auto.ahk'
 Copy-Item -LiteralPath $mainSource -Destination $stagedMain -Force
+Copy-Item -LiteralPath (Join-Path $sourceRoot 'verified-storage-navigation.ahk') -Destination $stageRoot -Force
 $assetRoot = Join-Path $sourceRoot 'assets'
 if (Test-Path -LiteralPath $assetRoot -PathType Container) {
     Get-ChildItem -LiteralPath $assetRoot -File | Copy-Item -Destination $stageRoot -Force
