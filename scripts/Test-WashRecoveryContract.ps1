@@ -51,6 +51,7 @@ $complete = Get-AhkFunctionBody 'CompleteVerifiedFarmReward'
 $begin = Get-AhkFunctionBody 'BeginWashCompletionRecovery'
 $correct = Get-AhkFunctionBody 'PerformWashCompletionCorrection'
 $cycle = Get-AhkFunctionBody 'RunWashCompletionRecoveryCycle'
+$resumeAfterWash = Get-AhkFunctionBody 'ResumeAfterWashCompletionRecovery'
 $dispatcher = Get-AhkFunctionBody 'AutomationCycleOwned'
 $start = Get-AhkFunctionBody 'StartMining'
 $maintain = Get-AhkFunctionBody 'MaintainBackgroundWorkView'
@@ -66,14 +67,14 @@ $washingReward = Get-AhkFunctionBody 'WashingSnapshotHasExchangeReward'
 $confirmReward = Get-AhkFunctionBody 'TryConfirmPendingFarmRewardSnapshot'
 
 Assert-Contract ($source -match
-    'washPostCompletionSettleMs:\s*ReadIntegerSetting\(settingsPath,\s*"Washing",\s*"PostCompletionSettleMs",\s*1200,\s*900,\s*4000\)') `
-    'The post-wash no-input window is not loaded with the safe 1.2 second default.'
+    'washPostCompletionSettleMs:\s*ReadIntegerSetting\(settingsPath,\s*"Washing",\s*"PostCompletionSettleMs",\s*2000,\s*2000,\s*4000\)') `
+    'The post-wash no-input window is not loaded with the safe 2.0 second minimum.'
 Assert-Contract (([regex]::Matches($source,
     'IniWrite\s+Config\.washPostCompletionSettleMs,\s*temporarySettingsPath,\s*"Washing",\s*"PostCompletionSettleMs"')).Count -ge 2) `
     'The post-wash settle setting is not preserved by both settings save paths.'
 
 Assert-Contract ($complete -match
-    'startWashRecovery\s*:=\s*actionMode\s*=\s*"washing"[\s\S]{0,900}if\s+startWashRecovery\s*\r?\n\s*return\s+BeginWashCompletionRecovery\(expectedGeneration,\s*attemptId\)') `
+    'startWashRecovery\s*:=\s*actionMode\s*=\s*"washing"[\s\S]{0,1400}if\s+startWashRecovery\s*\{[\s\S]{0,220}BeginWashCompletionRecovery\(expectedGeneration,\s*\r?\n?\s*attemptId\)') `
     'A verified washing reward does not enter the dedicated settle state.'
 Assert-Contract ($complete -notmatch 'PerformWashCompletionCorrection\(') `
     'Forward correction is still dispatched synchronously at reward completion.'
@@ -114,22 +115,16 @@ $settleBranch = $cycle.Substring($settleBranchStart,
     $correctingBranchStart - $settleBranchStart)
 Assert-Contract ($settleBranch -notmatch
     'PerformWashCompletionCorrection|MaintainBackgroundWorkView|play-route|SendForegroundCameraDown|SendRelativeMouseDelta') `
-    'The 1.2 second WASH_SETTLING window can dispatch movement or camera input.'
+    'The 2.0 second WASH_SETTLING window can dispatch movement or camera input.'
 Assert-Contract ($settleDone -ge 0 -and $correctionCall -gt $settleDone) `
     'Forward correction can run before the settle deadline completes.'
-Assert-Contract ($probeCall -gt $correctionCall -and $resumeCall -gt $probeCall -and
-    $cameraCall -gt $resumeCall) `
-    'WASH_VERIFYING must probe first, resume a visible target without camera input, and only then contain the missing-target camera path.'
-$targetReadyBranch = $cycle.IndexOf('if targetReady {', $probeCall,
-    [StringComparison]::Ordinal)
-$visibleBranchReturn = $cycle.IndexOf('return', $resumeCall,
-    [StringComparison]::Ordinal)
-Assert-Contract ($targetReadyBranch -gt $probeCall -and
-    $visibleBranchReturn -gt $resumeCall -and $visibleBranchReturn -lt $cameraCall) `
-    'A target already visible after washing can still fall through to camera input.'
-Assert-Contract ($cycle.Substring($probeCall, $cameraCall - $probeCall) -match
-    'if\s+!State\.targetLostSince\s*\r?\n\s*State\.targetLostSince\s*:=\s*MonotonicMs\(\)') `
-    'The missing-target observation is not committed before forced view recovery.'
+Assert-Contract ($cycle -notmatch 'ProbeWorkTarget|WASH_VERIFYING|MaintainBackgroundWorkView' -and
+    $cycle -match 'PerformWashCompletionCorrection\([\s\S]{0,300}ResumeAfterWashCompletionRecovery\(') `
+    'Post-wash correction still enters a redundant visual probe/recovery loop.'
+Assert-Contract ($resumeAfterWash -match 'TransitionFarmState\("FARMING"' -and
+    $resumeAfterWash -match 'ScheduleNext\(expectedGeneration,\s*1\)' -and
+    $resumeAfterWash -notmatch 'ProbeWorkTarget|MaintainBackgroundWorkView') `
+    'The corrected wash does not resume the bundled target wait immediately.'
 
 $sentLatch = $correct.IndexOf('State.washCorrectionSent := true',
     [StringComparison]::Ordinal)

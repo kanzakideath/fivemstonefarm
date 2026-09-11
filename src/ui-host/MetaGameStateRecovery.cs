@@ -146,8 +146,11 @@ namespace AiMiner.UiHost
                     return report;
                 }
 
+                MetaGameCatalog catalog = MetaGameCatalog.Load(dataPath);
                 Candidate baseCandidate = canonicalCandidate ?? SelectBase(candidates);
-                EnsureExactMergePreconditions(candidates);
+                EnsureExactMergePreconditions(candidates,
+                    catalog.Gacha.Economy.ProcessedEventLimit,
+                    catalog.Gacha.Economy.HistoryLimit);
                 ProfileState recoveredProfile = Clone(baseCandidate.State.Profile);
                 BackupSources(root, requested);
                 MetaGameState merged = Clone(baseCandidate.State);
@@ -167,7 +170,10 @@ namespace AiMiner.UiHost
                 var knownMining = new HashSet<string>(merged.ProcessedMiningEventIds
                     .Where(IsSafeEventId), StringComparer.Ordinal);
                 var miningImports = new List<KeyValuePair<string, DateTimeOffset>>();
-                foreach (Candidate candidate in candidates.OrderBy(x => x.WrittenAt))
+                List<Candidate> miningCandidates = MiningImportCandidates(
+                    candidates, baseCandidate,
+                    catalog.Gacha.Economy.ProcessedEventLimit, report);
+                foreach (Candidate candidate in miningCandidates.OrderBy(x => x.WrittenAt))
                 {
                     DateTimeOffset completedAt = MiningTimestamp(candidate);
                     foreach (string eventId in candidate.State.ProcessedMiningEventIds)
@@ -182,7 +188,6 @@ namespace AiMiner.UiHost
                     }
                 }
 
-                MetaGameCatalog catalog = MetaGameCatalog.Load(dataPath);
                 var service = new MetaGameService(catalog, store);
                 foreach (KeyValuePair<string, DateTimeOffset> item in miningImports)
                 {
@@ -378,15 +383,23 @@ namespace AiMiner.UiHost
                 .ThenByDescending(x => x.State.RewardGrants.Count).First();
         }
 
-        private static void EnsureExactMergePreconditions(IEnumerable<Candidate> candidates)
+        private static void EnsureExactMergePreconditions(IEnumerable<Candidate> candidates,
+            int processedMiningEventLimit, int gachaHistoryLimit)
         {
             var requestFingerprints = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (Candidate candidate in candidates)
             {
-                if (candidate.State.Mining.TotalStoneMined
-                    != candidate.State.ProcessedMiningEventIds.Count)
+                long expectedMiningHistory = Math.Min(
+                    Math.Max(0L, candidate.State.Mining.TotalStoneMined),
+                    processedMiningEventLimit);
+                if (expectedMiningHistory != candidate.State.ProcessedMiningEventIds.Count
+                    || candidate.State.ProcessedMiningEventIds
+                        .Distinct(StringComparer.Ordinal).Count()
+                        != candidate.State.ProcessedMiningEventIds.Count)
                     throw new InvalidDataException("MINING_HISTORY_NOT_EXACT");
-                if (candidate.State.Gacha.TotalDraws != candidate.State.Gacha.History.Count)
+                long expectedGachaHistory = Math.Min(
+                    Math.Max(0L, candidate.State.Gacha.TotalDraws), gachaHistoryLimit);
+                if (expectedGachaHistory != candidate.State.Gacha.History.Count)
                     throw new InvalidDataException("GACHA_HISTORY_NOT_EXACT");
                 foreach (IGrouping<string, GachaHistoryEntry> group in candidate.State.Gacha.History
                     .Where(x => x != null && !String.IsNullOrEmpty(x.RequestId))
@@ -400,6 +413,31 @@ namespace AiMiner.UiHost
                     requestFingerprints[group.Key] = fingerprint;
                 }
             }
+        }
+
+        private static List<Candidate> MiningImportCandidates(List<Candidate> candidates,
+            Candidate baseCandidate, int processedMiningEventLimit,
+            RecoveryReport report)
+        {
+            if (baseCandidate.State.Mining.TotalStoneMined <= processedMiningEventLimit)
+            {
+                if (candidates.Any(x => x.State.Mining.TotalStoneMined
+                    > processedMiningEventLimit))
+                    throw new InvalidDataException("MINING_HISTORY_WINDOW_CONFLICT");
+                return candidates;
+            }
+
+            // Once the sidecar's bounded deduplication window is full, an older
+            // branch can contain ids already represented by the canonical total
+            // but naturally absent from its most-recent window. Replaying those
+            // ids would duplicate XP, points and achievements. Preserve the base
+            // total and only accept branches that cannot be newer than it.
+            if (candidates.Any(x => x.State.Mining.TotalStoneMined
+                > baseCandidate.State.Mining.TotalStoneMined))
+                throw new InvalidDataException("MINING_HISTORY_WINDOW_CONFLICT");
+            if (candidates.Count > 1)
+                report.Warnings.Add("BOUNDED_MINING_HISTORY_PRESERVED_BASE");
+            return new List<Candidate> { baseCandidate };
         }
 
         private static void ImportGachaBranches(MetaGameState state, List<Candidate> candidates,
@@ -1009,6 +1047,24 @@ namespace AiMiner.UiHost
                     return false;
                 }
 
+                string cappedCanonical = Path.Combine(root, "capped", "state.json");
+                string olderCappedBranch = Path.Combine(root, "capped-legacy", "state.json");
+                SeedMiningWindow(cappedCanonical, "current", 2050, 2048);
+                SeedMiningWindow(olderCappedBranch, "older", 1900, 1900);
+                RecoveryReport cappedReport = PrepareCore(dataPath, cappedCanonical,
+                    new[] { olderCappedBranch }, false);
+                MetaGameState cappedState = new MetaGameStateStore(cappedCanonical)
+                    .LoadOrCreate(DateTimeOffset.UtcNow);
+                if (!cappedReport.Changed || cappedReport.ImportedMiningEvents != 0
+                    || cappedState.Mining.TotalStoneMined != 2050
+                    || cappedState.ProcessedMiningEventIds.Count != 2048
+                    || !cappedReport.Warnings.Contains(
+                        "BOUNDED_MINING_HISTORY_PRESERVED_BASE"))
+                {
+                    error = "bounded mining history was not preserved safely";
+                    return false;
+                }
+
                 string corruptRoot = Path.Combine(root, "corrupt-only");
                 Directory.CreateDirectory(corruptRoot);
                 string corrupt = Path.Combine(corruptRoot, "state.json");
@@ -1099,6 +1155,30 @@ namespace AiMiner.UiHost
             var host = new StoneMetaGameHost(dataPath, statePath, false);
             MutationResult draw = host.Service.Draw(drawRequest, 1, "points");
             if (!draw.Ok) throw new InvalidDataException("test branch draw failed: " + draw.Error);
+        }
+
+        private static void SeedMiningWindow(string statePath, string prefix,
+            int total, int retained)
+        {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            var state = new MetaGameState();
+            state.Profile.CreatedAtUtc = now.UtcDateTime.ToString("O",
+                CultureInfo.InvariantCulture);
+            state.Profile.Name = "Miner";
+            state.Profile.OnboardingComplete = true;
+            state.Mining.TotalStoneMined = total;
+            state.Mining.MiningXp = total;
+            state.Mining.AvailableMiningPoints = total;
+            state.Mining.TotalMiningPointsEarned = total;
+            state.Mining.LastMinedAtUtc = now.UtcDateTime.ToString("O",
+                CultureInfo.InvariantCulture);
+            state.Mining.DailyTotals[now.ToString("yyyy-MM-dd",
+                CultureInfo.InvariantCulture)] = total;
+            int first = Math.Max(0, total - retained);
+            for (int index = first; index < total; index++)
+                state.ProcessedMiningEventIds.Add("mine:test:" + prefix + ":"
+                    + index.ToString("D5", CultureInfo.InvariantCulture));
+            new MetaGameStateStore(statePath).Save(state, now);
         }
     }
 

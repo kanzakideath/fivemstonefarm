@@ -175,7 +175,7 @@ Assert-SourcePattern `
     'The authenticated UI Host launch must quote both explicit persistent paths.'
 
 $finalize = [regex]::Match($source,
-    'CompleteVerifiedFarmReward\(expectedGeneration, actionMode,[\s\S]{0,7500}?ScheduleNext\(expectedGeneration, 1\)')
+    'CompleteVerifiedFarmReward\(expectedGeneration, actionMode,[\s\S]{0,10000}?ScheduleNext\(expectedGeneration, 1\)')
 if (-not $finalize.Success) {
     throw 'Unable to isolate the verified Farm reward finalizer.'
 }

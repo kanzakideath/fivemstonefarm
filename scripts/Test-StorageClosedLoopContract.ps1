@@ -98,6 +98,7 @@ $receiptRetire = Get-AhkFunctionBody 'RetireCompletedStorageDepositCheckpoint'
 $rewardFinalize = Get-AhkFunctionBody 'CompleteVerifiedFarmReward'
 $refillOnlyDeparture = Get-AhkFunctionBody 'IsVerifiedWashingRefillOnlyDeparture'
 $washRecovery = Get-AhkFunctionBody 'RunWashCompletionRecoveryCycle'
+$washCompletionResume = Get-AhkFunctionBody 'ResumeAfterWashCompletionRecovery'
 $farmRecovery = Get-AhkFunctionBody 'RunFarmRecoveryCycle'
 $initializeLocal = Get-AhkFunctionBody 'InitializeLocalVehicleRun'
 $startMining = Get-AhkFunctionBody 'StartMining'
@@ -314,27 +315,23 @@ Assert-Contract ($depositDispatch.Success -and
 # The final raw stone removes the wash target by design. Inventory truth must
 # branch into storage/refill before any visual probe can misclassify it as a
 # camera failure.
-$rawEmpty = $washRecovery.IndexOf(
+$rawEmpty = $washCompletionResume.IndexOf(
     'if Config.rawStoneItemName && State.lastRawStoneCount = 0 {',
     [StringComparison]::Ordinal)
-$checkingInventory = $washRecovery.IndexOf(
+$checkingInventory = $washCompletionResume.IndexOf(
     'TransitionFarmState("CHECKING_INVENTORY"', $rawEmpty,
     [StringComparison]::Ordinal)
-$capacityDispatch = $washRecovery.IndexOf(
+$capacityDispatch = $washCompletionResume.IndexOf(
     'MaybeHandleVehicleCapacity(expectedGeneration)', $checkingInventory,
     [StringComparison]::Ordinal)
-$rawBranchReturn = $washRecovery.IndexOf('return', $capacityDispatch,
-    [StringComparison]::Ordinal)
-$washProbe = $washRecovery.IndexOf(
-    'ProbeWorkTarget("washing", expectedGeneration)', $rawEmpty,
+$rawBranchReturn = $washCompletionResume.IndexOf('return', $capacityDispatch,
     [StringComparison]::Ordinal)
 Assert-Contract ($rawEmpty -ge 0 -and $checkingInventory -gt $rawEmpty -and
     $capacityDispatch -gt $checkingInventory -and
-    $rawBranchReturn -gt $capacityDispatch -and
-    $washProbe -gt $rawBranchReturn) `
-    'WASH_VERIFYING does not route raw-stone count zero through CHECKING_INVENTORY before visual probing.'
-Assert-Contract ($washRecovery.Substring($rawEmpty,
-    $checkingInventory - $rawEmpty) -notmatch 'ProbeWorkTarget|MaintainBackgroundWorkView') `
+    $rawBranchReturn -gt $capacityDispatch) `
+    'Post-wash resume does not route raw-stone count zero through CHECKING_INVENTORY.'
+Assert-Contract ($washCompletionResume -notmatch
+    'ProbeWorkTarget|MaintainBackgroundWorkView') `
     'Raw-stone depletion can still emit target/camera input before entering inventory handling.'
 
 # A local cold start with zero raw stone has no Farm output to deposit. It must

@@ -9,7 +9,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "9.1.4"
+global AppVersion := "9.1.5"
 ;@Ahk2Exe-SetVersion %A_PriorLine~U)^.*"([^"]+)".*$~$1%
 processId := DllCall("GetCurrentProcessId")
 isUiSmokeTest := HasCommandLineArgument("--smoke-test")
@@ -101,7 +101,10 @@ global Config := {
     washForwardCorrection: ReadIntegerSetting(settingsPath, "Washing", "ForwardCorrection", 1, 0, 1),
     washForwardPulseMs: ReadIntegerSetting(settingsPath, "Washing", "ForwardPulseMs", 100, 50, 250),
     washForwardSettleMs: ReadIntegerSetting(settingsPath, "Washing", "ForwardSettleMs", 250, 50, 3000),
-    washPostCompletionSettleMs: ReadIntegerSetting(settingsPath, "Washing", "PostCompletionSettleMs", 1200, 900, 4000),
+    ; FiveM keeps applying the washing animation's backward root motion for about
+    ; one second after the progress UI disappears.  Do not let an older 1.2 s INI
+    ; value dispatch W while that motion can still be active.
+    washPostCompletionSettleMs: ReadIntegerSetting(settingsPath, "Washing", "PostCompletionSettleMs", 2000, 2000, 4000),
     rawStoneItemName: ReadTextSetting(settingsPath, "Washing", "RawStoneItem", ""),
     washRefillMaximum: ReadIntegerSetting(settingsPath, "Washing", "RefillMaximum", 1000000, 1, 1000000),
     goldCycleMs: ReadIntegerSetting(settingsPath, "GoldPanning", "CycleMs", 6000, 4000, 15000),
@@ -347,6 +350,8 @@ global State := {
     lastCapacityReason: "未確認",
     lastAlertKind: "",
     lastAlertAt: 0,
+    speechVoice: 0,
+    speechVoiceConfigured: false,
     storageTrips: 0,
     washRefillTrips: 0,
     lastRawStoneCount: -1,
@@ -1524,6 +1529,7 @@ if A_Args.Length && A_Args[1] = "--validate" {
         && BuildFarmProgressStatus("再出現 ", 2, 4, "") = "再出現 2/4"
     testAlertPolicyOk := AutomationAlertSoundType("capacity") = 0x30
         && AutomationAlertSoundType("error") = 0x10
+        && AutomationAlertSoundType("wash_complete") = 0x40
         && AutomationAlertSoundType("other") = 0
     testBackgroundViewRouteOk := BackgroundCameraDownRoute(450) = "450:32"
         && BackgroundCameraDownRoute(1) = "100:32"
@@ -1565,6 +1571,13 @@ if A_Args.Length && A_Args[1] = "--validate" {
             {items: "0001.raw_stone.e30=2"}, "raw_stone",
             &testWashRawOnlyName, &testWashRawOnlyCount,
             &testWashRawOnlyOutput)
+    testWashingBatchCompleteOk := WashingBatchWasCompleted(
+        "0001.raw_stone.e30=1,0002.food.e30=2",
+        "0002.food.e30=2,0003.washed.e30=1", "raw_stone")
+        && !WashingBatchWasCompleted(
+            "0001.raw_stone.e30=2", "0001.raw_stone.e30=1", "raw_stone")
+        && !WashingBatchWasCompleted(
+            "0002.food.e30=2", "0002.food.e30=2", "raw_stone")
     testMiningWorkflowOk := RunFarmStorageResumeModeMockTest("mining", 100,
         &testMiningWorkflowStats)
     testGoldWorkflowOk := RunFarmStorageResumeModeMockTest("gold", 100,
@@ -1833,7 +1846,8 @@ if A_Args.Length && A_Args[1] = "--validate" {
         : !testWashingRefillReceiptPolicyOk ? 170
         : !testFarmTimerHandoffPolicyOk ? 171
         : !testWashingRewardEvidenceOk ? 172
-        : !testAmbiguousTransferNoRetryOk ? 173 : 0
+        : !testAmbiguousTransferNoRetryOk ? 173
+        : !testWashingBatchCompleteOk ? 174 : 0
     if exitCode = 19
         try FileAppend "UPDATER_CAPS=" updaterCapabilities "`r`n",
             State.diagnosticPath, "UTF-8"
@@ -5248,9 +5262,8 @@ FarmStateTransitionAllowed(fromState, toState) {
     allowed := Map(
         "IDLE", "|FARMING|ERROR|",
         "FARMING", "|WASH_SETTLING|CHECKING_INVENTORY|INVENTORY_CHECK|RECOVERY|STOPPING_FARM|ERROR|",
-        "WASH_SETTLING", "|WASH_CORRECTING|WASH_VERIFYING|RECOVERY|STOPPING_FARM|ERROR|",
-        "WASH_CORRECTING", "|WASH_VERIFYING|RECOVERY|STOPPING_FARM|ERROR|",
-        "WASH_VERIFYING", "|FARMING|CHECKING_INVENTORY|RECOVERY|STOPPING_FARM|ERROR|",
+        "WASH_SETTLING", "|WASH_CORRECTING|FARMING|CHECKING_INVENTORY|RECOVERY|STOPPING_FARM|ERROR|",
+        "WASH_CORRECTING", "|FARMING|CHECKING_INVENTORY|RECOVERY|STOPPING_FARM|ERROR|",
         "CHECKING_INVENTORY", "|FARMING|NEED_STORAGE|RECOVERY|STOPPING_FARM|ERROR|",
         "INVENTORY_CHECK", "|FARMING|INVENTORY_FULL|NEED_STORAGE|RECOVERY|STOPPING_FARM|ERROR|",
         "NEED_STORAGE", "|STOPPING_FARM|RECOVERY|ERROR|",
@@ -5280,7 +5293,6 @@ FarmStateLegacyPhase(farmState) {
         : farmState = "FARMING" ? "working"
         : farmState = "WASH_SETTLING" ? "wash_settle"
         : farmState = "WASH_CORRECTING" ? "wash_correct"
-        : farmState = "WASH_VERIFYING" ? "wash_verify"
         : farmState = "CHECKING_INVENTORY" ? "capacity_check"
         : farmState = "INVENTORY_CHECK" ? "capacity_check"
         : farmState = "NEED_STORAGE" ? "capacity_full"
@@ -5379,10 +5391,64 @@ EmitAutomationAlert(kind, message := "") {
     if isUiTestRun || HasCommandLineArgument("--validate")
         return true
     played := false
-    try played := DllCall("user32\MessageBeep", "UInt", soundType, "Int") != 0
+    if kind = "wash_complete" {
+        try TrayTip message, "AI採掘機", 1
+        played := SpeakAutomationMessage(message)
+    }
+    if !played
+        try played := DllCall("user32\MessageBeep", "UInt", soundType, "Int") != 0
     WriteDiagnostic("ALERT kind=" kind " played=" (played ? 1 : 0)
         " message=" DiagnosticToken(message))
     return played
+}
+
+SpeakAutomationMessage(message) {
+    global State, isUiTestRun
+    if !message || isUiTestRun || HasCommandLineArgument("--validate")
+        return false
+    try {
+        voice := IsObject(State.speechVoice)
+            ? State.speechVoice : ComObject("SAPI.SpVoice")
+        if !State.speechVoiceConfigured {
+            preferredVoice := 0
+            japaneseVoice := 0
+            voices := voice.GetVoices()
+            Loop voices.Count {
+                token := voices.Item(A_Index - 1)
+                language := ""
+                gender := ""
+                description := ""
+                try language := StrLower(token.GetAttribute("Language"))
+                try gender := StrLower(token.GetAttribute("Gender"))
+                try description := StrLower(token.GetDescription())
+                isJapanese := InStr(language, "411")
+                    || InStr(description, "japanese")
+                    || InStr(description, "haruka")
+                    || InStr(description, "ayumi")
+                if !isJapanese
+                    continue
+                if !IsObject(japaneseVoice)
+                    japaneseVoice := token
+                if gender = "female" || InStr(description, "haruka")
+                    || InStr(description, "ayumi") {
+                    preferredVoice := token
+                    break
+                }
+            }
+            selectedVoice := IsObject(preferredVoice)
+                ? preferredVoice : japaneseVoice
+            if IsObject(selectedVoice)
+                voice.Voice := selectedVoice
+            State.speechVoice := voice
+            State.speechVoiceConfigured := true
+        }
+        ; SVSFlagsAsync | SVSFPurgeBeforeSpeak: never queue repeated stale lines.
+        voice.Speak(message, 3)
+        return true
+    } catch as err {
+        WriteDiagnostic("VOICE_ALERT_ERROR=" DiagnosticToken(err.Message))
+        return false
+    }
 }
 
 DiagnosticToken(value) {
@@ -5524,7 +5590,6 @@ FarmStateDisplayName(farmState) {
         : farmState = "FARMING" ? "作業中"
         : farmState = "WASH_SETTLING" ? "洗浄後の静止待ち"
         : farmState = "WASH_CORRECTING" ? "洗浄位置を補正"
-        : farmState = "WASH_VERIFYING" ? "洗浄位置を再確認"
         : farmState = "CHECKING_INVENTORY" ? "所持品確認"
         : farmState = "INVENTORY_CHECK" ? "所持品確認"
         : farmState = "NEED_STORAGE" ? "収納が必要"
@@ -5557,7 +5622,9 @@ WorkViewDownModeSupported(mode) {
 }
 
 AutomationAlertSoundType(kind) {
-    return kind = "error" ? 0x10 : kind = "capacity" ? 0x30 : 0
+    return kind = "error" ? 0x10
+        : kind = "capacity" ? 0x30
+        : kind = "wash_complete" ? 0x40 : 0
 }
 
 BackgroundCameraDownRoute(durationMs) {
@@ -6048,8 +6115,7 @@ RunWashingStorageRefillResumeMockTest(cycleCount, &stats) {
             || consumedName != "raw_stone" || consumedCount != 1
             || !InventorySnapshotHasReward(resumed, refilled)
             || !FarmMockWalk(&stateName, "VERIFY_FARM_RESUMED", "FARMING",
-                "WASH_SETTLING", "WASH_CORRECTING", "WASH_VERIFYING",
-                "FARMING")
+                "WASH_SETTLING", "WASH_CORRECTING", "FARMING")
             return false
         stats.rawConsumptions += 1
         stats.verifiedRewards += 1
@@ -10588,6 +10654,14 @@ LearnRawStoneItemFromVerifiedWash(beforeInfo, afterInfo) {
     return candidateName
 }
 
+WashingBatchWasCompleted(beforeSpec, afterSpec, rawStoneItemName) {
+    if !rawStoneItemName
+        return false
+    beforeCount := InventorySpecNameCount(beforeSpec, rawStoneItemName)
+    afterCount := InventorySpecNameCount(afterSpec, rawStoneItemName)
+    return beforeCount > 0 && afterCount = 0
+}
+
 InitializeLocalVehicleRun(expectedGeneration) {
     global State, Config
     State.statusLabel.Text := "作業位置と満重量判定を確認しています"
@@ -11986,7 +12060,7 @@ DepositFailureMessage(result) {
 }
 
 FarmStateNameKnown(farmState) {
-    return InStr("|IDLE|FARMING|WASH_SETTLING|WASH_CORRECTING|WASH_VERIFYING|CHECKING_INVENTORY|INVENTORY_CHECK|NEED_STORAGE|INVENTORY_FULL|"
+    return InStr("|IDLE|FARMING|WASH_SETTLING|WASH_CORRECTING|CHECKING_INVENTORY|INVENTORY_CHECK|NEED_STORAGE|INVENTORY_FULL|"
         . "STOPPING_FARM|LOCATING_TRUCK|MOVING_TO_TRUCK|VERIFY_TRUCK_REACHED|"
         . "OPENING_STORAGE|STORING_OUTPUTS|STORING|VERIFY_STORAGE|"
         . "REFILLING_INPUT|VERIFY_REFILL|LOCATING_FARM|RETURNING_TO_FARM|"
@@ -13272,7 +13346,6 @@ IsActionCompletionBridgeResult(result, expectedMode) {
 IsWashCompletionRecoveryState(farmState) {
     return farmState = "WASH_SETTLING"
         || farmState = "WASH_CORRECTING"
-        || farmState = "WASH_VERIFYING"
 }
 
 ResetWashCompletionRecoveryState() {
@@ -13445,14 +13518,16 @@ RunWashCompletionRecoveryCycle(expectedGeneration, expectedTaskId) {
             return
         }
         WriteDiagnostic("attempt=" attemptId " WASH_SETTLE_DONE")
-        nextState := Config.washForwardCorrection
-            ? "WASH_CORRECTING" : "WASH_VERIFYING"
-        nextReason := Config.washForwardCorrection
-            ? "洗浄後退停止後の前進補正" : "洗浄後退停止後の対象確認"
-        if !TransitionFarmState(nextState, nextReason,
-            expectedGeneration, expectedTaskId)
+        if Config.washForwardCorrection {
+            if !TransitionFarmState("WASH_CORRECTING",
+                "洗浄後退停止後の前進補正", expectedGeneration,
+                expectedTaskId)
+                return
+            ScheduleNext(expectedGeneration, 1)
             return
-        ScheduleNext(expectedGeneration, 1)
+        }
+        ResumeAfterWashCompletionRecovery(expectedGeneration,
+            expectedTaskId, "WASH_SETTLING", attemptId)
         return
     }
 
@@ -13463,122 +13538,54 @@ RunWashCompletionRecoveryCycle(expectedGeneration, expectedTaskId) {
         if !IsCurrentFarmTask(expectedGeneration, expectedTaskId,
             "WASH_CORRECTING")
             return
-        if !TransitionFarmState("WASH_VERIFYING",
-            "洗浄位置補正後の視点・対象確認", expectedGeneration,
-            expectedTaskId)
-            return
-        ScheduleNext(expectedGeneration, 1)
+        ResumeAfterWashCompletionRecovery(expectedGeneration,
+            expectedTaskId, "WASH_CORRECTING", attemptId)
         return
     }
 
-    ; A consumed final raw stone legitimately removes the wash option. Treat that
-    ; inventory fact as the workflow trigger instead of misclassifying the missing
-    ; button as a camera failure and looping in visual recovery.
+}
+
+ResumeAfterWashCompletionRecovery(expectedGeneration, expectedTaskId,
+    expectedState, attemptId) {
+    global State, Config
+    if !IsCurrentFarmTask(expectedGeneration, expectedTaskId, expectedState)
+        return false
+
+    ; The final raw stone legitimately removes the interaction.  Route to the
+    ; existing refill workflow instead of waiting for a button that cannot exist.
     if Config.rawStoneItemName && State.lastRawStoneCount = 0 {
-        WriteDiagnostic("WASH_INPUT_EMPTY_AFTER_SETTLE item="
+        WriteDiagnostic("WASH_INPUT_EMPTY_AFTER_CORRECTION item="
             . Config.rawStoneItemName . " next=CHECKING_INVENTORY")
         ResetWashCompletionRecoveryState()
         if !Config.vehicleStorageEnabled {
             StopAutomationWithFault(
                 "未洗浄の石がなくなりましたが、自動収納が無効なため停止しました",
                 "vehicle", "RAW_STONE_NOT_FOUND")
-            return
+            return false
         }
         State.nextCapacityCheckAt := 0
         if !TransitionFarmState("CHECKING_INVENTORY",
             "未洗浄石0を確認。収納と補充へ移行", expectedGeneration,
             expectedTaskId)
-            return
+            return false
         MaybeHandleVehicleCapacity(expectedGeneration)
-        return
+        return true
     }
 
-    ; Probe before moving the camera. A visible target is already the strongest
-    ; possible view proof, so sending a relative pulse first only accumulates drift.
-    State.statusLabel.Text := "●  補正後の「石を洗う」を確認中"
-    targetReady := ProbeWorkTarget("washing", expectedGeneration)
-    if !IsCurrentFarmTask(expectedGeneration, expectedTaskId,
-        "WASH_VERIFYING")
-        return
-    if targetReady {
-        if !TransitionFarmState("FARMING",
-            "洗浄後の視点・対象再取得を確認", expectedGeneration,
-            expectedTaskId)
-            return
-        ResetWashCompletionRecoveryState()
-        State.targetLostSince := 0
-        State.targetRecoveryAttempts := 0
-        State.statusLabel.Text := "●  石洗い完了。次の洗浄を開始します"
-        WriteDiagnostic("attempt=" attemptId " WASH_RECOVERY_VERIFIED")
-        ScheduleNext(expectedGeneration, 1)
-        return
-    }
-
-    Critical "On"
-    if !IsCurrentFarmTask(expectedGeneration, expectedTaskId,
-        "WASH_VERIFYING") {
-        Critical "Off"
-        return
-    }
-    if !State.targetLostSince
-        State.targetLostSince := MonotonicMs()
-    Critical "Off"
-    MarkWorkViewNoEffect("washing", "wash_post_completion_probe",
-        expectedGeneration)
-    Critical "On"
-    if !IsCurrentFarmTask(expectedGeneration, expectedTaskId,
-        "WASH_VERIFYING") {
-        Critical "Off"
-        return
-    }
-    State.washVerificationAttempts += 1
-    verificationAttempt := State.washVerificationAttempts
-    probeFatal := State.lastTargetProbeFatal
-    probeResult := State.lastTargetProbeResult
-    Critical "Off"
-    WriteDiagnostic("attempt=" attemptId " WASH_VERIFY_MISSING retry="
-        verificationAttempt " fatal=" (probeFatal ? 1 : 0)
-        " result=" DiagnosticToken(probeResult))
-    if probeFatal {
-        ResetWashCompletionRecoveryState()
-        EnterFarmRecovery(expectedGeneration, "FARMING",
-            "wash_post_completion_probe_error")
-        return
-    }
-
-    ; The first observed MISSING may dispatch one camera correction. Commit the
-    ; latch before physical input, then re-probe on the next cycle. Never stack
-    ; additional camera pulses for the same completed washing reward.
-    if !State.washCameraRestoreSent {
-        if !Config.backgroundMode && !IsTargetForeground(expectedGeneration) {
-            State.statusLabel.Text := "●  FiveMを前面にすると洗浄視点を復旧します"
-            MaintainBackgroundWorkView(expectedGeneration, true)
-            return
-        }
-        Critical "On"
-        if !IsCurrentFarmTask(expectedGeneration, expectedTaskId,
-            "WASH_VERIFYING") || State.washCameraRestoreSent {
-            Critical "Off"
-            return
-        }
-        State.washCameraRestoreSent := true
-        Critical "Off"
-        State.statusLabel.Text := "●  洗浄対象が見えないため視点を1回だけ補正中"
-        if !MaintainBackgroundWorkView(expectedGeneration, true)
-            return
-        WriteDiagnostic("attempt=" attemptId " WASH_CAMERA_RESTORE_SENT")
-        ScheduleNext(expectedGeneration, 100)
-        return
-    }
-    if verificationAttempt >= 3 {
-        ResetWashCompletionRecoveryState()
-        EnterFarmRecovery(expectedGeneration, "FARMING",
-            "wash_post_completion_target_missing")
-        return
-    }
-    State.statusLabel.Text := BuildFarmProgressStatus(
-        "●  洗浄対象の再表示を確認中（", verificationAttempt, 3)
-    ScheduleNext(expectedGeneration, 350)
+    ; try-washing owns the next target wait, click and progress observation in one
+    ; CDP session.  A separate probe here only duplicated work and added seconds.
+    if !TransitionFarmState("FARMING",
+        "洗浄後の位置補正完了。次の対象を即時監視", expectedGeneration,
+        expectedTaskId)
+        return false
+    ResetWashCompletionRecoveryState()
+    State.targetLostSince := 0
+    State.targetRecoveryAttempts := 0
+    State.statusLabel.Text := "●  補正完了。次の「" chr(0x77F3)
+        . "を洗う」を待っています"
+    WriteDiagnostic("attempt=" attemptId " WASH_RECOVERY_DIRECT_RESUME")
+    ScheduleNext(expectedGeneration, 1)
+    return true
 }
 
 CompleteVerifiedFarmReward(expectedGeneration, actionMode, completionAt,
@@ -13615,6 +13622,7 @@ CompleteVerifiedFarmReward(expectedGeneration, actionMode, completionAt,
     ; validate the exact frozen attempt before one atomic visible-state commit, so
     ; a late callback from F9 -> F8 cannot increment/discard the new run.
     startWashRecovery := false
+    washBatchCompleted := false
     learnedRawStoneName := ""
     ledgerAddedUnits := 0
     criticalWasOn := EnterMetagameOutboxCritical()
@@ -13662,9 +13670,20 @@ CompleteVerifiedFarmReward(expectedGeneration, actionMode, completionAt,
         ; Learn the real unwashed-stone item id only from one verified washing
         ; transaction. A unique decrease in the before/after snapshots is stronger
         ; evidence than a translated label or a guessed server-specific item name.
-        if actionMode = "washing"
+        if actionMode = "washing" {
             learnedRawStoneName := LearnRawStoneItemFromVerifiedWash(
                 attempt.before, confirmedInfo)
+            if Config.rawStoneItemName {
+                rawStoneCountBefore := InventorySpecNameCount(
+                    attempt.before.items, Config.rawStoneItemName)
+                washBatchCompleted := WashingBatchWasCompleted(
+                    attempt.before.items, confirmedInfo.items,
+                    Config.rawStoneItemName)
+                if washBatchCompleted
+                    WriteDiagnostic("WASH_ALL_INPUTS_CONSUMED item="
+                        Config.rawStoneItemName " before=" rawStoneCountBefore)
+            }
+        }
 
         DiscardPendingFarmAttempt("reward_confirmed")
 
@@ -13717,8 +13736,16 @@ CompleteVerifiedFarmReward(expectedGeneration, actionMode, completionAt,
     }
     ; Timer/input side effects happen after the atomic visible commit. Both paths
     ; revalidate generation ownership, so an intervening F9 cannot touch a new run.
-    if startWashRecovery
-        return BeginWashCompletionRecovery(expectedGeneration, attemptId)
+    if startWashRecovery {
+        recoveryStarted := BeginWashCompletionRecovery(expectedGeneration,
+            attemptId)
+        if washBatchCompleted {
+            State.statusLabel.Text := "●  持っている石を全部洗い終わりました"
+            EmitAutomationAlert("wash_complete",
+                "持ってる石、全部洗い終わったよ")
+        }
+        return recoveryStarted
+    }
     if !IsCurrentRun(expectedGeneration)
         return false
     ScheduleNext(expectedGeneration, 1)

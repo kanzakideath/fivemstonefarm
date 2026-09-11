@@ -20,7 +20,7 @@ npm run build
 {
   "type": "state",
   "revision": 1,
-  "version": "9.1.4",
+  "version": "9.1.5",
   "page": "overview",
   "running": false,
   "registrationActive": false,
