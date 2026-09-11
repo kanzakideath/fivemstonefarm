@@ -1,0 +1,89 @@
+name: EXE-only route validation
+on:
+  push:
+    branches: [fix/exe-only-routes-and-voices]
+    paths: [.github/workflows/exe-only-route-validation.yml]
+permissions:
+  contents: write
+concurrency:
+  group: exe-only-route-validation
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Apply checksum-verified reviewed patch to index
+        shell: python
+        run: |
+          import base64, gzip, hashlib, pathlib, subprocess
+          root=pathlib.Path('scripts/exe-only-repair')
+          encoded=''.join((root/f'patch.part{n:02}').read_text().strip() for n in range(1,5))
+          patch=gzip.decompress(base64.b64decode(encoded,validate=True))
+          expected='2787a0af74f61753fd563634f9d9d9013e7e720b50b5c1ef80dd976015b528a8'
+          if hashlib.sha256(patch).hexdigest()!=expected: raise RuntimeError('Reviewed patch checksum mismatch')
+          path=pathlib.Path('.git/exe-only-repair.patch'); path.write_bytes(patch)
+          if '#Include exe-route-navigation.ahk' not in pathlib.Path('src/mining-auto.ahk').read_text(encoding='utf-8-sig'):
+              subprocess.run(['git','apply','--cached','--check',str(path)],check=True)
+              subprocess.run(['git','apply','--cached',str(path)],check=True)
+              subprocess.run(['git','checkout-index','--all','--force'],check=True)
+          subprocess.run(['git','-c','core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol','diff','--cached','--check'],check=True)
+      - name: Full Windows validation build
+        shell: pwsh
+        timeout-minutes: 18
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force artifacts/exe-only-validation | Out-Null
+          Start-Transcript -Path artifacts/exe-only-validation/validation.txt
+          try {
+            ./scripts/Test-ExeRoutes.ps1
+            ./scripts/Build.ps1 -Version 9.1.8
+            Write-Host 'EXE_ONLY_VALIDATION_OK: static wiring, compiled helper logic, existing regression and executable startup. No real FiveM route test was performed.'
+          } finally { Stop-Transcript }
+      - name: Commit only tested application changes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- src/mining-auto.ahk src/exe-route-navigation.ahk src/local-navigation/LocalNavigation.cs scripts/Build.ps1 scripts/Test-ExeRoutes.ps1 scripts/Test-FarmRecoverySafetyContract.ps1 src/ui-host/Protocol.cs src/ui-web/src/app.js src/ui-web/src/index.html src/ui-web/www/app.js src/ui-web/www/index.html src/ui-web/www/build-info.json
+          git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --cached --check
+          if ($LASTEXITCODE -ne 0) { throw 'Source diff check failed.' }
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 1) {
+            git commit -m 'Implement EXE-only taught walking routes and offline completion voices [skip ci]'
+            if ($LASTEXITCODE -ne 0) { throw 'Source commit failed.' }
+            git push origin HEAD:fix/exe-only-routes-and-voices
+            if ($LASTEXITCODE -ne 0) { throw 'Source push failed; branch moved.' }
+          } elseif ($LASTEXITCODE -ne 0) { throw 'Could not inspect changes.' }
+          $head = (& git rev-parse HEAD).Trim()
+          $hash = (Get-FileHash dist/ai-miner-win-x64.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "source_commit=$head`nsha256=$hash`nEXE-only 9.1.8 TEST CANDIDATE. No server resource required. Initial per-mode teaching and automatic trial are mandatory. No live FiveM validation." | Set-Content artifacts/exe-only-validation/CANDIDATE.txt -Encoding utf8
+          git archive --format=zip HEAD -o artifacts/exe-only-validation/tested-source.zip
+          if ($LASTEXITCODE -ne 0) { throw 'Source archive failed.' }
+      - name: Retain validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: exe-only-validation-evidence
+          path: |
+            artifacts/exe-only-validation/
+            build/staging/*.txt
+            build/staging/*.log
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Retain EXE-only candidate and setup guide
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: exe-only-routes-9.1.8-candidate
+          path: |
+            dist/ai-miner-win-x64.exe
+            docs/EXE_ONLY_ROUTES.md
+            src/audio/CREDITS.txt
+            artifacts/exe-only-validation/CANDIDATE.txt
+          retention-days: 7
+          if-no-files-found: error
