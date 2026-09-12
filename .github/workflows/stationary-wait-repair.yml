@@ -2,7 +2,7 @@ name: Validate stationary wait and resume
 on:
   push:
     branches: [fix/stationary-only-9.1.15]
-    paths: [.github/workflows/stationary-wait-repair.yml, scripts/Apply-StationaryWait.py]
+    paths: [.github/workflows/stationary-wait-repair.yml, scripts/Apply-StationaryWait.py, scripts/Finalize-StationaryWait.py]
 permissions:
   contents: write
 concurrency:
@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - name: Apply complete hash-checked delta
+      - name: Apply complete hash-checked delta and final UI corrections
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -25,6 +25,8 @@ jobs:
           New-Item -ItemType Directory -Force artifacts/stationary-wait | Out-Null
           python scripts/Apply-StationaryWait.py
           if($LASTEXITCODE -ne 0){throw 'Source delta did not verify.'}
+          python scripts/Finalize-StationaryWait.py
+          if($LASTEXITCODE -ne 0){throw 'Final source boundaries did not verify.'}
           git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --check
           if($LASTEXITCODE -ne 0){throw 'Diff failed.'}
       - name: Full build, production wait loop and update compatibility
@@ -49,7 +51,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $temporary=@('scripts/Apply-StationaryWait.py','scripts/stationary-patch-1.b64','scripts/stationary-patch-2.b64','.github/workflows/stationary-review-source.yml','.github/workflows/stationary-wait-repair.yml')
+          $temporary=@('scripts/Apply-StationaryWait.py','scripts/Finalize-StationaryWait.py','scripts/stationary-patch-1.b64','scripts/stationary-patch-2.b64','.github/workflows/stationary-review-source.yml','.github/workflows/stationary-wait-repair.yml')
           $temporary += 0..6 | ForEach-Object {"scripts/stationary-wait-$_.b64"}
           foreach($file in $temporary){if(Test-Path -LiteralPath $file){Remove-Item -LiteralPath $file}}
           git config user.name 'github-actions[bot]'
@@ -73,7 +75,6 @@ jobs:
             artifacts/update-startup/
             build/staging/*.txt
             build/staging/*.log
-            scripts/stationary-wait-*.b64
           retention-days: 14
           if-no-files-found: warn
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
