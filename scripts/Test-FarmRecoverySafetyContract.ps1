@@ -427,5 +427,5 @@ Assert-Contract ($washModule.Contains('IsCurrentRun(generation)') -and
     $washModule.Contains('Config.washForwardCorrection && Config.vehicleStorageEnabled') -and
     $washModule.Contains('ExeStorageMethod("washing") = "stationary"') -and
     $washModule.Contains('ExeRouteBindingValid("washing", State.serverEpoch)') -and
-    $washModule.Contains('return "wash-maintain"') -and $washModule.Contains('return "wash-correct"')) `
+    $washModule.Contains('return "wash-service"') -and $washModule.Contains('return "wash-correct"')) `
     'Precise nearby correction requires active generation, enabled correction, storage and verified stationary binding.'
