@@ -1,0 +1,79 @@
+name: Verify washing task readiness
+on:
+  push:
+    branches: [fix/wash-task-readiness-9.1.14]
+    paths: [.github/workflows/wash-readiness-repair.yml]
+permissions:
+  contents: write
+concurrency:
+  group: wash-readiness-9.1.14
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Apply hash-checked source changes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          git merge-base --is-ancestor c917f9f76d656ecb73ec06d188cd0ad7ec4b6dc7 HEAD
+          if($LASTEXITCODE -ne 0){throw 'Wrong source baseline.'}
+          python scripts/Apply-WashReadiness.py
+          if($LASTEXITCODE -ne 0){throw 'Patch failed; do not change concurrent source.'}
+          git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --check
+          if($LASTEXITCODE -ne 0){throw 'Diff check failed.'}
+      - name: Full compiled build and updater compatibility tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force artifacts/wash-readiness | Out-Null
+          Start-Transcript artifacts/wash-readiness/build.txt
+          try { ./scripts/Build.ps1 -Version 9.1.14 } finally { Stop-Transcript }
+      - name: Actual Windows input, cancellation and diagnostic export
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          ./scripts/Test-WashPositionDesktop.ps1 -OutputDirectory artifacts/wash-readiness
+          ./scripts/Test-SupportExport.ps1
+      - name: Retain tested source and remove temporary patch tooling
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $paths=@()
+          foreach($f in Get-ChildItem scripts/wash-repair/*.json){$paths+=@((Get-Content $f -Raw | ConvertFrom-Json -AsHashtable).Keys)}
+          Remove-Item -Recurse scripts/wash-repair
+          Remove-Item scripts/Apply-WashReadiness.py,.github/workflows/wash-readiness-source.yml,.github/workflows/wash-readiness-repair.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- @paths scripts/wash-repair scripts/Apply-WashReadiness.py .github/workflows/wash-readiness-source.yml .github/workflows/wash-readiness-repair.yml
+          git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --cached --check
+          if($LASTEXITCODE -ne 0){throw 'Staged diff failed.'}
+          git commit -m 'Use bounded return and live task readiness for nearby washing'
+          if($LASTEXITCODE -ne 0){throw 'Commit failed.'}
+          git push origin HEAD:fix/wash-task-readiness-9.1.14
+          if($LASTEXITCODE -ne 0){throw 'Branch moved; do not force push.'}
+          git rev-parse HEAD | Set-Content artifacts/wash-readiness/SOURCE.txt
+          git archive --format=zip -o artifacts/wash-readiness/tested-source.zip HEAD
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: wash-readiness-evidence
+          path: |
+            artifacts/wash-readiness/
+            artifacts/update-startup/
+            artifacts/support-export/
+            build/staging/*.txt
+            build/staging/*.log
+          retention-days: 14
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: success()
+        with:
+          name: wash-readiness-candidate
+          path: dist/ai-miner-win-x64.exe
+          retention-days: 14
+          if-no-files-found: error
