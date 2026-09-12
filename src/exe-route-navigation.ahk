@@ -267,7 +267,13 @@ RequireExeRouteForRun(expectedGeneration) {
     if !Config.vehicleStorageEnabled
         return true
     if !ExeRouteBindingValid(State.runMode, State.serverEpoch) {
-        StopAutomationWithFault("この作業のEXE徒歩ルートが未登録・未試走か、接続が変わりました。車両画面の「徒歩ルート・音声設定」で往復を教え、自動試走してください", "vehicle", "LOCAL_ROUTE_SETUP_REQUIRED")
+        ; Registered washing cargo beside the work spot can be verified without
+        ; a walking recording. No automatic movement or item transfer is used.
+        if TryConfirmNearbyWashingForRun(expectedGeneration)
+            return IsCurrentRun(expectedGeneration)
+        if !IsCurrentRun(expectedGeneration)
+            return false
+        StopAutomationWithFault("収納先の近接確認／徒歩試走が未完了です。荷台前では「この位置で近接収納を確認」、離れた車両では往復記録・試走を行ってください", "vehicle", "LOCAL_ROUTE_SETUP_REQUIRED")
         ShowPage("routes")
         return false
     }

@@ -268,6 +268,7 @@ $stagedMain = Join-Path $stageRoot 'mining-auto.ahk'
 Copy-Item -LiteralPath $mainSource -Destination $stagedMain -Force
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'exe-route-navigation.ahk') -Destination $stageRoot -Force
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'wash-position.ahk') -Destination $stageRoot -Force
+Copy-Item -LiteralPath (Join-Path $sourceRoot 'nearby-wash.ahk') -Destination $stageRoot -Force
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'audio') -Destination $stageRoot -Recurse -Force
 $assetRoot = Join-Path $sourceRoot 'assets'
 if (Test-Path -LiteralPath $assetRoot -PathType Container) {

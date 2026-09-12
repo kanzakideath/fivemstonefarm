@@ -19,14 +19,17 @@ $bridgeType = $assembly.GetType('CdpBridge', $true)
 $mainMethod = $bridgeType.GetMethod('Main', [Reflection.BindingFlags]'Public,Static')
 $targetMethod = $bridgeType.GetMethod('WashTargetExpression', $bindingFlags)
 $progressMethod = $bridgeType.GetMethod('WorkProgressExpression', $bindingFlags)
+$nearbyMethod = $bridgeType.GetMethod('NearbyWashControlsExpression', $bindingFlags)
 $actionType = $assembly.GetType('CdpBridge+WorkAction', $true)
-if (-not $mainMethod -or -not $targetMethod -or -not $progressMethod) {
+if (-not $mainMethod -or -not $targetMethod -or -not $progressMethod -or -not $nearbyMethod) {
     throw 'The work DOM expression methods were not found in the bridge.'
 }
 
 # Every mutating work operation and completion monitor must be tied to the
 # captured target/inventory/progress three-frame epoch.
 foreach ($invalidCall in @(
+    [string[]]@('probe-wash-storage', 'unused-result.txt'),
+    [string[]]@('probe-wash-storage', 'unused-result.txt', 'invalid-epoch'),
     [string[]]@('try-mining', 'unused-result.txt'),
     [string[]]@('try-washing', 'unused-result.txt'),
     [string[]]@('try-gold', 'unused-result.txt'),
@@ -51,6 +54,7 @@ $payloadPath = Join-Path ([IO.Path]::GetTempPath()) `
     ('ai-miner-wash-dom-' + [Guid]::NewGuid().ToString('N') + '.json')
 try {
     $payload = [ordered]@{
+        nearby = [string]$nearbyMethod.Invoke($null, [object[]]@())
         probe = [string]$targetMethod.Invoke($null, [object[]]@($false))
         click = [string]$targetMethod.Invoke($null, [object[]]@($true))
         progressMine = [string]$progressMethod.Invoke($null, [object[]]@(

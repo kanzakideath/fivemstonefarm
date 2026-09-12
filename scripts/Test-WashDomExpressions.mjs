@@ -309,3 +309,31 @@ console.log('Work DOM expression tests passed.');
   assert(cargo.hit.clicked === 0, 'Hovered nearby cargo must never be clicked by washing.');
   assert(fixture.first.hit.clicked + fixture.second.hit.clicked === 1, 'Exactly one wash must be selected.');
 }
+
+// Paired task-area evidence must not click, confuse a partial match, or accept
+// multiple cargo options. Washing may disappear legitimately at raw stone 0.
+for (const label of ['ストレージを開く', 'トランクを開く', '荷台を開く']) {
+  const f = targetFixture();
+  const cargo = washOption(label, 300, { states: ['hover'] });
+  f.root.append(cargo.hit);
+  assert(evaluate(expressions.nearby, f.document) === 'PRESENT WASH_STORAGE', 'Both exact usable controls must be accepted.');
+  assert(cargo.hit.clicked === 0 && f.first.hit.clicked === 0 && f.second.hit.clicked === 0, 'Probe must never click.');
+  f.first.hit.style.display = f.second.hit.style.display = 'none';
+  assert(evaluate(expressions.nearby, f.document) === 'PRESENT STORAGE_ONLY', 'Raw stone empty must leave a refill-only proof.');
+  cargo.hit.attributes['aria-disabled'] = 'true';
+  assert(evaluate(expressions.nearby, f.document) === 'MISSING WASH_STORAGE', 'Disabled cargo cannot authorize continuation.');
+}
+{
+  const f = targetFixture();
+  assert(evaluate(expressions.nearby, f.document) === 'MISSING WASH_STORAGE', 'Wash without cargo is not nearby proof.');
+  f.root.append(washOption('ストレージを開く', 300).hit, washOption('ストレージを開く', 70).hit);
+  assert(evaluate(expressions.nearby, f.document) === 'AMBIGUOUS WASH_STORAGE', 'Two cargo targets must be rejected.');
+  f.root.style.display = 'none';
+  assert(evaluate(expressions.nearby, f.document) === 'MISSING WASH_STORAGE', 'Hidden interaction list must be rejected.');
+}
+{
+  const f = targetFixture();
+  f.root.append(washOption('インベントリを開く', 300).hit);
+  assert(evaluate(expressions.nearby, f.document) === 'MISSING WASH_STORAGE', 'A generic inventory control is not registered cargo.');
+}
+console.log('Paired nearby wash/storage DOM probes passed (no clicks or item transfers).');
