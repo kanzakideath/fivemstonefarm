@@ -50,7 +50,7 @@
   const fixtureState = {
     ...baseState,
     revision: 1,
-    version: '9.1.9',
+    version: '9.1.10',
     controls: {
       overviewSubtitle: { text: modeDetails.gold.subtitle },
       runStatus: { text: '停止中', tone: 'neutral' },
@@ -147,7 +147,7 @@
     'vehicle-enabled', 'capacity-value', 'capacity-fill', 'capacity-detail',
     'companion-status', 'companion-detail', 'vehicle-register', 'vehicle-register-label',
     'vehicle-delete', 'vehicle-route', 'overview-route', 'overview-route-summary',
-    'route-mode-hint', 'route-feedback', 'route-register', 'route-teach', 'route-trial',
+    'route-mode-hint', 'route-feedback', 'route-register', 'route-teach', 'route-trial', 'route-stationary',
     'route-enable', 'route-return-home', 'route-voice', 'start-hotkey', 'stop-hotkey', 'setting-background', 'setting-hide',
     'setting-correction', 'setting-auto-eat', 'food-key', 'setting-auto-update',
     'minimum-free-weight', 'storage-trigger-percent', 'estimated-reward-weight',
@@ -478,7 +478,7 @@
   function renderRoutes() {
     const route = state.routes || {};
     const phaseLabels = {
-      departure: '徒歩移動を開始。収納はまだ確認していません。',
+      departure: '収納先への移動／近接確認を開始。収納はまだ確認していません。',
       truck_arrived: '登録した荷台IDを確認。収納結果を確認中。',
       deposit_verified: '収納結果を確認済み。まだ帰還・作業再開は未確認。',
       refill_verified: '未洗浄石の補充を確認済み。帰還を確認中。',
@@ -486,6 +486,8 @@
       resumed_verified: '収納・必要な補充・帰還・次の実報酬まで確認しました。',
       stopped: '途中で停止。収納サイクル完了とは扱いません。',
     };
+    document.getElementById('route-wash-position').textContent = route.washFeedback
+      || '未計測。FiveMを前面にして石洗いを開始してください。';
     const cycle = route.cycle;
     const evidenceText = cycle ? phaseLabels[cycle.phase] || '未確認の実行状態です。' : 'まだ実行記録はありません。試走では収納しません。';
     document.getElementById('route-cycle-status').textContent = evidenceText + (cycle?.reason ? ` 理由：${cycle.reason}` : '');
@@ -493,11 +495,12 @@
     const hasVehicle = route.hasVehicle === true;
     const recorded = route.recorded === true;
     const trial = route.trialSaved === true;
+    const stationary = route.method === 'stationary';
     const enabled = booleanOf(control('vehicleEnabled', 'vehicleEnabledControl'));
     const statuses = [
       ['vehicle', hasVehicle, hasVehicle ? '荷台登録済み' : '未登録'],
-      ['record', recorded, recorded ? '往復記録あり' : '未記録'],
-      ['trial', trial, trial ? '前回の試走記録あり' : '未試走'],
+      ['record', recorded, recorded ? (stationary ? '近接モード' : '往復記録あり') : '未設定'],
+      ['trial', trial, trial ? (stationary ? '近接確認済み' : '前回の試走記録あり') : '未確認'],
       ['enable', enabled, enabled ? 'ON（開始時再確認）' : 'OFF'],
     ];
     for (const [name, done, text] of statuses) {
@@ -508,13 +511,15 @@
       button.setAttribute('aria-pressed', String(button.dataset.routeMode === state.actionMode));
       button.disabled = busy;
     });
-    setText(elements.routeModeHint, `現在の設定対象：${modeDetails[state.actionMode].label}。ルートは作業ごとに別保存です。`, false);
+    setText(elements.routeModeHint, `現在の設定対象：${modeDetails[state.actionMode].label}。方式：${stationary ? '近接収納（歩かない）' : '徒歩ルート'}。作業ごとに別保存です。`, false);
     setText(elements.routeFeedback, route.feedback || (busy
       ? '作業または登録中です。中止はF9。終了後に設定を変更できます。'
       : '上から順番に設定してください。荷台の登録だけでは徒歩移動は有効になりません。'), false);
-    setText(elements.overviewRouteSummary, trial ? '往復の試走記録あり · 接続は開始時に再確認' : recorded ? '往復記録あり · 次は自動試走' : '未設定 · 車両登録 → 往復記録 → 自動試走', false);
+    setText(elements.overviewRouteSummary, trial ? (stationary ? '近接収納の確認済み · 移動せず毎回荷台を確認' : '往復の試走記録あり · 接続は開始時に再確認') : recorded ? '往復記録あり · 次は自動試走' : '未設定 · 車両登録 → 往復記録 → 自動試走', false);
     elements.routeRegister.disabled = busy;
     elements.routeTeach.disabled = busy || !hasVehicle;
+    elements.routeStationary.disabled = busy || !hasVehicle;
+    elements.routeTrial.textContent = stationary ? '近接状態を再確認（収納なし）' : '自動試走を開始（収納なし）';
     elements.routeTrial.disabled = busy || !recorded || !hasVehicle;
     elements.routeEnable.disabled = busy || (!enabled && (!trial || !hasVehicle));
     elements.routeEnable.textContent = enabled ? '自動収納・補充をOFF' : '自動収納・補充をON';
@@ -897,7 +902,7 @@
       next.controls.companionDetail = { text: 'FiveMで目的の車両ストレージを一度開いてください。' };
       next.controls.vehicleRegister = { text: 'ストレージを待っています', enabled: false };
     }
-    if (action === 'route.teach' || action === 'route.trial' || action === 'vehicle.route') {
+    if (action === 'route.teach' || action === 'route.trial' || action === 'route.stationary' || action === 'vehicle.route') {
       next.routes = { ...(next.routes || {}), feedback: '画面プレビューです。実際の記録・試走・別ウィンドウはWindows版EXEで行います。' };
     }
     if (action === 'vehicle.delete') {
@@ -971,6 +976,7 @@
     elements.overviewRoute.addEventListener('click', openRoutes);
     elements.routeRegister.addEventListener('click', () => sendAction('vehicle.register'));
     elements.routeTeach.addEventListener('click', () => sendAction('route.teach', { mode: state.actionMode }));
+    elements.routeStationary.addEventListener('click', () => sendAction('route.stationary', { mode: state.actionMode }));
     elements.routeTrial.addEventListener('click', () => sendAction('route.trial', { mode: state.actionMode }));
     elements.routeEnable.addEventListener('click', () => sendAction('vehicle.toggle', { enabled: !booleanOf(control('vehicleEnabled', 'vehicleEnabledControl')) }));
     elements.routeVoice.addEventListener('click', () => sendAction('vehicle.route'));

@@ -20,7 +20,9 @@ internal sealed class LocalNavigation : Form
     internal sealed class Segment { public List<Sample> samples = new List<Sample>(); public string image; }
     internal sealed class Route
     {
-        public int schema = 1;
+        public int schema = 2;
+        public string cameraPolicy = "recorded-view";
+        public string recordedAtUtc;
         public int width;
         public int height;
         public int down;
@@ -43,7 +45,9 @@ internal sealed class LocalNavigation : Form
     private readonly Label keyGuide = new Label();
     private readonly Panel progressTrack = new Panel();
     private readonly Panel progressFill = new Panel();
-    private long checkpointSavedAt;
+    private long checkpointSavedAt, lastOverlayAt;
+    private bool awaitingStart;
+    private int previousPhysicalMask;
     private int displayedSegment;
     private readonly bool overlayPreview;
     private readonly List<object> diagnosticEvents = new List<object>();
@@ -53,7 +57,7 @@ internal sealed class LocalNavigation : Form
     private Route route;
     private long lastTick, idleSince, startedAt;
     private int rawX, rawY, segmentMs, heldMask;
-    private bool recording, finishing, injecting, playing, manualOverride;
+    private bool recording, finishing, playing, manualOverride;
     private bool lastF6, lastF7;
     private HookCallback keyboardCallback, mouseCallback;
     private IntPtr keyboardHook, mouseHook;
@@ -137,10 +141,12 @@ internal sealed class LocalNavigation : Form
     }
     private void UpdateOverlay()
     {
+        if (lastOverlayAt > 0 && clock.ElapsedMilliseconds - lastOverlayAt < 100) return;
+        lastOverlayAt = clock.ElapsedMilliseconds;
         string directory = Path.GetFileName(Path.GetDirectoryName(path));
         string work = directory == "washing" ? "石洗い" : directory == "gold" ? "砂金取り" : "石掘り";
         string leg = IsReturnLeg() ? "復路 / 荷台 → 同じ作業現場" : "往路 / 作業現場 → 登録した荷台";
-        heading.Text = work + " / " + (mode == "record" ? "記録中 / " : "自動徒歩 / ") + leg;
+        heading.Text = work + " / " + (mode == "record" ? (awaitingStart ? "準備 / " : "記録中 / ") : "自動徒歩 / ") + leg;
         int count = route == null ? 0 : route.segments.Count;
         double fraction;
         if (mode == "record")
@@ -150,7 +156,8 @@ internal sealed class LocalNavigation : Form
             progressLabel.Text = (justSaved ? "照合点を保存しました  ·  " : "照合点 " + count + " 個  ·  ")
                 + "この区間 " + (segmentMs / 1000.0).ToString("0.0") + " 秒 / 4 秒目安";
             progressFill.BackColor = segmentMs >= 3200 ? Color.FromArgb(247, 192, 95) : Color.FromArgb(82, 185, 222);
-            keyGuide.Text = "W A S D：徒歩   F6：照合点   F7：停止して片道終了   F9：中止";
+            keyGuide.Text = awaitingStart ? "F6：今の視点で記録開始   F9：中止（視点は自動で動かしません）"
+                : "W A S D：徒歩   F6：照合点   F7：停止して片道終了   F9：中止";
         }
         else
         {
@@ -191,18 +198,17 @@ internal sealed class LocalNavigation : Form
             UpdateOverlay();
             if (mode == "record")
             {
-                for (int seconds = 3; seconds >= 1; seconds--)
-                {
-                    label.Text = seconds + "秒後に記録を開始します。今は動かずに待ってください。\n矢印は手順の案内です。実際の車両の方向を示すものではありません。";
-                    Wait(1000);
-                }
-                NormalisePitch();
-                byte[] start = CaptureScenery(); RequireTexture(start);
-                route = new Route { width = r.right, height = r.bottom, down = down, start = Convert.ToBase64String(start) };
+                // Recording is passive. No camera or keyboard injection is permitted.
+                awaitingStart = true;
+                byte[] start = WaitForStartFrame();
+                awaitingStart = false;
+                route = new Route { width = r.right, height = r.bottom, down = down,
+                    recordedAtUtc = DateTime.UtcNow.ToString("o"), start = Convert.ToBase64String(start) };
                 RAWINPUTDEVICE[] devices = { new RAWINPUTDEVICE { page = 1, usage = 2, flags = 0x100, window = Handle } };
                 if (!RegisterRawInputDevices(devices, 1, (uint)Marshal.SizeOf(typeof(RAWINPUTDEVICE))))
                     throw new InvalidOperationException("RAW_INPUT_UNAVAILABLE");
                 rawX = rawY = 0; lastTick = clock.ElapsedMilliseconds; startedAt = lastTick; idleSince = 0;
+                previousPhysicalMask = 0; lastF6 = Key(0x75); lastF7 = Key(0x76);
                 recording = true; timer.Start();
             }
             else
@@ -231,16 +237,21 @@ internal sealed class LocalNavigation : Form
             Guard();
             long now = clock.ElapsedMilliseconds;
             int elapsed = (int)(now - lastTick); lastTick = now;
-            if (elapsed > 150) throw new InvalidOperationException("RECORDING_LAG_RERECORD");
+            int currentMask = ReadPhysicalMask();
+            // Idle delays contain no movement to lose. Motion delays remain unsafe.
+            if (elapsed > 150 && (previousPhysicalMask != 0 || currentMask != 0 || rawX != 0 || rawY != 0))
+                throw new InvalidOperationException("RECORDING_LAG_RERECORD");
+            elapsed = Math.Max(1, Math.Min(150, elapsed));
             if (now - startedAt > 180000) throw new InvalidOperationException("RECORDING_TIMEOUT");
             if (Key(0x10) || Key(0x11) || Key(0x20) || Key(0x45) || Key(0x01) || Key(0x02))
                 throw new InvalidOperationException("RECORD_WALK_ONLY_NO_SPRINT_OR_INTERACTION");
-            int mask = ReadPhysicalMask(); int x = rawX, y = rawY; rawX = rawY = 0;
+            int mask = currentMask; int heldDuringInterval = previousPhysicalMask; previousPhysicalMask = mask;
+            int x = rawX, y = rawY; rawX = rawY = 0;
             bool f6 = Key(0x75), f7 = Key(0x76);
             bool end = f7 && !lastF7, checkpoint = f6 && !lastF6; lastF6 = f6; lastF7 = f7;
             if (elapsed > 0 && (pending.Count > 0 || mask != 0 || x != 0 || y != 0))
             {
-                pending.Add(new Sample { ms = elapsed, mask = mask, dx = x, dy = y }); segmentMs += elapsed;
+                pending.Add(RecordedInterval(elapsed, heldDuringInterval, x, y)); segmentMs += elapsed;
             }
             if (mask != 0 || x != 0 || y != 0) idleSince = 0;
             else if (idleSince == 0) idleSince = now;
@@ -276,19 +287,20 @@ internal sealed class LocalNavigation : Form
             }
             if (pending.Count == 0) return;
             if (segmentMs > MaximumSegmentMs) throw new InvalidOperationException("CHECKPOINT_SEGMENT_TOO_LONG");
-            NormalisePitch(); byte[] image = CaptureScenery(); RequireTexture(image);
+            byte[] image = CaptureScenery(); RequireTexture(image);
+            if (ReadPhysicalMask() != 0) throw new InvalidOperationException("RECORDING_MOVED_DURING_CHECKPOINT");
             var segment = new Segment { samples = new List<Sample>(pending), image = Convert.ToBase64String(image) };
             route.segments.Add(segment);
             checkpointSavedAt = clock.ElapsedMilliseconds;
             UpdateOverlay();
             if (route.segments.Count > 40) throw new InvalidOperationException("TOO_MANY_CHECKPOINTS");
-            pending.Clear(); segmentMs = 0; rawX = rawY = 0; idleSince = 0; lastTick = clock.ElapsedMilliseconds;
+            pending.Clear(); segmentMs = 0; rawX = rawY = 0; previousPhysicalMask = 0; idleSince = 0; lastTick = clock.ElapsedMilliseconds;
         }
         finally { finishing = false; }
     }
     protected override void WndProc(ref Message message)
     {
-        if (message.Msg == 0x00FF && recording && !finishing && !injecting && GetForegroundWindow() == target)
+        if (message.Msg == 0x00FF && recording && !finishing && GetForegroundWindow() == target)
         {
             uint size = 0; uint header = (uint)(IntPtr.Size == 8 ? 24 : 16);
             GetRawInputData(message.LParam, 0x10000003, IntPtr.Zero, ref size, header);
@@ -355,7 +367,7 @@ internal sealed class LocalNavigation : Form
     }
     private void Align(byte[] reference)
     {
-        ReleaseKeys(); NormalisePitch();
+        ReleaseKeys(); // Preserve the recorded pitch; never force it to a limit.
         byte[] live = CaptureScenery();
         if (Matches(reference, live)) { Wait(90); if (Matches(reference, CaptureScenery())) return; }
         label.Text = "記録した景色へ視点を合わせています。\n照合できるまでは歩きません。一致しない場合は理由を表示して停止します。";
@@ -363,7 +375,7 @@ internal sealed class LocalNavigation : Form
         long deadline = clock.ElapsedMilliseconds + 16000;
         int totalX = 0, bestX = 0;
         double best = Similarity(reference, live);
-        // Bounded yaw search; pitch is normalised identically during teach/repeat.
+        // Bounded view search only. Recording preserves the user-chosen pitch.
         for (int n = 0; n < 60 && clock.ElapsedMilliseconds < deadline; n++)
         {
             MoveCamera(80, 0); totalX += 80; Wait(90); live = CaptureScenery();
@@ -384,17 +396,42 @@ internal sealed class LocalNavigation : Form
             if (Matches(reference, CaptureScenery())) { Wait(90); if (Matches(reference, CaptureScenery())) return; }
         }
         diagnosticScore = best;
+        int[] offsets = { -40, 40, -80, 80, -120, 120, 0 };
+        int currentY = 0;
+        foreach (int nextY in offsets)
+        {
+            if (clock.ElapsedMilliseconds >= deadline) break;
+            MoveCamera(0, nextY - currentY); currentY = nextY; Wait(110);
+            if (Matches(reference, CaptureScenery())) { Wait(90); if (Matches(reference, CaptureScenery())) return; }
+        }
+        MoveCamera(0, -currentY);
         throw new InvalidOperationException("VISUAL_CHECKPOINT_MISMATCH");
     }
-    private void NormalisePitch()
+    private byte[] WaitForStartFrame()
     {
-        injecting = true;
-        try
+        bool pressed = Key(0x75);
+        label.Text = "歩く方向と周囲の目印が見える視点にしてください。\n準備できたら立ち止まってF6。下向き補正・再起動は行いません。";
+        UpdateOverlay();
+        while (true)
         {
-            for (int n = 0; n < 6; n++) { MoveCamera(0, down * 350); Wait(35); }
-            Wait(150); MoveCamera(0, -down * 320); Wait(180);
+            Wait(25);
+            bool current = Key(0x75);
+            if (current && !pressed)
+            {
+                if (ReadPhysicalMask() != 0) label.Text = "W/A/S/Dを離してからF6を押してください。視点はそのまま保存します。";
+                else
+                {
+                    byte[] frame = CaptureScenery();
+                    if (Matches(frame, frame)) return frame;
+                    label.Text = "この景色は目印が不足しています。\n手動で岩や建物が見える視点にして、もう一度F6。F9で中止。";
+                }
+            }
+            pressed = current; UpdateOverlay();
         }
-        finally { injecting = false; rawX = rawY = 0; }
+    }
+    internal static Sample RecordedInterval(int elapsed, int previousMask, int dx, int dy)
+    {
+        return new Sample { ms = elapsed, mask = previousMask, dx = dx, dy = dy };
     }
     private byte[] CaptureScenery()
     {
@@ -452,7 +489,9 @@ internal sealed class LocalNavigation : Form
     }
     internal static void ValidateRoute(Route value)
     {
-        if (value == null || value.schema != 1 || value.width < 640 || value.width > 16384 || value.height < 360 || value.height > 8640
+        if (value != null && (value.schema != 2 || value.cameraPolicy != "recorded-view"))
+            throw new InvalidOperationException("LEGACY_ROUTE_RERECORD_NO_PITCH");
+        if (value == null || value.width < 640 || value.width > 16384 || value.height < 360 || value.height > 8640
             || Math.Abs(value.down) != 1 || value.segments == null || value.segments.Count < 1 || value.segments.Count > 40)
             throw new InvalidOperationException("ROUTE_SCHEMA_INVALID");
         RequireTexture(Convert.FromBase64String(value.start));
@@ -479,8 +518,6 @@ internal sealed class LocalNavigation : Form
     {
         if (File.Exists(cancelFile)) throw new InvalidOperationException("CANCELLED");
         if (manualOverride || Key(0x78)) throw new InvalidOperationException("MANUAL_OVERRIDE");
-        if (injecting && mode == "record" && ReadPhysicalMask() != 0)
-            throw new InvalidOperationException("RECORDING_MOVED_DURING_CHECKPOINT");
         if (!IsWindow(target) || GetForegroundWindow() != target || IsIconic(target)) throw new InvalidOperationException("GAME_NOT_FOREGROUND");
         uint pid; GetWindowThreadProcessId(target, out pid);
         if (pid != targetPid) throw new InvalidOperationException("GAME_PROCESS_CHANGED");
@@ -497,7 +534,8 @@ internal sealed class LocalNavigation : Form
     private static int ReadPhysicalMask() { return (Key(0x57) ? 1 : 0) | (Key(0x53) ? 2 : 0) | (Key(0x41) ? 4 : 0) | (Key(0x44) ? 8 : 0); }
     private void SetKeys(int mask)
     {
-        Guard(); int[] keys = { 0x57, 0x53, 0x41, 0x44 };
+        RequirePlayback(mode); Guard();
+        int[] keys = { 0x57, 0x53, 0x41, 0x44 };
         for (int n = 0; n < 4; n++) if (((heldMask ^ mask) & (1 << n)) != 0)
         {
             int bit = 1 << n;
@@ -519,9 +557,13 @@ internal sealed class LocalNavigation : Form
         input.data.keyboard = new KEYBDINPUT { scan = (ushort)MapVirtualKey((uint)vk, 0), flags = 8u | (downKey ? 0u : 2u), extra = new IntPtr(InputMarker) };
         if (SendInput(1, new[] { input }, Marshal.SizeOf(typeof(INPUT))) != 1) throw new InvalidOperationException("INPUT_REJECTED");
     }
+    internal static void RequirePlayback(string operation)
+    {
+        if (operation != "play") throw new InvalidOperationException("RECORDING_MUST_NOT_INJECT_INPUT");
+    }
     private void MoveCamera(int x, int y)
     {
-        Guard(); if (x == 0 && y == 0) return;
+        RequirePlayback(mode); Guard(); if (x == 0 && y == 0) return;
         INPUT input = new INPUT { type = 0 };
         input.data.mouse = new MOUSEINPUT { x = x, y = y, flags = 1, extra = new IntPtr(InputMarker) };
         if (SendInput(1, new[] { input }, Marshal.SizeOf(typeof(INPUT))) != 1) throw new InvalidOperationException("INPUT_REJECTED");
@@ -559,7 +601,9 @@ internal sealed class LocalNavigation : Form
                 elapsedMs = clock.ElapsedMilliseconds, result = result, utc = DateTime.UtcNow.ToString("o") });
             if (diagnosticEvents.Count > 64) diagnosticEvents.RemoveAt(0);
             AtomicWrite(path + ".last-run.json", Json.Serialize(new {
-                schema = 1, operation = mode, result = result, events = diagnosticEvents,
+                schema = 2, operation = mode, result = result, events = diagnosticEvents,
+                cameraPolicy = "recorded-view", recordingInputInjectionAllowed = false,
+                clientWidth = route == null ? 0 : route.width, clientHeight = route == null ? 0 : route.height,
                 inputReleased = heldMask == 0,
                 scope = "Local route observations only; not an inventory receipt." }));
         } catch { /* Diagnostics must not prevent input release or cancellation. */ }
@@ -634,6 +678,20 @@ internal sealed class LocalNavigation : Form
             throw new Exception("FINAL_CANCEL_NOT_PROPAGATED");
         } catch (InvalidOperationException) { }
         if (observed != 1) throw new Exception("SUCCESS_AFTER_FINAL_CANCEL");
+        var press = RecordedInterval(16, 0, 4, -3);
+        var held = RecordedInterval(16, 1, 0, 0);
+        if (press.mask != 0 || held.mask != 1 || press.dx != 4 || press.dy != -3)
+            throw new Exception("RECORDING_INTERVAL_ORDER_TEST");
+        route.schema = 1;
+        bool rejectedLegacy = false;
+        try { ValidateRoute(route); } catch (InvalidOperationException error) { rejectedLegacy = error.Message == "LEGACY_ROUTE_RERECORD_NO_PITCH"; }
+        if (!rejectedLegacy) throw new Exception("LEGACY_ROUTE_ACCEPTED");
+        route.schema = 2; ValidateRoute(route);
+        int blocked = 0;
+        foreach (string operation in new[] { "record", "preview", "", null })
+        { try { RequirePlayback(operation); } catch (InvalidOperationException) { blocked++; } }
+        if (blocked != 4) throw new Exception("RECORDING_INJECTION_POLICY_TEST");
+        RequirePlayback("play");
         return "SELFTEST OK";
     }
 

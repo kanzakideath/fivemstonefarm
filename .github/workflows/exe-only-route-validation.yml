@@ -25,6 +25,9 @@ jobs:
           Start-Transcript artifacts/route-ui/windows-validation.txt
           try { ./scripts/Build.ps1 -Version $match.Groups[1].Value } finally { Stop-Transcript }
           if ([IO.File]::ReadAllText('src/ui-web/www/stoneverse-host.js').Contains('process.env.NODE_ENV')) { throw 'Node global leaked into browser bundle.' }
+      - name: Verify production wash capture and native W down-up on a synthetic Windows target
+        shell: pwsh
+        run: ./scripts/Test-WashPositionDesktop.ps1 -OutputDirectory artifacts/route-ui
       - name: Render actual native overlay
         shell: pwsh
         run: |
@@ -51,7 +54,7 @@ jobs:
             python scripts/ui-tests/Test-RouteSetupBrowser.py --output artifacts/route-ui
           }
           if ($LASTEXITCODE -ne 0) { throw 'Browser interaction tests failed.' }
-          Write-Host 'PASS: compiled logic, UI and overlay tests. Live FiveM walking and transfers are NOT tested by CI.'
+          Write-Host 'PASS: compiled logic, real Windows input on a synthetic target, UI and overlay tests. Live FiveM walking and transfers are NOT tested by CI.'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

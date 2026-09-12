@@ -300,3 +300,12 @@ for (const [expressionName, label] of workProgressCases) {
 }
 
 console.log('Work DOM expression tests passed.');
+
+{
+  const fixture = targetFixture();
+  const cargo = washOption('ストレージを開く', 492, {states:['hover']});
+  fixture.root.append(cargo.hit);
+  assert(evaluate(expressions.click, fixture.document) === true, 'Wash must remain selectable beside cargo.');
+  assert(cargo.hit.clicked === 0, 'Hovered nearby cargo must never be clicked by washing.');
+  assert(fixture.first.hit.clicked + fixture.second.hit.clicked === 1, 'Exactly one wash must be selected.');
+}

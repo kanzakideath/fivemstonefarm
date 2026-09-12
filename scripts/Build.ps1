@@ -267,6 +267,7 @@ if (-not (Test-Path -LiteralPath $appIcon -PathType Leaf)) {
 $stagedMain = Join-Path $stageRoot 'mining-auto.ahk'
 Copy-Item -LiteralPath $mainSource -Destination $stagedMain -Force
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'exe-route-navigation.ahk') -Destination $stageRoot -Force
+Copy-Item -LiteralPath (Join-Path $sourceRoot 'wash-position.ahk') -Destination $stageRoot -Force
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'audio') -Destination $stageRoot -Recurse -Force
 $assetRoot = Join-Path $sourceRoot 'assets'
 if (Test-Path -LiteralPath $assetRoot -PathType Container) {
@@ -339,6 +340,9 @@ $bridgeOutput = Join-Path $stageRoot 'AI採掘機_Background.exe'
 $updaterOutput = Join-Path $stageRoot 'AI採掘機_Updater.exe'
 Invoke-CSharpBuild -Source $bridgeSource -Output $bridgeOutput
 Invoke-CSharpBuild -Source $updaterSource -Output $updaterOutput
+$washPositionOutput = Join-Path $stageRoot 'WashPosition.exe'
+Invoke-CSharpBuild -Source (Join-Path $sourceRoot 'wash-position\WashPosition.cs') -Output $washPositionOutput
+Invoke-CapabilitySmokeTest -Executable $washPositionOutput -Expected 'SELFTEST OK' -Mode 'self-test'
 $localNavOutput = Join-Path $stageRoot 'LocalNavigation.exe'
 Invoke-CSharpBuild -Source (Join-Path $sourceRoot 'local-navigation\LocalNavigation.cs') -Output $localNavOutput
 Invoke-CapabilitySmokeTest -Executable $localNavOutput -Expected 'SELFTEST OK' -Mode 'self-test'
@@ -684,7 +688,9 @@ if (Test-Path -LiteralPath $smokeDiagnosticPath) {
     [System.Text.UTF8Encoding]::new($false))
 try {
     foreach ($testMode in @('--validate', '--smoke-test')) {
-        $testProcess = Start-Process -FilePath $outputExe -ArgumentList $testMode -PassThru -WindowStyle Hidden
+        $testStdout = Join-Path $stageRoot ($testMode.TrimStart('-') + '.stdout.log')
+        $testStderr = Join-Path $stageRoot ($testMode.TrimStart('-') + '.stderr.log')
+        $testProcess = Start-Process -FilePath $outputExe -ArgumentList $testMode -PassThru -WindowStyle Hidden -RedirectStandardOutput $testStdout -RedirectStandardError $testStderr
         # A cold WebView2 profile may consume most of the app's own 27-second
         # handshake + smoke window on slower PCs. Keep validation strict but give
         # the full UI round-trip enough wall-clock headroom.
@@ -694,7 +700,9 @@ try {
             throw "Compiled application $testMode timed out."
         }
         if ($testProcess.ExitCode -ne 0) {
-            throw "Compiled application $testMode failed with exit code $($testProcess.ExitCode)."
+            $detail = if (Test-Path $testStderr) { Get-Content $testStderr -Raw } else { '' }
+            throw "Compiled application $testMode failed with exit code $($testProcess.ExitCode): $detail"
+
         }
         if (-not (Test-Path -LiteralPath $smokeDiagnosticPath -PathType Leaf) -or
             [System.IO.File]::ReadAllText($smokeDiagnosticPath) -cne
