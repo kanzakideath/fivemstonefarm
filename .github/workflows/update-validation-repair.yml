@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - name: Apply narrow fix to verified baseline
+      - name: Apply narrow fix and align deterministic UI version
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -49,7 +49,7 @@ jobs:
           Remove-Item scripts/Apply-UpdateValidationFix.py,.github/workflows/update-validation-repair.yml,.github/workflows/update-startup-diagnosis.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- src/mining-auto.ahk README.md src/README.md 'docs/AI採掘機_使い方.txt' 'config/AI採掘機.ini' src/ui-web/package.json src/ui-web/package-lock.json scripts/Build.ps1 scripts/Test-UpdateStartup.ps1 scripts/Apply-UpdateValidationFix.py .github/workflows/update-validation-repair.yml .github/workflows/update-startup-diagnosis.yml
+          git add -- src/mining-auto.ahk README.md src/README.md 'docs/AI採掘機_使い方.txt' 'config/AI採掘機.ini' src/ui-web/package.json src/ui-web/package-lock.json src/ui-web/src/app.js scripts/Build.ps1 scripts/Test-UpdateStartup.ps1 scripts/Apply-UpdateValidationFix.py .github/workflows/update-validation-repair.yml .github/workflows/update-startup-diagnosis.yml
           git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --cached --check
           if ($LASTEXITCODE -ne 0) { throw 'Staged diff failed.' }
           git commit -m 'Fix detached updater validation and isolate self-test settings [skip ci]'
