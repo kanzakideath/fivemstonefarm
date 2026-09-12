@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - name: Apply reviewed patch to exact v9.1.12 baseline
+      - name: Apply bounded micro-drift and fractional confidence changes
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -24,6 +24,8 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Source baseline changed.'}
           python scripts/Apply-WashMicroFix.py
           if($LASTEXITCODE -ne 0){throw 'Patch boundaries changed.'}
+          python scripts/Refine-WashFractional.py
+          if($LASTEXITCODE -ne 0){throw 'Precision boundaries changed.'}
           git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --check
           if($LASTEXITCODE -ne 0){throw 'Diff validation failed.'}
       - name: Full build including micro-displacement and detached updater tests
@@ -32,7 +34,9 @@ jobs:
           $ErrorActionPreference='Stop'
           New-Item -ItemType Directory -Force artifacts/wash-micro | Out-Null
           Start-Transcript artifacts/wash-micro/build.txt
-          try { ./scripts/Build.ps1 -Version 9.1.13 } finally { Stop-Transcript }
+          try { ./scripts/Build.ps1 -Version 9.1.13 }
+          catch { Get-ChildItem build/staging/*self-test*.txt -ErrorAction SilentlyContinue | ForEach-Object {Write-Host $_.Name; Get-Content $_.FullName}; throw }
+          finally { Stop-Transcript }
       - name: Test real native input against single-screen-pixel repeated drift
         shell: pwsh
         run: ./scripts/Test-WashPositionDesktop.ps1 -OutputDirectory artifacts/wash-micro
@@ -56,10 +60,10 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          Remove-Item scripts/Apply-WashMicroFix.py,.github/workflows/wash-micro-repair.yml
+          Remove-Item scripts/Apply-WashMicroFix.py,scripts/Refine-WashFractional.py,.github/workflows/wash-micro-repair.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- src/mining-auto.ahk src/wash-position.ahk src/wash-position/WashPosition.cs src/exe-route-navigation.ahk scripts/ui-tests/WashPositionDesktopProbe.cs scripts/Test-WashPositionDesktop.ps1 scripts/Test-WashRecoveryContract.ps1 README.md src/README.md 'docs/AI採掘機_使い方.txt' 'config/AI採掘機.ini' src/ui-web/package.json src/ui-web/package-lock.json src/ui-web/src/app.js docs/RELEASE_v9.1.13.md docs/VALIDATION_v9.1.13.md scripts/Apply-WashMicroFix.py .github/workflows/wash-micro-repair.yml
+          git add -- src/mining-auto.ahk src/wash-position.ahk src/wash-position/WashPosition.cs src/exe-route-navigation.ahk scripts/ui-tests/WashPositionDesktopProbe.cs scripts/Test-WashPositionDesktop.ps1 scripts/Test-WashRecoveryContract.ps1 README.md src/README.md 'docs/AI採掘機_使い方.txt' 'config/AI採掘機.ini' src/ui-web/package.json src/ui-web/package-lock.json src/ui-web/src/app.js docs/RELEASE_v9.1.13.md docs/VALIDATION_v9.1.13.md scripts/Apply-WashMicroFix.py scripts/Refine-WashFractional.py .github/workflows/wash-micro-repair.yml
           git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --cached --check
           if($LASTEXITCODE -ne 0){throw 'Staged diff failed.'}
           git commit -m 'Measure small nearby wash drift before resuming and expose correction state'
