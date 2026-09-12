@@ -1,5 +1,6 @@
 from pathlib import Path
-p = Path(__file__).resolve().parents[1] / 'src/wash-position/WashPosition.cs'
+root = Path(__file__).resolve().parents[1]
+p = root / 'src/wash-position/WashPosition.cs'
 b = p.read_bytes()
 s = b.decode('utf-8-sig')
 def one(old, new):
@@ -21,4 +22,20 @@ one('sx=fx;sy=fy;', 'sx=fx;sy=fy;return best;')
 one('throw new Exception("FRACTIONAL_TRANSLATION_TEST");',
     'throw new Exception("FRACTIONAL_TRANSLATION_TEST shift="+F(shift)+" estimated="+F(m.error)+" support="+m.support);')
 p.write_bytes((b'\xef\xbb\xbf' if b.startswith(b'\xef\xbb\xbf') else b'') + s.encode('utf-8'))
-print('Fractional fitting requires final NCC >= 0.94 and six supported, unique tiles; standard profile unchanged.')
+p = root / 'scripts/Test-FarmRecoverySafetyContract.ps1'
+b = p.read_bytes()
+s = b.decode('utf-8-sig')
+one("$washCorrection -match 'RunObservedWashHelper\\(\"wash-correct\"'",
+    "$washCorrection -match 'correctionOperation := ObservedWashCorrectionOperation\\(expectedGeneration\\)' -and "
+    "$washCorrection -match 'RunObservedWashHelper\\(correctionOperation, expectedGeneration\\)'")
+s += '''
+$washModule = [IO.File]::ReadAllText((Join-Path (Split-Path $resolvedSource) 'wash-position.ahk'))
+Assert-Contract ($washModule.Contains('IsCurrentRun(generation)') -and
+    $washModule.Contains('Config.washForwardCorrection && Config.vehicleStorageEnabled') -and
+    $washModule.Contains('ExeStorageMethod("washing") = "stationary"') -and
+    $washModule.Contains('ExeRouteBindingValid("washing", State.serverEpoch)') -and
+    $washModule.Contains('return "wash-maintain"') -and $washModule.Contains('return "wash-correct"')) `
+    'Precise nearby correction requires active generation, enabled correction, storage and verified stationary binding.'
+'''
+p.write_bytes((b'\xef\xbb\xbf' if b.startswith(b'\xef\xbb\xbf') else b'') + s.encode('utf-8'))
+print('Precise confidence and foreground/route identity guards retained.')
