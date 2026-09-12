@@ -27,6 +27,8 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Fast wash patch failed.'}
           python scripts/Fix-FastWashHarness.py
           if($LASTEXITCODE -ne 0){throw 'Harness normalization failed.'}
+          python scripts/Fix-FastWashFixture.py
+          if($LASTEXITCODE -ne 0){throw 'UI fixture normalization failed.'}
           git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --check
           if($LASTEXITCODE -ne 0){throw 'Source diff validation failed.'}
           ./scripts/Test-FastWashContract.ps1
@@ -59,10 +61,11 @@ jobs:
           Remove-Item -LiteralPath 'scripts/Apply-FastWash.py' -Force
           Remove-Item -LiteralPath 'scripts/Fix-FastWashPatcher.py' -Force
           Remove-Item -LiteralPath 'scripts/Fix-FastWashHarness.py' -Force
+          Remove-Item -LiteralPath 'scripts/Fix-FastWashFixture.py' -Force
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -- README.md 'config/AI採掘機.ini' 'docs/AI採掘機_使い方.txt' docs/RELEASE_v9.1.16.md docs/VALIDATION_v9.1.16.md scripts/Test-FastWashContract.ps1 scripts/ui-tests/StationaryWaitHarness.ahk src/README.md src/mining-auto.ahk src/stationary-only.ahk src/ui-web/package.json src/ui-web/package-lock.json src/ui-web/src/app.js src/ui-web/src/index.html
-          git add -u -- .github/workflows/inspect-fast-wash.yml .github/workflows/fast-wash-repair.yml scripts/Apply-FastWash.py scripts/Fix-FastWashPatcher.py scripts/Fix-FastWashHarness.py
+          git add -u -- .github/workflows/inspect-fast-wash.yml .github/workflows/fast-wash-repair.yml scripts/Apply-FastWash.py scripts/Fix-FastWashPatcher.py scripts/Fix-FastWashHarness.py scripts/Fix-FastWashFixture.py
           git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --cached --check
           if($LASTEXITCODE -ne 0){throw 'Staged diff failed.'}
           git commit -m 'Add fast washing without cargo-visibility gate'
