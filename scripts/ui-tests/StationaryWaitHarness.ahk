@@ -47,7 +47,7 @@ try {
 
     Reset("unknown-cargo", ["READY WORK_STORAGE 29200 180"])
     Require(!WaitStationaryCargo(1, &cargoId, &cargoType), "unknown cargo result rejected")
-    Require(Fault = "STATIONARY_CARGO_OBSERVATION_FAULT" && CargoCalls.Length = 0, "uncertainty is not target absence")
+    Require(Fault = "STATIONARY_CARGO_OBSERVATION_FAULT" && CargoCalls = 1, "uncertainty is not target absence")
 
     Reset("safe-recovery", ["READY WORK_STORAGE 29200 180"])
     State.farmState := "RECOVERY"

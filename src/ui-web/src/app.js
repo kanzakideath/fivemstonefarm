@@ -50,7 +50,7 @@
   const fixtureState = {
     ...baseState,
     revision: 1,
-    version: '9.1.15',
+    version: '9.1.16',
     controls: {
       overviewSubtitle: { text: modeDetails.gold.subtitle },
       runStatus: { text: '停止中', tone: 'neutral' },
@@ -76,6 +76,7 @@
       backgroundMode: { value: true, enabled: true },
       hideWhileRunning: { value: true, enabled: true },
       correctionEnabled: { value: true, enabled: true },
+      fastWashMode: { value: true, enabled: true },
       autoEat: { value: true, enabled: true },
       foodKey: { value: 1, enabled: true },
       autoCheckUpdates: { value: true, enabled: true },
@@ -150,7 +151,7 @@
     'vehicle-delete', 'vehicle-route', 'overview-route', 'overview-route-summary',
     'route-mode-hint', 'route-feedback', 'route-register', 'route-teach', 'route-trial', 'route-stationary',
     'route-enable', 'route-return-home', 'route-voice', 'start-hotkey', 'stop-hotkey', 'setting-background', 'setting-hide',
-    'setting-correction', 'setting-auto-eat', 'food-key', 'setting-auto-update',
+    'setting-correction', 'setting-fast-wash', 'setting-auto-eat', 'food-key', 'setting-auto-update',
     'minimum-free-weight', 'storage-trigger-percent', 'estimated-reward-weight',
     'minimum-free-slots', 'storage-max-retries', 'farm-watchdog-seconds',
     'target-lost-recovery-seconds', 'setting-debug-overlay', 'settings-save',
@@ -592,6 +593,7 @@
       control('correctionEnabled', 'washCorrectionControl'),
       'correctionEnabled',
     );
+    updateSwitch(elements.settingFastWash, control('fastWashMode'), 'fastWashMode');
     updateSwitch(elements.settingAutoEat, control('autoEat', 'autoEatControl'), 'autoEat');
     updateInput(elements.foodKey, control('foodKey', 'foodKeyControl'), 'foodKey');
     updateSwitch(elements.settingAutoUpdate, control('autoCheckUpdates', 'autoUpdateControl'), 'autoCheckUpdates');
@@ -937,6 +939,15 @@
       next.controls.vehicleStatus = { text: '未登録', tone: 'neutral' };
       next.controls.vehicleDelete = { text: '登録を削除', enabled: false };
     }
+    if (action === 'washing.fast.toggle') {
+      next.controls.fastWashMode = { value: Boolean(payload.enabled), enabled: true };
+      next.controls.settingsFeedback = {
+        text: payload.enabled
+          ? '最速石洗いON：通常洗浄はストレージ表示を待ちません'
+          : '最速石洗いOFF：両操作を確認してから洗浄します',
+        tone: 'success',
+      };
+    }
     if (action === 'settings.save') {
       Object.assign(next.controls, {
         startHotkey: { value: payload.startHotkey, enabled: true },
@@ -997,6 +1008,13 @@
       if (elements.runButton.classList.contains('is-pending')) return;
       setPending(elements.runButton, 'run', state.revision);
       sendAction('run.toggle');
+    });
+    elements.settingFastWash.addEventListener('change', () => {
+      const previous = booleanOf(control('fastWashMode'), true);
+      const desired = elements.settingFastWash.checked;
+      elements.settingFastWash.checked = previous;
+      elements.settingFastWash.disabled = true;
+      sendAction('washing.fast.toggle', { enabled: desired });
     });
     elements.vehicleEnabled.addEventListener('change', () => {
       const previous = booleanOf(control('vehicleEnabled'));

@@ -1,4 +1,4 @@
-#Requires AutoHotkey v2.0
+﻿#Requires AutoHotkey v2.0
 #SingleInstance Force
 
 SendMode "Event"
@@ -9,7 +9,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "9.1.15"
+global AppVersion := "9.1.16"
 ;@Ahk2Exe-SetVersion %A_PriorLine~U)^.*"([^"]+)".*$~$1%
 processId := DllCall("GetCurrentProcessId")
 global LocalNav := {busy: false, pid: 0, cancel: "", taskId: 0, dialog: 0, guide: 0, feedback: "", requestActive: false, cycle: 0, lastBatchKey: "", lastActionKey: ""}
@@ -113,6 +113,7 @@ global Config := {
     workViewMouseDirection: ReadViewDirectionSetting(settingsPath),
     washCycleMs: ReadIntegerSetting(settingsPath, "Washing", "CycleMs", 9000, 7000, 20000),
     washReadinessGraceMs: ReadIntegerSetting(settingsPath, "Washing", "ReadinessGraceMs", 7000, 5500, 12000),
+    fastWashMode: ReadIntegerSetting(settingsPath, "Washing", "FastMode", 1, 0, 1),
     washForwardCorrection: 0, ; retired by stationary-only policy
     washForwardPulseMs: ReadIntegerSetting(settingsPath, "Washing", "ForwardPulseMs", 100, 50, 250),
     washForwardSettleMs: ReadIntegerSetting(settingsPath, "Washing", "ForwardSettleMs", 250, 50, 3000),
@@ -2120,6 +2121,7 @@ BuildWebGui() {
     State.hideControl := WebUiControl("hideControl", "", Config.hideWhileRunning)
     State.washCorrectionControl := WebUiControl("washCorrectionControl", "",
         Config.washForwardCorrection && Config.goldRecoveryEnabled && Config.workViewLock)
+    State.fastWashControl := WebUiControl("fastWashMode", "", Config.fastWashMode)
     State.autoEatControl := WebUiControl("autoEatControl", "", Config.autoEat)
     State.foodKeyControl := WebUiControl("foodKeyControl", "", Config.foodKey)
     State.autoUpdateControl := WebUiControl("autoUpdateControl", "", Config.autoCheckUpdates)
@@ -2409,6 +2411,8 @@ ProcessWebUiActions(*) {
                     State.vehicleDeleteButton.Enabled := false
                 } else
                     DeleteVehicleRegistration()
+            } else if action = "washing.fast.toggle" && parts.Length = 4 {
+                ToggleFastWashMode(parts[4] = "1")
             } else if action = "settings.save"
                 && (parts.Length = 12 || parts.Length = 19) {
                 ApplyWebUiSettings(parts)
@@ -2440,6 +2444,37 @@ ProcessWebUiActions(*) {
         }
     }
     QueueWebUiFlush()
+}
+
+ToggleFastWashMode(enabled) {
+    global State, Config
+    requested := enabled ? 1 : 0
+    if State.running || State.startInProgress || State.registrationActive {
+        State.fastWashControl.Value := Config.fastWashMode
+        State.settingsErrorLabel.Opt("cB42318")
+        State.settingsErrorLabel.Text := "最速石洗いはF9で停止してから変更してください。"
+        QueueWebUiFlush(true)
+        return false
+    }
+    previous := Config.fastWashMode
+    Config.fastWashMode := requested
+    State.fastWashControl.Value := requested
+    try SaveAllSettingsAtomically()
+    catch as err {
+        Config.fastWashMode := previous
+        State.fastWashControl.Value := previous
+        State.settingsErrorLabel.Opt("cB42318")
+        State.settingsErrorLabel.Text := "最速石洗いを保存できません: " err.Message
+        QueueWebUiFlush(true)
+        return false
+    }
+    State.settingsErrorLabel.Opt("c248A3D")
+    State.settingsErrorLabel.Text := requested
+        ? "最速石洗いON：通常洗浄はストレージ表示を待たず、洗浄対象だけを待ちます。"
+        : "最速石洗いOFF：従来どおり荷台前の両操作を確認してから洗浄します。"
+    SupportWriteEvent("FAST_WASH_SETTING", "enabled=" requested)
+    QueueWebUiFlush(true)
+    return true
 }
 
 ApplyWebUiSettings(parts) {
@@ -6816,6 +6851,7 @@ SaveAllSettingsAtomically() {
         IniWrite 1, temporarySettingsPath, "Updates", "Schema"
         IniWrite Config.autoCheckUpdates, temporarySettingsPath, "Updates", "AutoCheck"
         IniWrite Config.washForwardCorrection, temporarySettingsPath, "Washing", "ForwardCorrection"
+        IniWrite Config.fastWashMode, temporarySettingsPath, "Washing", "FastMode"
         IniWrite Config.washPostCompletionSettleMs, temporarySettingsPath, "Washing", "PostCompletionSettleMs"
         IniWrite Config.rawStoneItemName, temporarySettingsPath, "Washing", "RawStoneItem"
         IniWrite Config.washRefillMaximum, temporarySettingsPath, "Washing", "RefillMaximum"
@@ -8122,6 +8158,7 @@ SaveSettings(settingsGui, startControl, stopControl, backgroundControl,
         IniWrite 1, temporarySettingsPath, "Updates", "Schema"
         IniWrite Config.autoCheckUpdates, temporarySettingsPath, "Updates", "AutoCheck"
         IniWrite Config.washForwardCorrection, temporarySettingsPath, "Washing", "ForwardCorrection"
+        IniWrite Config.fastWashMode, temporarySettingsPath, "Washing", "FastMode"
         IniWrite Config.washPostCompletionSettleMs, temporarySettingsPath, "Washing", "PostCompletionSettleMs"
         IniWrite Config.goldRecoveryEnabled, temporarySettingsPath, "GoldPanning", "RecoveryEnabled"
         IniWrite Config.goldRecoveryAfterMs, temporarySettingsPath, "GoldPanning", "RecoveryAfterMs"
@@ -10836,7 +10873,12 @@ InitializeLocalVehicleRun(expectedGeneration) {
             . Config.rawStoneItemName . " count=0")
         return true
     }
-    workTargetPresent := StationaryOnlyEnabled() ? WaitStationaryTaskReady(expectedGeneration) : ProbeWorkTarget(State.runMode, expectedGeneration)
+    fastWashDeferred := FastWashModeEnabled()
+    workTargetPresent := fastWashDeferred ? true
+        : StationaryOnlyEnabled() ? WaitStationaryTaskReady(expectedGeneration)
+        : ProbeWorkTarget(State.runMode, expectedGeneration)
+    if fastWashDeferred
+        WriteDiagnostic("FAST_WASH_START readiness=deferred_to_try_washing storage_gate=0")
     if !IsCurrentRun(expectedGeneration)
         return false
     if !workTargetPresent {
@@ -12453,6 +12495,15 @@ EnterFarmRecovery(expectedGeneration, returnState, reason) {
 }
 
 HandleFarmTargetMissing(expectedGeneration, actionMode) {
+    if FastWashModeEnabled() && actionMode = "washing" {
+        global State, Config
+        if !IsCurrentRun(expectedGeneration)
+            return true
+        State.statusLabel.Text := "●  最速石洗い：洗浄対象だけを待機中（ストレージ表示は不要）"
+        SupportWriteEvent("FAST_WASH_RETRY", "reason=wash_target_missing storage_gate=0")
+        ScheduleNext(expectedGeneration, Min(350, Max(100, Config.notFoundRetryMs)))
+        return true
+    }
     if StationaryOnlyEnabled() {
         if WaitStationaryTaskReady(expectedGeneration)
             ScheduleNext(expectedGeneration, 1)
@@ -13978,9 +14029,10 @@ WaitPendingBackgroundActionCompletion(expectedGeneration, suppliedResult := "") 
 }
 
 WashAttemptBackground(expectedGeneration) {
-    if StationaryOnlyEnabled() && !WaitStationaryTaskReady(expectedGeneration)
-        return
     global State, Config
+    if StationaryOnlyEnabled() && !FastWashModeEnabled()
+        && !WaitStationaryTaskReady(expectedGeneration)
+        return
     if !IsCurrentRun(expectedGeneration)
         return
     State.timerFn := 0

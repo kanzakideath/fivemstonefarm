@@ -4,6 +4,11 @@ StationaryOnlyEnabled() {
     return true
 }
 
+FastWashModeEnabled() {
+    global Config, State
+    return StationaryOnlyEnabled() && Config.fastWashMode && State.runMode = "washing"
+}
+
 StationaryBridgeMotionBlocked(mode) {
     return InStr("|nudge-forward|play-route|play-route-health|set-view|companion-command|", "|" mode "|") > 0
 }
@@ -162,13 +167,18 @@ VerifyStationaryRunSite(generation) {
         StopAutomationWithFault("開始前に、同じ場所から開く自分の荷台を登録してください", "routes", "STATIONARY_REGISTRATION_REQUIRED")
         return false
     }
-    ; Raw-stone exhaustion is determined later from the protected live snapshot.
-    ; A known raw item can start refill-only; no wash button is required here.
-    if !WaitStationaryCargo(generation, &id, &kind)
-        return false
-    if !CloseLocalStorageUi() {
-        StopAutomationWithFault("荷台画面の閉鎖を確認できません", "routes", "STATIONARY_UI_CLOSE_FAILED")
-        return false
+    ; Fast wash does not require the cargo prompt to be visible before every wash.
+    ; Registration identity remains mandatory and actual cargo is re-verified at
+    ; the moment a deposit/refill is needed.
+    if FastWashModeEnabled() {
+        SupportWriteEvent("FAST_WASH_SITE", "startup_cargo_probe=deferred transfer_verification=required")
+    } else {
+        if !WaitStationaryCargo(generation, &id, &kind)
+            return false
+        if !CloseLocalStorageUi() {
+            StopAutomationWithFault("荷台画面の閉鎖を確認できません", "routes", "STATIONARY_UI_CLOSE_FAILED")
+            return false
+        }
     }
     if !IsCurrentRun(generation)
         return false
@@ -201,6 +211,15 @@ StationaryRecover(generation, task) {
         return false
     if !StationaryRecoveryCanWait(State.pendingFarmAttempt, State.storagePending, State.actionCompletionPending)
         return false
+    if FastWashModeEnabled() {
+        State.farmWatchdogAt := MonotonicMs()
+        State.watchdogRecoveryCount := 0
+        State.targetRecoveryAttempts := 0
+        TransitionFarmState(State.resumeVerificationPending ? "RESUMING_FARM" : "FARMING",
+            "最速石洗い：洗浄対象の再検出へ復帰", generation, task)
+        ScheduleNext(generation, 1)
+        return true
+    }
     if !WaitStationaryTaskReady(generation)
         return true
     if !IsCurrentFarmTask(generation, task, "RECOVERY")
