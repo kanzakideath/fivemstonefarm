@@ -119,7 +119,7 @@ for (const name of catalogFiles) {
 for (const action of [
   'nav', 'action.select', 'run.toggle', 'vehicle.toggle', 'vehicle.register',
   'vehicle.delete', 'settings.save', 'update.check', 'smoke.result',
-  'window.close',
+  'washing.fast.start', 'update.install', 'window.close',
 ]) {
   assert.ok(js.includes(`'${action}'`), `missing WebView action ${action}`);
 }
@@ -181,5 +181,27 @@ console.log('Route setup entries, visible surfaces and guarded commands verified
 const nativeProtocol = await readFile(join(root, '..', 'ui-host', 'Protocol.cs'), 'utf8');
 assert.match(html, /id="fast-wash-start"/);
 assert.match(js, /sendAction\('washing\.fast\.start'\)/);
+assert.ok(
+  html.indexOf('id="run-button"') < html.indexOf('id="fast-wash-start"'),
+  'the separate fast-wash action must follow normal Start',
+);
+assert.match(js, /fastWashActive:\s*false/);
+assert.match(js, /next\.fastWashActive = true/);
+assert.match(js, /next\.fastWashActive = false/);
+assert.doesNotMatch(html, /id="setting-fast-wash"/,
+  'fast wash must not be exposed as a sticky Settings switch');
+assert.doesNotMatch(js, /sendAction\('washing\.fast\.toggle'/,
+  'the web UI must not persist fast wash as a setting');
 assert.match(nativeProtocol, /case "washing\.fast\.start":/);
-assert.match(nativeProtocol, /case "washing\.fast\.toggle":/);
+
+assert.match(html, /id="update-version-list"[^>]+role="radiogroup"/);
+assert.match(html, /署名を確認できた公式リリースだけを表示します。手入力や未確認ファイルは使用しません。/);
+assert.match(html, /id="update-install"[^>]+disabled/);
+assert.match(js, /function normalizeUpdateCatalog\(\)/);
+assert.match(js, /STABLE_VERSION_PATTERN\.test/);
+assert.match(js, /function confirmVersionInstall\(\)/);
+assert.match(js, /app\.dialog\.create\(\{/);
+assert.match(js, /署名とSHA-256をもう一度確認してから再起動します。/);
+assert.match(js, /sendAction\('update\.install', \{ version: selected\.version \}\)/);
+assert.match(nativeProtocol, /case "update\.install":/);
+assert.match(nativeProtocol, /GetStableVersion\(payload, "version"\)/);

@@ -1297,3 +1297,115 @@ input:focus-visible,
 .route-nearby-option { padding: 16px; margin: 12px 0 18px; border: 1px solid #83bab1; border-radius: 12px; background: #eef8f5; color: #184e43; }
 .route-nearby-option .route-button { background: #126755; color: #fff; }
 .route-feedback { overflow-wrap: anywhere; }
+
+/* Readable support actions independent of animated press surfaces. */
+.support-card { margin: 24px 0; padding: 22px; border: 1px solid #ccd4e4; border-radius: 18px; background: #fff; overflow-wrap: anywhere; }
+.support-card h2 { margin: 0 0 12px; font-size: 19px; }
+.support-card p { line-height: 1.65; }
+.support-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.support-button { min-height: 44px; max-width: 100%; border: 1px solid #527195; border-radius: 12px; background: #edf3fc; color: #1e3655; padding: 12px 16px; cursor: pointer; font: inherit; font-weight: 600; white-space: normal; }
+.support-primary { color: #fff; background: #335b8b; }
+.support-button:disabled { opacity: .55; cursor: not-allowed; }
+.support-button:focus-visible { outline: 3px solid #4479ff; outline-offset: 3px; }
+
+/* Direct fast-wash entry immediately below the ordinary start/stop action. */
+#run-button { margin-bottom: 10px; }
+.fast-wash-action { margin: 0 0 8px; }
+.fast-wash-action .press-surface { background: #16736c; }
+.fast-wash-action:active .press-surface { background: #115b55; }
+.fast-wash-action:disabled .press-surface { background: #a8a8ad; }
+.fast-wash-description { margin: 0 8px 24px; line-height: 1.5; }
+
+/* Verified release chooser: an iOS grouped list, never a native combo box. */
+.update-version-list { min-height: 64px; }
+.update-version-empty {
+  min-height: 64px;
+  margin: 0;
+  padding: 21px 16px;
+  color: var(--am-secondary);
+  font-size: 14px;
+  line-height: 1.45;
+  text-align: center;
+}
+.update-version-option {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-height: 64px;
+  align-items: center;
+  padding: 9px 16px;
+  gap: 12px;
+  border: 0;
+  outline: 0;
+  background: var(--am-group);
+  color: var(--am-label);
+  font-family: inherit;
+  text-align: left;
+  cursor: default;
+  transition: background-color var(--am-fast) ease-out;
+}
+.update-version-option:not(:last-child)::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 16px;
+  height: .5px;
+  background: var(--am-separator);
+  content: '';
+}
+.update-version-option:active,
+.update-version-option.is-selected { background: rgba(0, 122, 255, .07); }
+.update-version-option:disabled { opacity: .62; }
+.update-version-body { display: flex; min-width: 0; flex: 1 1 auto; flex-direction: column; gap: 3px; }
+.update-version-heading { display: flex; min-width: 0; align-items: center; flex-wrap: wrap; gap: 8px; }
+.update-version-name { font-size: 16px; font-weight: 560; font-variant-numeric: tabular-nums; }
+.update-version-badges { display: inline-flex; flex-wrap: wrap; gap: 5px; }
+.update-version-badge {
+  display: inline-flex;
+  min-height: 20px;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: var(--am-fill);
+  color: var(--am-secondary);
+  font-size: 11px;
+  font-weight: 560;
+  line-height: 18px;
+}
+.update-version-badge.is-current { background: rgba(52, 199, 89, .13); color: #248a3d; }
+.update-version-badge.is-latest { background: rgba(0, 122, 255, .12); color: #006bd6; }
+.update-version-badge.is-older { background: rgba(255, 149, 0, .13); color: #a65300; }
+.update-version-date { color: var(--am-secondary); font-size: 12px; line-height: 1.35; }
+.update-version-check {
+  width: 21px;
+  height: 21px;
+  flex: 0 0 21px;
+  color: var(--am-blue);
+  opacity: 0;
+  transform: scale(.82);
+  transition: opacity 130ms ease-out, transform var(--am-standard) var(--am-spring);
+}
+.update-version-option.is-selected .update-version-check { opacity: 1; transform: scale(1); }
+.update-version-option:focus-visible { outline-offset: -3px; }
+.update-refresh {
+  display: flex;
+  width: fit-content;
+  min-width: 220px;
+  margin: -8px auto 18px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--am-blue);
+  font-size: 14px;
+  font-weight: 520;
+}
+.update-refresh:active { background: var(--am-fill); }
+.support-icon { width: 18px; height: 18px; }
+
+@media (max-width: 460px) {
+  .update-version-option { min-height: 68px; padding-right: 13px; }
+  .update-version-badge { font-size: 10px; }
+  .update-refresh { width: 100%; min-width: 0; }
+}

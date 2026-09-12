@@ -369,7 +369,8 @@ Invoke-CapabilitySmokeTest -Executable $localNavOutput -Expected 'SELFTEST OK' -
 Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'CAPS 12 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HOTBAR INVENTORYKEY HEALTH COMPANION ACTIONWAIT REFILL'
 Invoke-CapabilitySmokeTest -Executable $bridgeOutput -Expected 'SELFTEST OK' -Mode 'self-test'
 & (Join-Path $PSScriptRoot 'Test-BackgroundBridge.ps1') -Bridge $bridgeOutput
-Invoke-CapabilitySmokeTest -Executable $updaterOutput -Expected 'UPDATE_CAPS 1 CHECK DOWNLOAD APPLY'
+Invoke-CapabilitySmokeTest -Executable $updaterOutput -Expected 'UPDATE_CAPS 1 CHECK CATALOG SELECT DOWNLOAD APPLY'
+& (Join-Path $PSScriptRoot 'Test-UpdateCatalog.ps1')
 
 $npm = Get-Command npm.cmd -ErrorAction Stop
 Push-Location $stoneSidecarRoot

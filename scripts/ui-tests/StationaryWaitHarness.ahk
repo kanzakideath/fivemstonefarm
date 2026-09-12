@@ -79,7 +79,7 @@ Require(condition, message) {
 Reset(name, scriptedResponses) {
     global State, LocalNav, Config, Scenario, Responses, Calls, Events, Fault, CargoCalls, CloseCalls
     Scenario := name, Responses := scriptedResponses, Calls := [], Events := [], Fault := "", CargoCalls := 0, CloseCalls := 0
-    State := {running: true, generation: 1, farmStateTaskId: 7, farmState: "FARMING", runMode: "washing", lastDevConPort: 0, serverEpoch: "fixture-epoch", stationaryWaiting: false, statusLabel: {Text: "initial"}, targetLostSince: 10, targetRecoveryAttempts: 2, farmWatchdogAt: 1, watchdogRecoveryCount: 2, farmOutputLedger: {fixture: 7}, storageDepositCheckpoint: {moved: 7, receiptVerified: true}, storagePending: false, actionCompletionPending: false, pendingFarmAttempt: 0, resumeVerificationPending: false, lastStorageProbeResult: ""}
+    State := {running: true, generation: 1, farmStateTaskId: 7, farmState: "FARMING", runMode: "washing", runFastWash: false, lastDevConPort: 0, serverEpoch: "fixture-epoch", stationaryWaiting: false, statusLabel: {Text: "initial"}, targetLostSince: 10, targetRecoveryAttempts: 2, farmWatchdogAt: 1, watchdogRecoveryCount: 2, farmOutputLedger: {fixture: 7}, storageDepositCheckpoint: {moved: 7, receiptVerified: true}, storagePending: false, actionCompletionPending: false, pendingFarmAttempt: 0, resumeVerificationPending: false, lastStorageProbeResult: ""}
     LocalNav := {feedback: "", washFeedback: ""}
     Config := {vehicleStorageId: "fixture-truck", vehicleStorageType: "trunk", vehicleCompanionProtocol: 0, fastWashMode: false}
 }

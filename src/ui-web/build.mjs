@@ -18,6 +18,17 @@ for (const file of ['index.html', 'app.css', 'app.js']) {
 await cp(join(source, 'metagame'), join(output, 'metagame'), { recursive: true });
 await copyFile(join(stoneverse, 'dist-host', 'stoneverse-host.js'), join(output, 'stoneverse-host.js'));
 await cp(join(stoneverse, 'dist'), join(output, 'stoneverse'), { recursive: true });
+// Vite can preserve CRLF from the Windows checkout while injecting LF-only
+// asset tags. Normalize the copied entry document so repeated Windows release
+// builds do not create a mixed-line-ending tracked artifact.
+const stoneverseIndex = join(output, 'stoneverse', 'index.html');
+const stoneverseIndexText = await readFile(stoneverseIndex, 'utf8');
+await writeFile(
+  stoneverseIndex,
+  stoneverseIndexText
+    .replace(/\r\n?/g, '\n')
+    .replace(/(<div id="root"><\/div>)\n\s*\n(\s*<\/body>)/, '$1\n$2'),
+);
 
 for (const file of ['framework7-bundle.min.css', 'framework7-bundle.min.js']) {
   await copyFile(join(root, 'node_modules', 'framework7', file), join(vendor, file));

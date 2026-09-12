@@ -1,4 +1,4 @@
-const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense: r, speed: i, resonance: s, maxHp: o }), Pe = (e, t) => ({
+const Ae = (e, t, n, i, r, s, o) => ({ hardness: e, purity: t, power: n, defense: i, speed: r, resonance: s, maxHp: o }), we = (e, t) => ({
   base: e,
   perLevel: {
     hardness: 0.42 * t,
@@ -9,14 +9,14 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
     resonance: 0.54 * t,
     maxHp: 5.8 * t
   }
-}), Fe = (e, t) => [
+}), ve = (e, t) => [
   { id: `${e}_attack_1`, branch: "ATTACK", cost: 1, prerequisites: [], statBonus: { power: 4 } },
   { id: `${e}_attack_2`, branch: "ATTACK", cost: 2, prerequisites: [`${e}_attack_1`], statBonus: { power: 7 } },
   { id: `${e}_defense_1`, branch: "DEFENSE", cost: 1, prerequisites: [], statBonus: { defense: 4, maxHp: 25 } },
   { id: `${e}_support_1`, branch: "SUPPORT", cost: 1, prerequisites: [], statBonus: { resonance: 4 } },
   { id: `${e}_critical_1`, branch: "CRITICAL", cost: 2, prerequisites: [`${e}_attack_1`], statBonus: { purity: 6 } },
   { id: `${e}_element_1`, branch: "ELEMENT", cost: 3, prerequisites: [`${e}_support_1`], grantsSkillId: t }
-], Bt = [
+], wt = [
   {
     id: "species_pebblit",
     name: "Pebblit",
@@ -26,7 +26,7 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
     role: "ATTACK",
     primaryElement: "EARTH",
     possibleSecondaryElements: ["NEUTRAL", "METAL"],
-    growth: Pe($e(12, 8, 11, 10, 10, 8, 105), 0.82),
+    growth: we(Ae(12, 8, 11, 10, 10, 8, 105), 0.82),
     skillPool: [{ skillId: "skill_stone_strike", level: 1 }, { skillId: "skill_quake", level: 18 }],
     traitPool: ["trait_dense_core", "trait_keen_edge", "trait_swift_fault"],
     hiddenTraitPool: ["trait_wild_vein"],
@@ -35,7 +35,7 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
     minMiningLevel: 1,
     maxAwakening: 5,
     evolutions: [{ id: "evo_pebblit_granitus", targetSpeciesId: "species_granitus", conditions: [{ kind: "LEVEL", value: 24 }, { kind: "AFFINITY", value: 2 }], hidden: !1, hint: "Grow together until its core hardens." }],
-    skillTree: Fe("pebblit", "skill_quake")
+    skillTree: ve("pebblit", "skill_quake")
   },
   {
     id: "species_granitus",
@@ -46,7 +46,7 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
     role: "TANK",
     primaryElement: "EARTH",
     possibleSecondaryElements: ["METAL"],
-    growth: Pe($e(22, 13, 17, 24, 10, 15, 175), 1.1),
+    growth: we(Ae(22, 13, 17, 24, 10, 15, 175), 1.1),
     skillPool: [{ skillId: "skill_stone_strike", level: 1 }, { skillId: "skill_bastion", level: 1 }, { skillId: "skill_quake", level: 28 }],
     traitPool: ["trait_dense_core", "trait_last_bastion"],
     hiddenTraitPool: ["trait_wild_vein", "trait_ancient_oath"],
@@ -55,7 +55,7 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
     minMiningLevel: 8,
     maxAwakening: 5,
     evolutions: [],
-    skillTree: Fe("granitus", "skill_quake")
+    skillTree: ve("granitus", "skill_quake")
   },
   {
     id: "species_quartzling",
@@ -66,7 +66,7 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
     role: "SUPPORT",
     primaryElement: "CRYSTAL",
     possibleSecondaryElements: ["LIGHT", "WATER"],
-    growth: Pe($e(10, 22, 13, 12, 15, 23, 108), 0.98),
+    growth: we(Ae(10, 22, 13, 12, 15, 23, 108), 0.98),
     skillPool: [{ skillId: "skill_stone_strike", level: 1 }, { skillId: "skill_crystal_mend", level: 10 }, { skillId: "skill_resonant_chorus", level: 24 }],
     traitPool: ["trait_resonant", "trait_swift_fault"],
     hiddenTraitPool: ["trait_crystal_memory", "trait_wild_vein"],
@@ -78,7 +78,7 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
       { id: "evo_quartz_prismara", targetSpeciesId: "species_prismara", conditions: [{ kind: "LEVEL", value: 36 }, { kind: "AFFINITY", value: 3 }, { kind: "SKILL", value: "skill_resonant_chorus" }], hidden: !1, hint: "Master resonance beneath a brilliant light." },
       { id: "evo_quartz_eclipse", targetSpeciesId: "species_eclipse_geode", conditions: [{ kind: "LEVEL", value: 40 }, { kind: "AREA", value: "area_void_rift" }, { kind: "ITEM", value: "item_eclipse_shard", amount: 1 }], hidden: !0, hint: "A silent crystal waits where light is swallowed." }
     ],
-    skillTree: Fe("quartzling", "skill_resonant_chorus")
+    skillTree: ve("quartzling", "skill_resonant_chorus")
   },
   {
     id: "species_prismara",
@@ -89,7 +89,7 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
     role: "SUPPORT",
     primaryElement: "CRYSTAL",
     possibleSecondaryElements: ["LIGHT", "WIND"],
-    growth: Pe($e(17, 35, 24, 19, 25, 37, 164), 1.35),
+    growth: we(Ae(17, 35, 24, 19, 25, 37, 164), 1.35),
     skillPool: [{ skillId: "skill_crystal_mend", level: 1 }, { skillId: "skill_resonant_chorus", level: 1 }, { skillId: "skill_prismatic_nova", level: 55 }],
     traitPool: ["trait_resonant", "trait_first_light"],
     hiddenTraitPool: ["trait_crystal_memory", "trait_prism_reflex"],
@@ -98,7 +98,7 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
     minMiningLevel: 35,
     maxAwakening: 7,
     evolutions: [],
-    skillTree: Fe("prismara", "skill_prismatic_nova")
+    skillTree: ve("prismara", "skill_prismatic_nova")
   },
   {
     id: "species_emberite",
@@ -109,7 +109,7 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
     role: "ATTACK",
     primaryElement: "FIRE",
     possibleSecondaryElements: ["EARTH", "DARK"],
-    growth: Pe($e(16, 13, 25, 14, 18, 17, 122), 1.12),
+    growth: we(Ae(16, 13, 25, 14, 18, 17, 122), 1.12),
     skillPool: [{ skillId: "skill_stone_strike", level: 1 }, { skillId: "skill_ember_lance", level: 8 }, { skillId: "skill_magma_cataclysm", level: 42 }],
     traitPool: ["trait_keen_edge", "trait_flame_soul"],
     hiddenTraitPool: ["trait_wild_vein"],
@@ -118,7 +118,7 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
     minMiningLevel: 12,
     maxAwakening: 6,
     evolutions: [{ id: "evo_ember_pyroclast", targetSpeciesId: "species_pyroclast", conditions: [{ kind: "LEVEL", value: 42 }, { kind: "BATTLE_COUNT", value: 40 }, { kind: "ITEM", value: "item_magma_heart", amount: 2 }], hidden: !1, hint: "Temper its flame through battle." }],
-    skillTree: Fe("emberite", "skill_magma_cataclysm")
+    skillTree: ve("emberite", "skill_magma_cataclysm")
   },
   {
     id: "species_pyroclast",
@@ -129,7 +129,7 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
     role: "ATTACK",
     primaryElement: "FIRE",
     possibleSecondaryElements: ["ANCIENT"],
-    growth: Pe($e(27, 22, 42, 25, 28, 30, 205), 1.58),
+    growth: we(Ae(27, 22, 42, 25, 28, 30, 205), 1.58),
     skillPool: [{ skillId: "skill_ember_lance", level: 1 }, { skillId: "skill_quake", level: 1 }, { skillId: "skill_magma_cataclysm", level: 1 }],
     traitPool: ["trait_flame_soul", "trait_keen_edge"],
     hiddenTraitPool: ["trait_ancient_oath"],
@@ -138,7 +138,7 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
     minMiningLevel: 60,
     maxAwakening: 7,
     evolutions: [],
-    skillTree: Fe("pyroclast", "skill_magma_cataclysm")
+    skillTree: ve("pyroclast", "skill_magma_cataclysm")
   },
   {
     id: "species_aquamarite",
@@ -149,7 +149,7 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
     role: "SUPPORT",
     primaryElement: "WATER",
     possibleSecondaryElements: ["CRYSTAL", "WIND"],
-    growth: Pe($e(13, 25, 16, 17, 21, 26, 132), 1.13),
+    growth: we(Ae(13, 25, 16, 17, 21, 26, 132), 1.13),
     skillPool: [{ skillId: "skill_tidal_cut", level: 1 }, { skillId: "skill_crystal_mend", level: 12 }, { skillId: "skill_resonant_chorus", level: 35 }],
     traitPool: ["trait_resonant", "trait_swift_fault"],
     hiddenTraitPool: ["trait_crystal_memory"],
@@ -158,7 +158,7 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
     minMiningLevel: 14,
     maxAwakening: 6,
     evolutions: [],
-    skillTree: Fe("aquamarite", "skill_crystal_mend")
+    skillTree: ve("aquamarite", "skill_crystal_mend")
   },
   {
     id: "species_zephyrite",
@@ -169,7 +169,7 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
     role: "CONTROL",
     primaryElement: "WIND",
     possibleSecondaryElements: ["CRYSTAL", "LIGHT"],
-    growth: Pe($e(10, 19, 20, 11, 31, 21, 112), 1.1),
+    growth: we(Ae(10, 19, 20, 11, 31, 21, 112), 1.1),
     skillPool: [{ skillId: "skill_stone_strike", level: 1 }, { skillId: "skill_gale_shard", level: 7 }, { skillId: "skill_resonant_chorus", level: 34 }],
     traitPool: ["trait_swift_fault", "trait_first_light"],
     hiddenTraitPool: ["trait_crystal_memory"],
@@ -178,7 +178,7 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
     minMiningLevel: 16,
     maxAwakening: 6,
     evolutions: [],
-    skillTree: Fe("zephyrite", "skill_gale_shard")
+    skillTree: ve("zephyrite", "skill_gale_shard")
   },
   {
     id: "species_ironwarden",
@@ -189,7 +189,7 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
     role: "TANK",
     primaryElement: "METAL",
     possibleSecondaryElements: ["EARTH", "FIRE"],
-    growth: Pe($e(36, 15, 21, 40, 11, 18, 232), 1.42),
+    growth: we(Ae(36, 15, 21, 40, 11, 18, 232), 1.42),
     skillPool: [{ skillId: "skill_stone_strike", level: 1 }, { skillId: "skill_bastion", level: 1 }, { skillId: "skill_iron_taunt", level: 20 }],
     traitPool: ["trait_dense_core", "trait_last_bastion"],
     hiddenTraitPool: ["trait_ancient_oath", "trait_wild_vein"],
@@ -198,7 +198,7 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
     minMiningLevel: 33,
     maxAwakening: 7,
     evolutions: [],
-    skillTree: Fe("ironwarden", "skill_iron_taunt")
+    skillTree: ve("ironwarden", "skill_iron_taunt")
   },
   {
     id: "species_eclipse_geode",
@@ -209,7 +209,7 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
     role: "CONTROL",
     primaryElement: "DARK",
     possibleSecondaryElements: ["CRYSTAL", "ANCIENT"],
-    growth: Pe($e(24, 34, 38, 26, 35, 40, 196), 1.62),
+    growth: we(Ae(24, 34, 38, 26, 35, 40, 196), 1.62),
     skillPool: [{ skillId: "skill_void_grip", level: 1 }, { skillId: "skill_ancient_echo", level: 24 }, { skillId: "skill_prismatic_nova", level: 60 }],
     traitPool: ["trait_gene_weaver", "trait_first_light"],
     hiddenTraitPool: ["trait_crystal_memory", "trait_prism_reflex"],
@@ -218,7 +218,7 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
     minMiningLevel: 70,
     maxAwakening: 7,
     evolutions: [],
-    skillTree: Fe("eclipse", "skill_prismatic_nova")
+    skillTree: ve("eclipse", "skill_prismatic_nova")
   },
   {
     id: "species_solaris",
@@ -229,7 +229,7 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
     role: "ATTACK",
     primaryElement: "LIGHT",
     possibleSecondaryElements: ["FIRE", "CRYSTAL"],
-    growth: Pe($e(26, 40, 43, 24, 33, 39, 188), 1.64),
+    growth: we(Ae(26, 40, 43, 24, 33, 39, 188), 1.64),
     skillPool: [{ skillId: "skill_stone_strike", level: 1 }, { skillId: "skill_resonant_chorus", level: 20 }, { skillId: "skill_solar_verdict", level: 48 }],
     traitPool: ["trait_keen_edge", "trait_first_light"],
     hiddenTraitPool: ["trait_crystal_memory"],
@@ -238,7 +238,7 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
     minMiningLevel: 58,
     maxAwakening: 7,
     evolutions: [],
-    skillTree: Fe("solaris", "skill_solar_verdict")
+    skillTree: ve("solaris", "skill_solar_verdict")
   },
   {
     id: "species_worldheart",
@@ -249,7 +249,7 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
     role: "TANK",
     primaryElement: "ANCIENT",
     possibleSecondaryElements: ["EARTH", "LIGHT"],
-    growth: Pe($e(52, 44, 46, 55, 27, 50, 315), 2.05),
+    growth: we(Ae(52, 44, 46, 55, 27, 50, 315), 2.05),
     skillPool: [{ skillId: "skill_bastion", level: 1 }, { skillId: "skill_ancient_echo", level: 1 }, { skillId: "skill_moonlit_aegis", level: 1 }],
     traitPool: ["trait_last_bastion", "trait_resonant"],
     hiddenTraitPool: ["trait_ancient_oath", "trait_wild_vein"],
@@ -258,27 +258,27 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
     minMiningLevel: 90,
     maxAwakening: 10,
     evolutions: [],
-    skillTree: Fe("worldheart", "skill_moonlit_aegis")
+    skillTree: ve("worldheart", "skill_moonlit_aegis")
   }
-], fe = Object.freeze(
-  Object.fromEntries(Bt.map((e) => [e.id, e]))
-), ot = {
+], re = Object.freeze(
+  Object.fromEntries(wt.map((e) => [e.id, e]))
+), Ve = {
   NORMAL: 0,
   RARE: 1,
   SR: 2,
   SSR: 3,
   UR: 4,
   LEGENDARY: 5
-}, qt = {
+}, vt = {
   stone: (e) => Math.floor(65 + 30 * e + 7.5 * e ** 1.72),
   mining: (e) => Math.floor(80 + 55 * e + 14 * e ** 1.55),
   account: (e) => Math.floor(120 + 75 * e + 22 * e ** 1.48)
-}, Kn = [
+}, Dn = [
   { id: "area_greenbreak", name: "Greenbreak Quarry", unlockLevel: 1, discoveryRate: 0.18, rarityBias: 1, veins: ["vein_common", "vein_crystal"] },
   { id: "area_emberdeep", name: "Emberdeep Caldera", unlockLevel: 12, discoveryRate: 0.21, rarityBias: 1.12, veins: ["vein_volcanic", "vein_rare"] },
   { id: "area_skyfault", name: "Skyfault Shelf", unlockLevel: 25, discoveryRate: 0.23, rarityBias: 1.28, veins: ["vein_aerial", "vein_special"] },
   { id: "area_void_rift", name: "Nocturne Rift", unlockLevel: 45, discoveryRate: 0.25, rarityBias: 1.5, veins: ["vein_void", "vein_ancient"] }
-], ds = [
+], is = [
   {
     id: "fusion_ember_quartz",
     type: "FIXED",
@@ -339,27 +339,27 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
     minimumLabLevel: 8,
     cost: { currencies: { credits: 5e4, researchCores: 20, upgradeDust: 2500 }, items: { item_primordial_core: 1 } }
   }
-], ar = [
+], Vn = [
   { id: "catalyst_ember", name: "Ember Catalyst", requiredLabLevel: 1, elementBias: "FIRE" },
   { id: "catalyst_gene_lock", name: "Gene Seal", requiredLabLevel: 3, traitLockSlots: 1 },
   { id: "catalyst_iv_lens", name: "Precision Lens", requiredLabLevel: 4, ivLockStats: ["power", "speed"] },
   { id: "catalyst_mutagen", name: "Prismatic Mutagen", requiredLabLevel: 6, mutationMultiplier: 4, shinyMultiplier: 2 },
   { id: "catalyst_eclipse", name: "Eclipse Key", requiredLabLevel: 5, unlockRecipeId: "fusion_eclipse" }
-], us = Bt.filter((e) => e.gachaWeight > 0).map((e) => ({
+], rs = wt.filter((e) => e.gachaWeight > 0).map((e) => ({
   speciesId: e.id,
   weight: e.gachaWeight,
   pickup: e.id === "species_solaris" || e.id === "species_prismara"
-})), ms = [
+})), ss = [
   {
     id: "banner_genesis",
     name: "Genesis Resonance",
-    pool: us,
+    pool: rs,
     rates: { NORMAL: 0.48, RARE: 0.3, SR: 0.16, SSR: 0.048, UR: 0.011, LEGENDARY: 1e-3 },
     pity: { softStart: 60, hard: 80, featuredGuaranteeAfterLoss: !0 },
     tenPullGuarantee: "SR",
     singleCost: { currencies: { gachaTickets: 1 } }
   }
-], cr = [
+], Xn = [
   { id: "ach_mine_1", name: "First Resonance", description: "Mine once.", category: "MINING", metric: "MINED", threshold: 1, secret: !1, reward: { currencies: { credits: 500 }, accountXp: 40 } },
   { id: "ach_mine_100", name: "Quarry Regular", description: "Mine 100 times.", category: "MINING", metric: "MINED", threshold: 100, secret: !1, reward: { currencies: { gachaTickets: 3 }, titleId: "title_quarry_regular", accountXp: 250 } },
   { id: "ach_collection_5", name: "Lithic Archivist", description: "Discover five species.", category: "COLLECTION", metric: "SPECIES_OWNED", threshold: 5, secret: !1, reward: { currencies: { researchCores: 5 }, accountXp: 180 } },
@@ -370,7 +370,7 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
   { id: "ach_mutation_1", name: "Impossible Color", description: "Discover a mutation.", category: "SECRET", metric: "MUTATIONS", threshold: 1, secret: !0, reward: { titleId: "title_gene_anomaly", accountXp: 400 } },
   { id: "ach_perfect_iv", name: "Flawless Geometry", description: "Obtain a perfect-IV stone.", category: "SECRET", metric: "PERFECT_IV", threshold: 1, secret: !0, reward: { frameId: "frame_perfect", accountXp: 800 } },
   { id: "ach_level_25", name: "Stonekeeper", description: "Reach account level 25.", category: "PROFILE", metric: "ACCOUNT_LEVEL", threshold: 25, secret: !1, reward: { titleId: "title_stonekeeper", accountXp: 250 } }
-], ps = [
+], os = [
   {
     id: "dungeon_echoing_depths",
     name: "Echoing Depths",
@@ -390,7 +390,7 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
       { id: "prism_1", name: "Refracted Hall", enemies: [{ id: "enemy_quartz", speciesId: "species_quartzling", level: 18, statMultiplier: 1.15, skillIds: ["skill_stone_strike", "skill_crystal_mend"], traitIds: ["trait_resonant"] }, { id: "enemy_zephyr", speciesId: "species_zephyrite", level: 17, statMultiplier: 1.1, skillIds: ["skill_gale_shard"], traitIds: ["trait_swift_fault"] }], reward: { currencies: { credits: 650, researchCores: 1, upgradeDust: 70 }, accountXp: 120, stoneXp: 150 }, firstClearReward: { items: { item_eclipse_shard: 1 } }, staminaCost: 10 }
     ]
   }
-], fs = Object.freeze(Object.fromEntries(ps.map((e) => [e.id, e]))), hs = Object.freeze(Object.fromEntries(ms.map((e) => [e.id, e]))), ei = Object.freeze(Object.fromEntries(ar.map((e) => [e.id, e]))), ti = [
+], as = Object.freeze(Object.fromEntries(os.map((e) => [e.id, e]))), cs = Object.freeze(Object.fromEntries(ss.map((e) => [e.id, e]))), Yi = Object.freeze(Object.fromEntries(Vn.map((e) => [e.id, e]))), ji = [
   { id: "personality_bold", name: "Bold", description: "Hits hard and stands its ground.", statMultipliers: { power: 1.1, speed: 0.95 }, aiStyle: "AGGRESSIVE" },
   { id: "personality_calm", name: "Calm", description: "Channels resonance with patience.", statMultipliers: { resonance: 1.1, power: 0.96 }, aiStyle: "SUPPORTIVE" },
   { id: "personality_stalwart", name: "Stalwart", description: "Unusually difficult to crack.", statMultipliers: { defense: 1.1, speed: 0.94 }, aiStyle: "DEFENSIVE" },
@@ -399,9 +399,9 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
   { id: "personality_gentle", name: "Gentle", description: "Protects allies before itself.", statMultipliers: { resonance: 1.08, defense: 1.03, power: 0.94 }, aiStyle: "SUPPORTIVE" },
   { id: "personality_chaotic", name: "Chaotic", description: "No battle plan survives first contact.", statMultipliers: { power: 1.07, speed: 1.05, purity: 0.92 }, aiStyle: "CHAOTIC" },
   { id: "personality_sleepy", name: "Sleepy", description: "Eventually delivers a truly monumental hit.", statMultipliers: { power: 1.13, speed: 0.88, maxHp: 1.04 }, aiStyle: "DEFENSIVE" }
-], ni = Object.freeze(
-  Object.fromEntries(ti.map((e) => [e.id, e]))
-), Es = [
+], Vi = Object.freeze(
+  Object.fromEntries(ji.map((e) => [e.id, e]))
+), ls = [
   {
     id: "skill_stone_strike",
     name: "Stone Strike",
@@ -582,9 +582,9 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
     effects: [{ type: "SHIELD", power: 1.2 }, { type: "HEAL", power: 0.75 }],
     tags: ["ultimate", "support"]
   }
-], Et = Object.freeze(
-  Object.fromEntries(Es.map((e) => [e.id, e]))
-), gs = [
+], Ze = Object.freeze(
+  Object.fromEntries(ls.map((e) => [e.id, e]))
+), ds = [
   { id: "trait_dense_core", name: "Dense Core", description: "Defense +10%.", tier: "COMMON", tags: ["tank"], effects: [{ trigger: "ALWAYS", stat: "defense", operation: "PERCENT", value: 0.1 }] },
   { id: "trait_keen_edge", name: "Keen Edge", description: "Power +8%.", tier: "COMMON", tags: ["attack"], effects: [{ trigger: "ALWAYS", stat: "power", operation: "PERCENT", value: 0.08 }] },
   { id: "trait_resonant", name: "Resonant Heart", description: "Resonance +12%.", tier: "COMMON", tags: ["support"], effects: [{ trigger: "ALWAYS", stat: "resonance", operation: "PERCENT", value: 0.12 }] },
@@ -597,17 +597,17 @@ const $e = (e, t, n, r, i, s, o) => ({ hardness: e, purity: t, power: n, defense
   { id: "trait_gene_weaver", name: "Gene Weaver", description: "A rare signature born from fusion.", tier: "FUSION_EXCLUSIVE", tags: ["fusion"], effects: [{ trigger: "ALWAYS", stat: "resonance", operation: "PERCENT", value: 0.18 }] },
   { id: "trait_ancient_oath", name: "Ancient Oath", description: "A primordial promise of endurance.", tier: "HIDDEN", tags: ["ancient"], effects: [{ trigger: "ALWAYS", stat: "maxHp", operation: "PERCENT", value: 0.16 }] },
   { id: "trait_prism_reflex", name: "Prism Reflex", description: "Prismatic light sharpens every motion.", tier: "HIDDEN", tags: ["mutation"], effects: [{ trigger: "ALWAYS", stat: "speed", operation: "PERCENT", value: 0.12 }, { trigger: "ALWAYS", stat: "resonance", operation: "PERCENT", value: 0.12 }] }
-], Yt = Object.freeze(
-  Object.fromEntries(gs.map((e) => [e.id, e]))
-), ri = (e) => {
+], Nt = Object.freeze(
+  Object.fromEntries(ds.map((e) => [e.id, e]))
+), Xi = (e) => {
   let t = 2166136261;
   for (let n = 0; n < e.length; n += 1)
     t ^= e.charCodeAt(n), t = Math.imul(t, 16777619);
   return t += t << 13, t ^= t >>> 7, t += t << 3, t ^= t >>> 17, t += t << 5, t >>> 0;
 };
-class Re {
+class Ee {
   constructor(t) {
-    this.seed = t, this.state = typeof t == "number" ? t >>> 0 : ri(t), this.state === 0 && (this.state = 1831565813);
+    this.seed = t, this.state = typeof t == "number" ? t >>> 0 : Xi(t), this.state === 0 && (this.state = 1831565813);
   }
   seed;
   state;
@@ -631,26 +631,26 @@ class Re {
   }
   weighted(t, n) {
     if (t.length === 0) throw new RangeError("Cannot pick from an empty collection");
-    const r = t.map((o) => Math.max(0, n(o))), i = r.reduce((o, a) => o + a, 0);
-    if (!(i > 0)) throw new RangeError("At least one weight must be positive");
-    let s = this.next() * i;
+    const i = t.map((o) => Math.max(0, n(o))), r = i.reduce((o, a) => o + a, 0);
+    if (!(r > 0)) throw new RangeError("At least one weight must be positive");
+    let s = this.next() * r;
     for (let o = 0; o < t.length; o += 1)
-      if (s -= r[o] ?? 0, s < 0) return t[o];
+      if (s -= i[o] ?? 0, s < 0) return t[o];
     return t[t.length - 1];
   }
   shuffle(t) {
     const n = [...t];
-    for (let r = n.length - 1; r > 0; r -= 1) {
-      const i = this.int(0, r);
-      [n[r], n[i]] = [n[i], n[r]];
+    for (let i = n.length - 1; i > 0; i -= 1) {
+      const r = this.int(0, i);
+      [n[i], n[r]] = [n[r], n[i]];
     }
     return n;
   }
   fork(t) {
-    return new Re(`${String(this.seed)}:${t}:${this.draws}:${this.state}`);
+    return new Ee(`${String(this.seed)}:${t}:${this.draws}:${this.state}`);
   }
 }
-class lr {
+class Wn {
   next() {
     const t = new Uint32Array(1);
     return typeof crypto < "u" && typeof crypto.getRandomValues == "function" ? (crypto.getRandomValues(t), t[0] / 4294967296) : Math.random();
@@ -669,32 +669,32 @@ class lr {
   }
   weighted(t, n) {
     if (t.length === 0) throw new RangeError("Cannot pick from an empty collection");
-    const r = t.reduce((s, o) => s + Math.max(0, n(o)), 0);
-    if (!(r > 0)) throw new RangeError("At least one weight must be positive");
-    let i = this.next() * r;
+    const i = t.reduce((s, o) => s + Math.max(0, n(o)), 0);
+    if (!(i > 0)) throw new RangeError("At least one weight must be positive");
+    let r = this.next() * i;
     for (const s of t)
-      if (i -= Math.max(0, n(s)), i < 0) return s;
+      if (r -= Math.max(0, n(s)), r < 0) return s;
     return t[t.length - 1];
   }
   shuffle(t) {
     const n = [...t];
-    for (let r = n.length - 1; r > 0; r -= 1) {
-      const i = this.int(0, r);
-      [n[r], n[i]] = [n[i], n[r]];
+    for (let i = n.length - 1; i > 0; i -= 1) {
+      const r = this.int(0, i);
+      [n[i], n[r]] = [n[r], n[i]];
     }
     return n;
   }
   fork() {
-    return new lr();
+    return new Wn();
   }
 }
-const tt = (e, t, n) => {
-  const r = Array.from({ length: 4 }, () => t.int(0, 4294967295).toString(16).padStart(8, "0")).join("");
-  return `${e}_${n.toString(36)}_${r}`;
-}, Mn = (e) => {
-  const t = JSON.stringify(e, (n, r) => r && typeof r == "object" && !Array.isArray(r) ? Object.fromEntries(Object.entries(r).sort(([i], [s]) => i.localeCompare(s))) : r);
-  return ri(t ?? "").toString(16).padStart(8, "0");
-}, de = { now: () => /* @__PURE__ */ new Date() }, je = ["hardness", "purity", "power", "defense", "speed", "resonance"], Is = () => ({
+const Ge = (e, t, n) => {
+  const i = Array.from({ length: 4 }, () => t.int(0, 4294967295).toString(16).padStart(8, "0")).join("");
+  return `${e}_${n.toString(36)}_${i}`;
+}, nn = (e) => {
+  const t = JSON.stringify(e, (n, i) => i && typeof i == "object" && !Array.isArray(i) ? Object.fromEntries(Object.entries(i).sort(([r], [s]) => r.localeCompare(s))) : i);
+  return Xi(t ?? "").toString(16).padStart(8, "0");
+}, Z = { now: () => /* @__PURE__ */ new Date() }, ke = ["hardness", "purity", "power", "defense", "speed", "resonance"], us = () => ({
   battles: 0,
   wins: 0,
   losses: 0,
@@ -704,14 +704,14 @@ const tt = (e, t, n) => {
   criticalHits: 0,
   enemiesDefeated: 0,
   ultimatesUsed: 0
-}), ii = (e) => ({
+}), Wi = (e) => ({
   NORMAL: 0.92,
   RARE: 1,
   SR: 1.08,
   SSR: 1.18,
   UR: 1.3,
   LEGENDARY: 1.47
-})[e], Cn = (e) => Math.min(120, 100 + e.limitBreak * 4), ys = (e) => ({
+})[e], dn = (e) => Math.min(120, 100 + e.limitBreak * 4), ms = (e) => ({
   instanceId: e.instanceId,
   speciesId: e.speciesId,
   serialNumber: e.serialNumber,
@@ -719,69 +719,69 @@ const tt = (e, t, n) => {
   mutation: e.mutation,
   colorVariant: e.colorVariant,
   traitIds: [...e.traitIds]
-}), Ss = (e, t) => {
-  const n = { NORMAL: 0, RARE: 1, SR: 2, SSR: 4, UR: 6, LEGENDARY: 8 }, r = Math.floor((e.next() + e.next()) * 16);
-  return Math.min(31, Math.max(n[t], r));
-}, As = (e, t, n = {}) => Object.fromEntries(
-  je.map((r) => [r, Math.max(0, Math.min(31, Math.round(n[r] ?? Ss(e, t))))])
-), Ke = (e) => {
-  const t = fe[e.speciesId];
+}), ps = (e, t) => {
+  const n = { NORMAL: 0, RARE: 1, SR: 2, SSR: 4, UR: 6, LEGENDARY: 8 }, i = Math.floor((e.next() + e.next()) * 16);
+  return Math.min(31, Math.max(n[t], i));
+}, fs = (e, t, n = {}) => Object.fromEntries(
+  ke.map((i) => [i, Math.max(0, Math.min(31, Math.round(n[i] ?? ps(e, t))))])
+), Le = (e) => {
+  const t = re[e.speciesId];
   if (!t) throw new Error(`Unknown species: ${e.speciesId}`);
-  const n = ni[e.personalityId];
+  const n = Vi[e.personalityId];
   if (!n) throw new Error(`Unknown personality: ${e.personalityId}`);
-  const r = {}, i = [...je, "maxHp"], s = ii(t.rarity), o = 1 + e.potential * 25e-4 + e.awakeningStage * 0.035 + e.reincarnationCount * 0.025 + e.limitBreak * 0.015, a = { NONE: 1, PRISMATIC: 1.035, ANCIENT: 1.04, CORRUPTED: 1.055, PERFECT: 1.075 };
-  for (const l of i) {
-    const d = l === "maxHp" ? Object.values(e.individualValues).reduce((m, A) => m + A, 0) / 6 : e.individualValues[l], u = t.growth.base[l] + t.growth.perLevel[l] * Math.max(0, e.level - 1), h = l === "maxHp" ? d * 1.35 : d * (0.18 + e.level * 4e-3), w = n.statMultipliers[l] ?? 1;
-    let E = (u + h) * s * o * a[e.mutation] * w;
-    for (const m of e.traitIds) {
-      const A = Yt[m];
-      for (const S of A?.effects ?? [])
-        S.trigger !== "ALWAYS" || S.stat !== l || S.value === void 0 || (E = S.operation === "FLAT" ? E + S.value : E * (1 + S.value));
+  const i = {}, r = [...ke, "maxHp"], s = Wi(t.rarity), o = 1 + e.potential * 25e-4 + e.awakeningStage * 0.035 + e.reincarnationCount * 0.025 + e.limitBreak * 0.015, a = { NONE: 1, PRISMATIC: 1.035, ANCIENT: 1.04, CORRUPTED: 1.055, PERFECT: 1.075 };
+  for (const c of r) {
+    const l = c === "maxHp" ? Object.values(e.individualValues).reduce((u, I) => u + I, 0) / 6 : e.individualValues[c], d = t.growth.base[c] + t.growth.perLevel[c] * Math.max(0, e.level - 1), f = c === "maxHp" ? l * 1.35 : l * (0.18 + e.level * 4e-3), y = n.statMultipliers[c] ?? 1;
+    let h = (d + f) * s * o * a[e.mutation] * y;
+    for (const u of e.traitIds) {
+      const I = Nt[u];
+      for (const g of I?.effects ?? [])
+        g.trigger !== "ALWAYS" || g.stat !== c || g.value === void 0 || (h = g.operation === "FLAT" ? h + g.value : h * (1 + g.value));
     }
-    for (const m of t.skillTree)
-      e.learnedSkillNodes.includes(m.id) && (E += m.statBonus?.[l] ?? 0);
-    r[l] = Math.max(1, Math.round(E));
+    for (const u of t.skillTree)
+      e.learnedSkillNodes.includes(u.id) && (h += u.statBonus?.[c] ?? 0);
+    i[c] = Math.max(1, Math.round(h));
   }
-  return r;
-}, ws = (e, t) => {
+  return i;
+}, hs = (e, t) => {
   const n = t === "FUSION" ? 0.012 : t === "NATURAL" ? 3e-3 : 15e-4;
-  return e.chance(n) ? e.weighted(["PRISMATIC", "ANCIENT", "CORRUPTED", "PERFECT"], (r) => ({
+  return e.chance(n) ? e.weighted(["PRISMATIC", "ANCIENT", "CORRUPTED", "PERFECT"], (i) => ({
     NONE: 0,
     PRISMATIC: 54,
     ANCIENT: 27,
     CORRUPTED: 16,
     PERFECT: 3
-  })[r]) : "NONE";
-}, Ct = (e) => {
-  const n = (e.clock ?? de).now(), r = n.getTime(), { species: i, rng: s } = e, o = e.rarity ?? i.rarity, a = e.origin, l = e.mutation ?? ws(s, a), d = e.personalityId ?? s.pick(ti).id, u = As(s, o, e.forcedIvs);
-  if (l === "PERFECT") for (const p of je) u[p] = 31;
-  const h = [...i.traitPool];
-  a === "NATURAL" && h.push(...i.hiddenTraitPool.filter((p) => Yt[p]?.tier === "NATURAL_EXCLUSIVE")), a === "FUSION" && h.push("trait_gene_weaver"), l === "PRISMATIC" && h.push("trait_prism_reflex"), l === "ANCIENT" && h.push("trait_ancient_oath");
-  const w = o === "LEGENDARY" ? 3 : o === "UR" || o === "SSR" ? 2 : 1, E = e.forcedTraits ? [...new Set(e.forcedTraits)].slice(0, 4) : s.shuffle([...new Set(h)]).slice(0, w), m = Math.max(1, Math.min(100, Math.floor(e.level ?? 1))), A = i.skillPool.filter((p) => p.level <= m).slice(0, 4).map((p) => p.skillId);
-  A.length === 0 && i.skillPool[0] && A.push(i.skillPool[0].skillId);
-  const S = [...new Set(e.forcedSkills ?? A)].slice(0, 6).map((p) => ({
-    skillId: p,
+  })[i]) : "NONE";
+}, ft = (e) => {
+  const n = (e.clock ?? Z).now(), i = n.getTime(), { species: r, rng: s } = e, o = e.rarity ?? r.rarity, a = e.origin, c = e.mutation ?? hs(s, a), l = e.personalityId ?? s.pick(ji).id, d = fs(s, o, e.forcedIvs);
+  if (c === "PERFECT") for (const m of ke) d[m] = 31;
+  const f = [...r.traitPool];
+  a === "NATURAL" && f.push(...r.hiddenTraitPool.filter((m) => Nt[m]?.tier === "NATURAL_EXCLUSIVE")), a === "FUSION" && f.push("trait_gene_weaver"), c === "PRISMATIC" && f.push("trait_prism_reflex"), c === "ANCIENT" && f.push("trait_ancient_oath");
+  const y = o === "LEGENDARY" ? 3 : o === "UR" || o === "SSR" ? 2 : 1, h = e.forcedTraits ? [...new Set(e.forcedTraits)].slice(0, 4) : s.shuffle([...new Set(f)]).slice(0, y), u = Math.max(1, Math.min(100, Math.floor(e.level ?? 1))), I = r.skillPool.filter((m) => m.level <= u).slice(0, 4).map((m) => m.skillId);
+  I.length === 0 && r.skillPool[0] && I.push(r.skillPool[0].skillId);
+  const g = [...new Set(e.forcedSkills ?? I)].slice(0, 6).map((m) => ({
+    skillId: m,
     level: 1,
     source: a === "FUSION" ? "FUSION" : "NATURAL"
-  })), k = tt("stone", s, r), T = {
-    instanceId: k,
-    serialNumber: `${n.getUTCFullYear()}-${i.id.replace("species_", "").toUpperCase()}-${k.slice(-10).toUpperCase()}`,
-    speciesId: i.id,
-    name: i.name,
+  })), b = Ge("stone", s, i), R = {
+    instanceId: b,
+    serialNumber: `${n.getUTCFullYear()}-${r.id.replace("species_", "").toUpperCase()}-${b.slice(-10).toUpperCase()}`,
+    speciesId: r.id,
+    name: r.name,
     nickname: null,
     rarity: o,
     origin: a,
-    level: m,
+    level: u,
     xp: 0,
-    potential: Math.min(100, Math.round(35 + s.next() * 55 + ii(o) * 5)),
-    personalityId: d,
-    primaryElement: i.primaryElement,
-    secondaryElement: i.possibleSecondaryElements.length > 0 && s.chance(0.28) ? s.pick(i.possibleSecondaryElements) : null,
+    potential: Math.min(100, Math.round(35 + s.next() * 55 + Wi(o) * 5)),
+    personalityId: l,
+    primaryElement: r.primaryElement,
+    secondaryElement: r.possibleSecondaryElements.length > 0 && s.chance(0.28) ? s.pick(r.possibleSecondaryElements) : null,
     stats: {},
-    individualValues: u,
-    traitIds: E,
-    skills: S,
-    skillPoints: Math.floor(m / 5),
+    individualValues: d,
+    traitIds: h,
+    skills: g,
+    skillPoints: Math.floor(u / 5),
     learnedSkillNodes: [],
     equipment: {},
     affinity: { points: 0, rank: 0, claimedMilestones: [] },
@@ -789,7 +789,7 @@ const tt = (e, t, n) => {
     evolutionStage: 0,
     reincarnationCount: 0,
     limitBreak: 0,
-    mutation: l,
+    mutation: c,
     colorVariant: s.chance(a === "FUSION" ? 0.012 : 6e-3) ? "SHINY" : "STANDARD",
     parents: e.parents?.slice(0, 4) ?? [],
     grandparents: e.grandparents?.slice(0, 8) ?? [],
@@ -800,40 +800,40 @@ const tt = (e, t, n) => {
     createdAt: n.toISOString(),
     firstObtainedAt: n.toISOString(),
     appraisedAt: e.appraised === !1 ? null : n.toISOString(),
-    battleStatistics: Is(),
+    battleStatistics: us(),
     favorite: !1,
     locked: !1,
     tags: []
   };
-  return T.stats = Ke(T), T;
-}, si = (e, t) => {
+  return R.stats = Le(R), R;
+}, Ki = (e, t) => {
   if (!Number.isFinite(t) || t < 0) throw new RangeError("XP amount must be a non-negative finite number");
-  const n = e.level, r = { ...e.stats };
+  const n = e.level, i = { ...e.stats };
   e.xp += Math.floor(t);
-  const i = Cn(e);
-  for (; e.level < i; ) {
-    const o = qt.stone(e.level);
+  const r = dn(e);
+  for (; e.level < r; ) {
+    const o = vt.stone(e.level);
     if (e.xp < o) break;
     e.xp -= o, e.level += 1, e.skillPoints += e.level % 5 === 0 ? 1 : 0;
-    const a = fe[e.speciesId];
-    for (const l of a?.skillPool ?? [])
-      l.level === e.level && !e.skills.some((d) => d.skillId === l.skillId) && e.skills.length < 6 && e.skills.push({ skillId: l.skillId, level: 1, source: "LEVEL" });
+    const a = re[e.speciesId];
+    for (const c of a?.skillPool ?? [])
+      c.level === e.level && !e.skills.some((l) => l.skillId === c.skillId) && e.skills.length < 6 && e.skills.push({ skillId: c.skillId, level: 1, source: "LEVEL" });
   }
-  e.level >= i && (e.xp = Math.min(e.xp, qt.stone(i) - 1)), e.stats = Ke(e);
+  e.level >= r && (e.xp = Math.min(e.xp, vt.stone(r) - 1)), e.stats = Le(e);
   const s = Object.fromEntries(
-    Object.entries(e.stats).map(([o, a]) => [o, a - r[o]])
+    Object.entries(e.stats).map(([o, a]) => [o, a - i[o]])
   );
   return { previousLevel: n, level: e.level, xp: e.xp, levelsGained: e.level - n, statIncrease: s };
-}, vs = (e) => {
+}, Es = (e) => {
   const t = [0, 100, 300, 700, 1400, 2500, 4e3, 6e3];
   let n = 0;
   for (; n + 1 < t.length && e >= (t[n + 1] ?? Number.POSITIVE_INFINITY); ) n += 1;
   return n;
-}, xn = (e, t) => {
+}, un = (e, t) => {
   if (!Number.isFinite(t) || t < 0) throw new RangeError("Affinity amount must be non-negative");
   const n = e.affinity.rank;
-  return e.affinity.points = Math.min(9999, e.affinity.points + Math.floor(t)), e.affinity.rank = vs(e.affinity.points), { previousRank: n, rank: e.affinity.rank };
-}, Ms = (e, t, n) => {
+  return e.affinity.points = Math.min(9999, e.affinity.points + Math.floor(t)), e.affinity.rank = Es(e.affinity.points), { previousRank: n, rank: e.affinity.rank };
+}, gs = (e, t, n) => {
   switch (t.kind) {
     case "LEVEL":
       return e.level >= Number(t.value);
@@ -846,113 +846,113 @@ const tt = (e, t, n) => {
     case "AREA":
       return n.areaId === String(t.value);
     case "SKILL":
-      return e.skills.some((r) => r.skillId === String(t.value));
+      return e.skills.some((i) => i.skillId === String(t.value));
     case "FUSION_HISTORY":
       return n.fusionCount >= Number(t.value);
     case "ACHIEVEMENT":
       return n.achievementIds.includes(String(t.value));
     case "TIME": {
-      const r = (n.timestamp ?? /* @__PURE__ */ new Date()).getHours();
-      return t.value === "NIGHT" ? r >= 20 || r < 5 : t.value === "DAY" ? r >= 5 && r < 20 : !0;
+      const i = (n.timestamp ?? /* @__PURE__ */ new Date()).getHours();
+      return t.value === "NIGHT" ? i >= 20 || i < 5 : t.value === "DAY" ? i >= 5 && i < 20 : !0;
     }
   }
-}, Rs = (e, t) => (fe[e.speciesId]?.evolutions ?? []).filter((r) => r.conditions.every((i) => Ms(e, i, t))), bs = (e, t) => {
-  const n = fe[t.targetSpeciesId];
+}, Is = (e, t) => (re[e.speciesId]?.evolutions ?? []).filter((i) => i.conditions.every((r) => gs(e, r, t))), Ss = (e, t) => {
+  const n = re[t.targetSpeciesId];
   if (!n) throw new Error(`Unknown evolution species: ${t.targetSpeciesId}`);
-  const r = e.speciesId;
+  const i = e.speciesId;
   e.speciesId = n.id, e.name = n.name, e.rarity = n.rarity, e.primaryElement = n.primaryElement, e.evolutionStage += 1, e.origin = "EVOLUTION";
-  for (const i of n.skillPool.filter((s) => s.level <= e.level))
-    !e.skills.some((s) => s.skillId === i.skillId) && e.skills.length < 6 && e.skills.push({ skillId: i.skillId, level: 1, source: "LEVEL" });
-  return e.stats = Ke(e), { previousSpeciesId: r, stone: e, evolutionId: t.id };
-}, Ts = (e) => {
-  const t = fe[e.speciesId];
+  for (const r of n.skillPool.filter((s) => s.level <= e.level))
+    !e.skills.some((s) => s.skillId === r.skillId) && e.skills.length < 6 && e.skills.push({ skillId: r.skillId, level: 1, source: "LEVEL" });
+  return e.stats = Le(e), { previousSpeciesId: i, stone: e, evolutionId: t.id };
+}, ys = (e) => {
+  const t = re[e.speciesId];
   if (!t || e.awakeningStage >= t.maxAwakening) throw new Error("Stone is at maximum awakening");
   if (e.affinity.rank < Math.min(6, e.awakeningStage + 1)) throw new Error("Affinity is too low to awaken");
-  e.awakeningStage += 1, e.stats = Ke(e);
-}, Ns = (e) => {
-  if (e.level < Cn(e)) throw new Error("Only a max-level stone may reincarnate");
-  e.level = 1, e.xp = 0, e.reincarnationCount += 1, e.potential = Math.min(100, e.potential + 3), e.skillPoints += 2, e.stats = Ke(e);
-}, _s = (e, t) => {
-  const r = fe[e.speciesId]?.skillTree.find((i) => i.id === t);
-  if (!r) throw new Error("Unknown skill node");
+  e.awakeningStage += 1, e.stats = Le(e);
+}, As = (e) => {
+  if (e.level < dn(e)) throw new Error("Only a max-level stone may reincarnate");
+  e.level = 1, e.xp = 0, e.reincarnationCount += 1, e.potential = Math.min(100, e.potential + 3), e.skillPoints += 2, e.stats = Le(e);
+}, ws = (e, t) => {
+  const i = re[e.speciesId]?.skillTree.find((r) => r.id === t);
+  if (!i) throw new Error("Unknown skill node");
   if (e.learnedSkillNodes.includes(t)) throw new Error("Skill node already learned");
-  if (!r.prerequisites.every((i) => e.learnedSkillNodes.includes(i))) throw new Error("Prerequisite not learned");
-  if (e.skillPoints < r.cost) throw new Error("Not enough skill points");
-  if (e.skillPoints -= r.cost, e.learnedSkillNodes.push(t), r.grantsSkillId && !e.skills.some((i) => i.skillId === r.grantsSkillId)) {
+  if (!i.prerequisites.every((r) => e.learnedSkillNodes.includes(r))) throw new Error("Prerequisite not learned");
+  if (e.skillPoints < i.cost) throw new Error("Not enough skill points");
+  if (e.skillPoints -= i.cost, e.learnedSkillNodes.push(t), i.grantsSkillId && !e.skills.some((r) => r.skillId === i.grantsSkillId)) {
     if (e.skills.length >= 6) throw new Error("No open skill slot");
-    e.skills.push({ skillId: r.grantsSkillId, level: 1, source: "TREE" });
+    e.skills.push({ skillId: i.grantsSkillId, level: 1, source: "TREE" });
   }
-  e.stats = Ke(e);
-}, On = (e) => je.every((t) => e[t] === 31), ks = (e) => {
+  e.stats = Le(e);
+}, mn = (e) => ke.every((t) => e[t] === 31), vs = (e) => {
   const t = [];
-  e.instanceId || t.push("instanceId is required"), fe[e.speciesId] || t.push(`Unknown species ${e.speciesId}`), ni[e.personalityId] || t.push(`Unknown personality ${e.personalityId}`), (e.level < 1 || e.level > Cn(e)) && t.push("Level is out of range"), e.skills.length > 6 && t.push("Too many skills"), new Set(e.traitIds).size !== e.traitIds.length && t.push("Duplicate traits");
-  for (const n of je) (e.individualValues[n] < 0 || e.individualValues[n] > 31) && t.push(`IV ${n} is out of range`);
+  e.instanceId || t.push("instanceId is required"), re[e.speciesId] || t.push(`Unknown species ${e.speciesId}`), Vi[e.personalityId] || t.push(`Unknown personality ${e.personalityId}`), (e.level < 1 || e.level > dn(e)) && t.push("Level is out of range"), e.skills.length > 6 && t.push("Too many skills"), new Set(e.traitIds).size !== e.traitIds.length && t.push("Duplicate traits");
+  for (const n of ke) (e.individualValues[n] < 0 || e.individualValues[n] > 31) && t.push(`IV ${n} is out of range`);
   return e.parents.some((n) => n.instanceId === e.instanceId) && t.push("Stone cannot be its own parent"), t;
-}, Hn = (e, t, n, r) => {
-  const i = fe[e];
-  if (!i) throw new Error(`Unknown species ${e}`);
-  return Ct({ species: i, origin: "EVENT", owner: t, rng: new Re(n), clock: r });
-}, oi = {
+}, bn = (e, t, n, i) => {
+  const r = re[e];
+  if (!r) throw new Error(`Unknown species ${e}`);
+  return ft({ species: r, origin: "EVENT", owner: t, rng: new Ee(n), clock: i });
+}, zi = {
   THIRTY_DAYS: 720 * 60 * 60 * 1e3
-}, Cs = 864e13, Rt = (e, t) => {
-  if (!Number.isSafeInteger(e) || e < 0 || e > Cs)
+}, Ms = 864e13, ct = (e, t) => {
+  if (!Number.isSafeInteger(e) || e < 0 || e > Ms)
     throw new Error(`${t} must be a valid non-negative Date timestamp`);
-}, xs = (e) => {
-  const t = e.maxForwardAdvanceMs ?? oi.THIRTY_DAYS;
+}, Rs = (e) => {
+  const t = e.maxForwardAdvanceMs ?? zi.THIRTY_DAYS;
   if (!Number.isSafeInteger(t) || t <= 0) throw new Error("maxForwardAdvanceMs must be a positive safe integer");
   return t;
-}, ai = (e) => (Rt(e, "observedWallMs"), { version: 1, trustedNowMs: e, wallHighWaterMs: e, reconciliationCount: 0 }), Os = (e) => {
+}, Ji = (e) => (ct(e, "observedWallMs"), { version: 1, trustedNowMs: e, wallHighWaterMs: e, reconciliationCount: 0 }), Ts = (e) => {
   if (!e || e.version !== 1) throw new Error("Unsupported trusted-time checkpoint");
-  return Rt(e.trustedNowMs, "checkpoint.trustedNowMs"), Rt(e.wallHighWaterMs, "checkpoint.wallHighWaterMs"), Rt(e.reconciliationCount, "checkpoint.reconciliationCount"), { ...e };
-}, Ls = (e, t, n = {}) => {
-  const r = Os(e);
-  Rt(t, "observedWallMs");
-  const i = Math.max(0, t - r.wallHighWaterMs), s = Math.min(i, xs(n)), o = t < r.wallHighWaterMs ? "rollback" : i > s ? "forward-capped" : "none", a = {
+  return ct(e.trustedNowMs, "checkpoint.trustedNowMs"), ct(e.wallHighWaterMs, "checkpoint.wallHighWaterMs"), ct(e.reconciliationCount, "checkpoint.reconciliationCount"), { ...e };
+}, bs = (e, t, n = {}) => {
+  const i = Ts(e);
+  ct(t, "observedWallMs");
+  const r = Math.max(0, t - i.wallHighWaterMs), s = Math.min(r, Rs(n)), o = t < i.wallHighWaterMs ? "rollback" : r > s ? "forward-capped" : "none", a = {
     version: 1,
-    trustedNowMs: r.trustedNowMs + s,
-    wallHighWaterMs: Math.max(r.wallHighWaterMs, t),
-    reconciliationCount: r.reconciliationCount + 1
+    trustedNowMs: i.trustedNowMs + s,
+    wallHighWaterMs: Math.max(i.wallHighWaterMs, t),
+    reconciliationCount: i.reconciliationCount + 1
   };
-  return Rt(a.trustedNowMs, "next.trustedNowMs"), Rt(a.reconciliationCount, "next.reconciliationCount"), { nowMs: a.trustedNowMs, advanceMs: s, observedWallMs: t, observedAdvanceMs: i, anomaly: o, checkpoint: a };
-}, pn = 1e12, J = (e, t = 0, n = pn) => Number.isFinite(e) ? Math.max(t, Math.min(n, e)) : e > 0 ? n : t, Pt = (e) => Math.round(J(e)), we = (e, t, n = 0, r = pn) => {
-  if (!Number.isFinite(e) || e < n || e > r)
-    throw new RangeError(`${t} must be finite and within ${n}..${r}`);
+  return ct(a.trustedNowMs, "next.trustedNowMs"), ct(a.reconciliationCount, "next.reconciliationCount"), { nowMs: a.trustedNowMs, advanceMs: s, observedWallMs: t, observedAdvanceMs: r, anomaly: o, checkpoint: a };
+}, Vt = 1e12, j = (e, t = 0, n = Vt) => Number.isFinite(e) ? Math.max(t, Math.min(n, e)) : e > 0 ? n : t, yt = (e) => Math.round(j(e)), de = (e, t, n = 0, i = Vt) => {
+  if (!Number.isFinite(e) || e < n || e > i)
+    throw new RangeError(`${t} must be finite and within ${n}..${i}`);
   return e;
-}, ut = (e, t, n = 10) => we(e, t, 0, n), Ds = (e) => ({
+}, We = (e, t, n = 10) => de(e, t, 0, n), Ns = (e) => ({
   ...e,
   phases: e.phases?.map((t) => ({
     ...t,
-    summons: t.summons?.map((n) => dr(n))
+    summons: t.summons?.map((n) => Kn(n))
   }))
-}), dr = (e) => ({
+}), Kn = (e) => ({
   ...e,
   stats: { ...e.stats },
   skillIds: [...e.skillIds],
-  boss: e.boss ? Ds(e.boss) : void 0
-}), ci = (e) => {
+  boss: e.boss ? Ns(e.boss) : void 0
+}), Qi = (e) => {
   if (!e.id || !e.name || e.effects.length === 0) throw new TypeError("Skills require id, name and effects");
-  we(e.cooldown ?? 0, `${e.id}.cooldown`, 0, 100), we(e.ultimateCost ?? 0, `${e.id}.ultimateCost`, 0, 100);
+  de(e.cooldown ?? 0, `${e.id}.cooldown`, 0, 100), de(e.ultimateCost ?? 0, `${e.id}.ultimateCost`, 0, 100);
   for (const t of e.effects) {
-    if (we(t.power ?? 0, `${e.id}.${t.kind}.power`, 0, 100), we(Math.abs(t.value ?? 0), `${e.id}.${t.kind}.value`, 0, pn), we(t.duration ?? 0, `${e.id}.${t.kind}.duration`, 0, 1e3), we(t.chance ?? 1, `${e.id}.${t.kind}.chance`, 0, 1), (t.kind === "BUFF" || t.kind === "DEBUFF") && !t.stat)
+    if (de(t.power ?? 0, `${e.id}.${t.kind}.power`, 0, 100), de(Math.abs(t.value ?? 0), `${e.id}.${t.kind}.value`, 0, Vt), de(t.duration ?? 0, `${e.id}.${t.kind}.duration`, 0, 1e3), de(t.chance ?? 1, `${e.id}.${t.kind}.chance`, 0, 1), (t.kind === "BUFF" || t.kind === "DEBUFF") && !t.stat)
       throw new TypeError(`${e.id}.${t.kind} requires a stat`);
     if (t.kind === "STATUS" && !t.status) throw new TypeError(`${e.id}.STATUS requires a status`);
   }
-}, ur = (e, t) => {
+}, zn = (e, t) => {
   if (!e.id || !e.name || e.skillIds.length === 0) throw new TypeError("Combatants require id, name and skills");
-  we(e.level, `${e.id}.level`, 1, 1e6);
-  for (const [n, r] of Object.entries(e.stats)) we(r, `${e.id}.${n}`);
-  ut(e.stats.critChance, `${e.id}.critChance`, 1), ut(e.stats.critDamage, `${e.id}.critDamage`, 10), we(e.initialUltimate ?? 0, `${e.id}.initialUltimate`, 0, 100);
+  de(e.level, `${e.id}.level`, 1, 1e6);
+  for (const [n, i] of Object.entries(e.stats)) de(i, `${e.id}.${n}`);
+  We(e.stats.critChance, `${e.id}.critChance`, 1), We(e.stats.critDamage, `${e.id}.critDamage`, 10), de(e.initialUltimate ?? 0, `${e.id}.initialUltimate`, 0, 100);
   for (const n of e.skillIds)
     if (!t[n]) throw new RangeError(`Unknown skill ${n} on ${e.id}`);
   if (e.boss) {
-    we(e.boss.enrageTurn ?? 0, `${e.id}.enrageTurn`, 0, 1e4), ut(e.boss.enrageMultiplier ?? 1.5, `${e.id}.enrageMultiplier`), ut(e.boss.weakPointMultiplier ?? 1.5, `${e.id}.weakPointMultiplier`), we(e.boss.breakThreshold ?? 100, `${e.id}.breakThreshold`, 1);
+    de(e.boss.enrageTurn ?? 0, `${e.id}.enrageTurn`, 0, 1e4), We(e.boss.enrageMultiplier ?? 1.5, `${e.id}.enrageMultiplier`), We(e.boss.weakPointMultiplier ?? 1.5, `${e.id}.weakPointMultiplier`), de(e.boss.breakThreshold ?? 100, `${e.id}.breakThreshold`, 1);
     for (const n of e.boss.phases ?? []) {
-      if (ut(n.hpRatio, `${e.id}.${n.id}.hpRatio`, 1), ut(n.attackMultiplier ?? 1, `${e.id}.${n.id}.attackMultiplier`), ut(n.defenseMultiplier ?? 1, `${e.id}.${n.id}.defenseMultiplier`), ut(n.speedMultiplier ?? 1, `${e.id}.${n.id}.speedMultiplier`), (n.summons?.length ?? 0) > 20) throw new RangeError(`${e.id}.${n.id} has too many summons`);
-      for (const r of n.summons ?? []) ur(r, t);
+      if (We(n.hpRatio, `${e.id}.${n.id}.hpRatio`, 1), We(n.attackMultiplier ?? 1, `${e.id}.${n.id}.attackMultiplier`), We(n.defenseMultiplier ?? 1, `${e.id}.${n.id}.defenseMultiplier`), We(n.speedMultiplier ?? 1, `${e.id}.${n.id}.speedMultiplier`), (n.summons?.length ?? 0) > 20) throw new RangeError(`${e.id}.${n.id} has too many summons`);
+      for (const i of n.summons ?? []) zn(i, t);
     }
   }
-}, li = (e) => {
-  const t = dr(e);
+}, Zi = (e) => {
+  const t = Kn(e);
   return {
     id: t.id,
     name: t.name,
@@ -965,7 +965,7 @@ const tt = (e, t, n) => {
     skillIds: [...t.skillIds],
     hp: t.stats.maxHp,
     shield: 0,
-    ultimate: J(t.initialUltimate ?? 0, 0, 100),
+    ultimate: j(t.initialUltimate ?? 0, 0, 100),
     breakGauge: 0,
     cooldowns: {},
     modifiers: [],
@@ -976,128 +976,128 @@ const tt = (e, t, n) => {
     alive: !0,
     bossState: t.boss ? { profile: t.boss, triggeredPhaseIds: [], enraged: !1, weakPoint: t.boss.weakPoint } : null
   };
-}, _r = (e) => {
+}, yi = (e) => {
   const t = new Set(e.map((a) => a.role)), n = /* @__PURE__ */ new Map();
   for (const a of e)
     a.family && n.set(a.family, (n.get(a.family) ?? 0) + 1);
-  const r = [...n.values()].reduce((a, l) => a + Math.floor(l / 2), 0), i = t.has("TANK") || t.has("GUARDIAN"), s = t.has("STRIKER") || t.has("BREAKER"), o = i && s && t.has("SUPPORT");
+  const i = [...n.values()].reduce((a, c) => a + Math.floor(c / 2), 0), r = t.has("TANK") || t.has("GUARDIAN"), s = t.has("STRIKER") || t.has("BREAKER"), o = r && s && t.has("SUPPORT");
   return {
     roleDiversity: t.size,
-    lineagePairs: r,
-    attackBonus: J((t.size - 1) * 0.025 + r * 0.03 + (o ? 0.05 : 0), 0, 0.5),
-    defenseBonus: J((i ? 0.06 : 0) + r * 0.02, 0, 0.5),
-    speedBonus: J((t.has("CONTROLLER") ? 0.04 : 0) + Math.max(0, t.size - 3) * 0.01, 0, 0.25),
-    breakBonus: J((t.has("BREAKER") ? 0.12 : 0) + (t.has("VANGUARD") ? 0.03 : 0), 0, 0.35),
-    ultimateStart: J((t.has("SUPPORT") ? 8 : 0) + r * 4, 0, 30)
+    lineagePairs: i,
+    attackBonus: j((t.size - 1) * 0.025 + i * 0.03 + (o ? 0.05 : 0), 0, 0.5),
+    defenseBonus: j((r ? 0.06 : 0) + i * 0.02, 0, 0.5),
+    speedBonus: j((t.has("CONTROLLER") ? 0.04 : 0) + Math.max(0, t.size - 3) * 0.01, 0, 0.25),
+    breakBonus: j((t.has("BREAKER") ? 0.12 : 0) + (t.has("VANGUARD") ? 0.03 : 0), 0, 0.35),
+    ultimateStart: j((t.has("SUPPORT") ? 8 : 0) + i * 4, 0, 30)
   };
-}, di = (e, t) => {
+}, er = (e, t) => {
   e.modifiers.push(
     { stat: "attack", value: t.attackBonus, turns: Number.MAX_SAFE_INTEGER, sourceId: "team-synergy" },
     { stat: "defense", value: t.defenseBonus, turns: Number.MAX_SAFE_INTEGER, sourceId: "team-synergy" },
     { stat: "speed", value: t.speedBonus, turns: Number.MAX_SAFE_INTEGER, sourceId: "team-synergy" },
     { stat: "breakPower", value: t.breakBonus, turns: Number.MAX_SAFE_INTEGER, sourceId: "team-synergy" }
-  ), e.ultimate = J(e.ultimate + t.ultimateStart, 0, 100);
-}, mr = (e) => {
+  ), e.ultimate = j(e.ultimate + t.ultimateStart, 0, 100);
+}, Jn = (e) => {
   const t = Object.fromEntries(
     Object.entries(e.skills).map(([s, o]) => [s, { ...o, effects: o.effects.map((a) => ({ ...a })), tags: o.tags ? [...o.tags] : void 0 }])
   );
   for (const [s, o] of Object.entries(t))
-    if (ci(o), s !== o.id) throw new RangeError(`Skill registry key ${s} does not match ${o.id}`);
+    if (Qi(o), s !== o.id) throw new RangeError(`Skill registry key ${s} does not match ${o.id}`);
   if (e.units.length < 2 || e.units.length > 50) throw new RangeError("A battle requires 2..50 starting combatants");
   const n = /* @__PURE__ */ new Set();
   for (const s of e.units) {
-    if (ur(s, t), n.has(s.id)) throw new RangeError(`Duplicate combatant id ${s.id}`);
+    if (zn(s, t), n.has(s.id)) throw new RangeError(`Duplicate combatant id ${s.id}`);
     n.add(s.id);
   }
   if (!e.units.some((s) => s.side === "PLAYER") || !e.units.some((s) => s.side === "ENEMY"))
     throw new RangeError("A battle requires both PLAYER and ENEMY combatants");
-  const r = e.units.map(li), i = {
-    PLAYER: _r(e.units.filter((s) => s.side === "PLAYER")),
-    ENEMY: _r(e.units.filter((s) => s.side === "ENEMY"))
+  const i = e.units.map(Zi), r = {
+    PLAYER: yi(e.units.filter((s) => s.side === "PLAYER")),
+    ENEMY: yi(e.units.filter((s) => s.side === "ENEMY"))
   };
-  for (const s of r) di(s, i[s.side]);
+  for (const s of i) er(s, r[s.side]);
   return {
-    units: r,
+    units: i,
     skills: t,
     turn: 0,
-    maxTurns: Math.floor(we(e.maxTurns ?? 100, "maxTurns", 1, 1e4)),
+    maxTurns: Math.floor(de(e.maxTurns ?? 100, "maxTurns", 1, 1e4)),
     outcome: null,
     log: [],
-    synergies: i
+    synergies: r
   };
-}, $s = (e) => {
+}, ks = (e) => {
   if (!e || typeof e != "object") throw new TypeError("Advanced battle must be an object");
   const t = e;
   if (!Array.isArray(t.units) || t.units.length < 2 || t.units.length > 50) throw new RangeError("Advanced battle units are invalid");
   if (!t.skills || typeof t.skills != "object" || Array.isArray(t.skills)) throw new TypeError("Advanced battle skill book is invalid");
-  for (const [r, i] of Object.entries(t.skills))
-    if (ci(i), r !== i.id) throw new RangeError(`Skill registry key ${r} does not match ${i.id}`);
-  if (we(t.turn, "advanced.turn", 0, 1e4), we(t.maxTurns, "advanced.maxTurns", 1, 1e4), !Number.isInteger(t.turn) || !Number.isInteger(t.maxTurns) || t.turn > t.maxTurns) throw new RangeError("Advanced battle turn is invalid");
+  for (const [i, r] of Object.entries(t.skills))
+    if (Qi(r), i !== r.id) throw new RangeError(`Skill registry key ${i} does not match ${r.id}`);
+  if (de(t.turn, "advanced.turn", 0, 1e4), de(t.maxTurns, "advanced.maxTurns", 1, 1e4), !Number.isInteger(t.turn) || !Number.isInteger(t.maxTurns) || t.turn > t.maxTurns) throw new RangeError("Advanced battle turn is invalid");
   if (t.outcome !== null && !["PLAYER", "ENEMY", "DRAW"].includes(t.outcome)) throw new TypeError("Advanced battle outcome is invalid");
   const n = /* @__PURE__ */ new Set();
-  for (const r of t.units) {
-    if (ur({ ...r, boss: r.bossState?.profile }, t.skills), n.has(r.id)) throw new RangeError(`Duplicate advanced combatant id ${r.id}`);
-    if (n.add(r.id), we(r.hp, `${r.id}.hp`, 0, r.stats.maxHp), we(r.shield, `${r.id}.shield`), we(r.ultimate, `${r.id}.ultimate`, 0, 100), we(r.breakGauge, `${r.id}.breakGauge`), r.alive !== r.hp > 0) throw new RangeError(`${r.id}.alive disagrees with hp`);
-    const s = [...[r.cooldowns, r.modifiers, r.dots, r.controls, r.statuses, r.counter]];
+  for (const i of t.units) {
+    if (zn({ ...i, boss: i.bossState?.profile }, t.skills), n.has(i.id)) throw new RangeError(`Duplicate advanced combatant id ${i.id}`);
+    if (n.add(i.id), de(i.hp, `${i.id}.hp`, 0, i.stats.maxHp), de(i.shield, `${i.id}.shield`), de(i.ultimate, `${i.id}.ultimate`, 0, 100), de(i.breakGauge, `${i.id}.breakGauge`), i.alive !== i.hp > 0) throw new RangeError(`${i.id}.alive disagrees with hp`);
+    const s = [...[i.cooldowns, i.modifiers, i.dots, i.controls, i.statuses, i.counter]];
     for (; s.length; ) {
       const o = s.pop();
-      if (typeof o == "number" && !Number.isFinite(o)) throw new RangeError(`${r.id} has a non-finite runtime value`);
+      if (typeof o == "number" && !Number.isFinite(o)) throw new RangeError(`${i.id} has a non-finite runtime value`);
       Array.isArray(o) ? s.push(...o) : o && typeof o == "object" && s.push(...Object.values(o));
     }
   }
-  if (!t.units.some((r) => r.side === "PLAYER") || !t.units.some((r) => r.side === "ENEMY")) throw new RangeError("Advanced battle requires both sides");
+  if (!t.units.some((i) => i.side === "PLAYER") || !t.units.some((i) => i.side === "ENEMY")) throw new RangeError("Advanced battle requires both sides");
   if (!Array.isArray(t.log) || t.log.length > 1e5) throw new RangeError("Advanced battle log is invalid");
-  for (const r of t.log) {
-    if (!n.has(r.actorId) || !t.skills[r.skillId]) throw new RangeError("Advanced battle log references an unknown actor or skill");
-    if (!Array.isArray(r.resolutions) || r.resolutions.some((i) => !n.has(i.targetId) || !Number.isFinite(i.amount))) throw new RangeError("Advanced battle resolution is invalid");
+  for (const i of t.log) {
+    if (!n.has(i.actorId) || !t.skills[i.skillId]) throw new RangeError("Advanced battle log references an unknown actor or skill");
+    if (!Array.isArray(i.resolutions) || i.resolutions.some((r) => !n.has(r.targetId) || !Number.isFinite(r.amount))) throw new RangeError("Advanced battle resolution is invalid");
   }
   return t;
-}, Te = (e, t) => {
-  const n = e.modifiers.filter((i) => i.stat === t && i.turns > 0).reduce((i, s) => J(i * (1 + s.value), 0, 100), 1), r = e.statuses.filter((i) => t === "defense" && i.kind === "CRACK" || t === "speed" && i.kind === "SLOW").reduce((i, s) => i * (1 - J(s.power, 0, 0.9)), 1);
-  return J(e.stats[t] * n * r);
-}, gt = (e, t) => e.units.filter((n) => n.alive && (t === void 0 || n.side === t)), Ln = (e, t) => {
-  const n = e.units.find((i) => i.id === t);
+}, ge = (e, t) => {
+  const n = e.modifiers.filter((r) => r.stat === t && r.turns > 0).reduce((r, s) => j(r * (1 + s.value), 0, 100), 1), i = e.statuses.filter((r) => t === "defense" && r.kind === "CRACK" || t === "speed" && r.kind === "SLOW").reduce((r, s) => r * (1 - j(s.power, 0, 0.9)), 1);
+  return j(e.stats[t] * n * i);
+}, et = (e, t) => e.units.filter((n) => n.alive && (t === void 0 || n.side === t)), pn = (e, t) => {
+  const n = e.units.find((r) => r.id === t);
   if (!n?.alive) return [];
-  const r = n.controls.some((i) => i.kind === "SILENCE" && i.turns > 0);
-  return n.skillIds.map((i) => e.skills[i]).filter((i) => !!i).filter((i) => (n.cooldowns[i.id] ?? 0) <= 0).filter((i) => (i.ultimateCost ?? 0) <= n.ultimate).filter((i) => !(r && (i.ultimateCost ?? 0) > 0));
-}, pr = (e) => gt(e).sort((t, n) => Te(n, "speed") - Te(t, "speed") || t.id.localeCompare(n.id)).map((t) => t.id), Ps = (e, t) => gt(e, t.side === "PLAYER" ? "ENEMY" : "PLAYER"), Fs = (e, t) => gt(e, t.side), In = (e, t) => {
+  const i = n.controls.some((r) => r.kind === "SILENCE" && r.turns > 0);
+  return n.skillIds.map((r) => e.skills[r]).filter((r) => !!r).filter((r) => (n.cooldowns[r.id] ?? 0) <= 0).filter((r) => (r.ultimateCost ?? 0) <= n.ultimate).filter((r) => !(i && (r.ultimateCost ?? 0) > 0));
+}, Qn = (e) => et(e).sort((t, n) => ge(n, "speed") - ge(t, "speed") || t.id.localeCompare(n.id)).map((t) => t.id), _s = (e, t) => et(e, t.side === "PLAYER" ? "ENEMY" : "PLAYER"), Cs = (e, t) => et(e, t.side), Jt = (e, t) => {
   if (!t?.length) return e;
   const n = new Set(t);
-  return e.filter((r) => n.has(r.id));
-}, Bs = (e, t, n, r) => {
-  const i = Fs(e, t), s = Ps(e, t);
+  return e.filter((i) => n.has(i.id));
+}, xs = (e, t, n, i) => {
+  const r = Cs(e, t), s = _s(e, t);
   switch (n.target) {
     case "SELF":
-      return r?.length && !r.includes(t.id) ? [] : [t];
+      return i?.length && !i.includes(t.id) ? [] : [t];
     case "ALL_ALLIES":
-      return i;
+      return r;
     case "ALLY_LOWEST": {
-      const o = In(i, r)[0];
-      return r?.length && !o ? [] : [o ?? [...i].sort((a, l) => a.hp / a.stats.maxHp - l.hp / l.stats.maxHp || a.id.localeCompare(l.id))[0]].filter(
+      const o = Jt(r, i)[0];
+      return i?.length && !o ? [] : [o ?? [...r].sort((a, c) => a.hp / a.stats.maxHp - c.hp / c.stats.maxHp || a.id.localeCompare(c.id))[0]].filter(
         (a) => !!a
       );
     }
     case "ALL_ENEMIES":
       return s;
     case "BOSS": {
-      const o = s.filter((l) => l.bossState), a = In(o, r)[0];
-      return r?.length && !a ? [] : [a ?? o[0] ?? In(s, r)[0] ?? s[0]].filter(
-        (l) => !!l
+      const o = s.filter((c) => c.bossState), a = Jt(o, i)[0];
+      return i?.length && !a ? [] : [a ?? o[0] ?? Jt(s, i)[0] ?? s[0]].filter(
+        (c) => !!c
       );
     }
     case "ENEMY": {
-      const o = s.find((l) => l.controls.some((d) => d.kind === "TAUNT" && d.turns > 0)), a = In(s, r)[0];
-      return r?.length && !a ? [] : [o ?? a ?? s[0]].filter((l) => !!l);
+      const o = s.find((c) => c.controls.some((l) => l.kind === "TAUNT" && l.turns > 0)), a = Jt(s, i)[0];
+      return i?.length && !a ? [] : [o ?? a ?? s[0]].filter((c) => !!c);
     }
   }
-}, fr = (e, t) => e.side !== t.side, hr = (e, t, n = 1) => {
-  const r = Te(e, "accuracy"), i = Te(t, "resistance");
-  return J((0.82 + (r - i) / (r + i + 200)) * n, 0.05, 0.99);
-}, ui = (e, t, n, r, i) => {
-  if (!i.chance(hr(e, t, r.chance ?? 1))) return { targetId: t.id, kind: r.kind, hit: !1, amount: 0 };
-  const s = i.chance(J(Te(e, "critChance"), 0, 0.95)), o = Te(e, "attack"), a = Te(t, "defense"), l = J(1 + (e.level - t.level) * 0.015, 0.25, 4), d = 100 / (100 + Math.sqrt(Math.max(0, a)) * 8);
-  let u = J(o * (r.power ?? 1) * l * d);
-  const h = n.element ?? e.element, w = {
+}, Zn = (e, t) => e.side !== t.side, ei = (e, t, n = 1) => {
+  const i = ge(e, "accuracy"), r = ge(t, "resistance");
+  return j((0.82 + (i - r) / (i + r + 200)) * n, 0.05, 0.99);
+}, tr = (e, t, n, i, r) => {
+  if (!r.chance(ei(e, t, i.chance ?? 1))) return { targetId: t.id, kind: i.kind, hit: !1, amount: 0 };
+  const s = r.chance(j(ge(e, "critChance"), 0, 0.95)), o = ge(e, "attack"), a = ge(t, "defense"), c = j(1 + (e.level - t.level) * 0.015, 0.25, 4), l = 100 / (100 + Math.sqrt(Math.max(0, a)) * 8);
+  let d = j(o * (i.power ?? 1) * c * l);
+  const f = n.element ?? e.element, y = {
     FIRE: ["EARTH"],
     EARTH: ["WIND"],
     WIND: ["WATER"],
@@ -1108,55 +1108,55 @@ const tt = (e, t, n) => {
     CRYSTAL: ["ANCIENT"],
     ANCIENT: ["METAL"]
   };
-  h && t.element && (w[h]?.includes(t.element) ? u = J(u * 1.2) : w[t.element]?.includes(h) && (u = J(u * 0.84))), s && (u = J(u * Te(e, "critDamage")));
-  const E = t.bossState?.weakPoint;
-  E && n.element === E && (u = J(u * (t.bossState?.profile.weakPointMultiplier ?? 1.5)));
-  const m = t.statuses.filter((p) => p.kind === "VULNERABLE").reduce((p, f) => p * (1 + J(f.power, 0, 2)), 1);
-  u = J(u * m), t.controls.some((p) => p.kind === "STUN" && p.sourceId === "break") && (u = J(u * 1.25));
-  const A = Math.max(1, Pt(u)), S = Math.min(t.shield, A);
-  t.shield = J(t.shield - S);
-  let k = S;
-  for (const p of t.statuses.filter((f) => f.kind === "SHIELD")) {
-    const f = Math.min(p.power, k);
-    if (p.power -= f, k -= f, k <= 0) break;
+  f && t.element && (y[f]?.includes(t.element) ? d = j(d * 1.2) : y[t.element]?.includes(f) && (d = j(d * 0.84))), s && (d = j(d * ge(e, "critDamage")));
+  const h = t.bossState?.weakPoint;
+  h && n.element === h && (d = j(d * (t.bossState?.profile.weakPointMultiplier ?? 1.5)));
+  const u = t.statuses.filter((m) => m.kind === "VULNERABLE").reduce((m, p) => m * (1 + j(p.power, 0, 2)), 1);
+  d = j(d * u), t.controls.some((m) => m.kind === "STUN" && m.sourceId === "break") && (d = j(d * 1.25));
+  const I = Math.max(1, yt(d)), g = Math.min(t.shield, I);
+  t.shield = j(t.shield - g);
+  let b = g;
+  for (const m of t.statuses.filter((p) => p.kind === "SHIELD")) {
+    const p = Math.min(m.power, b);
+    if (m.power -= p, b -= p, b <= 0) break;
   }
-  const T = Math.min(t.hp, A - S);
-  return t.hp = J(t.hp - T, 0, t.stats.maxHp), t.alive = t.hp > 0, t.ultimate = J(t.ultimate + Math.min(15, 5 + T / Math.max(1, t.stats.maxHp) * 20), 0, 100), { targetId: t.id, kind: r.kind, hit: !0, amount: T, absorbed: S, critical: s };
-}, qs = (e, t, n) => {
-  const r = Math.max(1, Pt(Te(e, "attack") * (n.power ?? 1))), i = Math.min(r, t.stats.maxHp - t.hp);
-  return t.hp = J(t.hp + i, 0, t.stats.maxHp), t.hp > 0 && (t.alive = !0), { targetId: t.id, kind: n.kind, hit: !0, amount: i };
-}, mi = (e, t, n) => {
-  const r = Math.max(1, Pt(Te(e, "attack") * (n.power ?? 1))), i = t.shield;
-  return t.shield = J(t.shield + r, 0, t.stats.maxHp * 3), { targetId: t.id, kind: n.kind, hit: !0, amount: t.shield - i };
-}, Gs = (e, t, n, r) => {
-  if (n.kind === "DEBUFF" && fr(e, t) && !r.chance(hr(e, t, n.chance ?? 1)))
+  const R = Math.min(t.hp, I - g);
+  return t.hp = j(t.hp - R, 0, t.stats.maxHp), t.alive = t.hp > 0, t.ultimate = j(t.ultimate + Math.min(15, 5 + R / Math.max(1, t.stats.maxHp) * 20), 0, 100), { targetId: t.id, kind: i.kind, hit: !0, amount: R, absorbed: g, critical: s };
+}, Ls = (e, t, n) => {
+  const i = Math.max(1, yt(ge(e, "attack") * (n.power ?? 1))), r = Math.min(i, t.stats.maxHp - t.hp);
+  return t.hp = j(t.hp + r, 0, t.stats.maxHp), t.hp > 0 && (t.alive = !0), { targetId: t.id, kind: n.kind, hit: !0, amount: r };
+}, nr = (e, t, n) => {
+  const i = Math.max(1, yt(ge(e, "attack") * (n.power ?? 1))), r = t.shield;
+  return t.shield = j(t.shield + i, 0, t.stats.maxHp * 3), { targetId: t.id, kind: n.kind, hit: !0, amount: t.shield - r };
+}, Ds = (e, t, n, i) => {
+  if (n.kind === "DEBUFF" && Zn(e, t) && !i.chance(ei(e, t, n.chance ?? 1)))
     return { targetId: t.id, kind: n.kind, hit: !1, amount: 0 };
   const s = n.kind === "DEBUFF" ? -Math.abs(n.value ?? 0.15) : Math.abs(n.value ?? 0.15);
-  return t.modifiers.push({ stat: n.stat, value: J(s, -0.9, 5), turns: Math.max(1, Math.floor(n.duration ?? 2)), sourceId: e.id }), { targetId: t.id, kind: n.kind, hit: !0, amount: s, status: n.stat };
-}, Us = (e, t, n, r) => {
-  if (fr(e, t) && !r.chance(hr(e, t, n.chance ?? 1)))
+  return t.modifiers.push({ stat: n.stat, value: j(s, -0.9, 5), turns: Math.max(1, Math.floor(n.duration ?? 2)), sourceId: e.id }), { targetId: t.id, kind: n.kind, hit: !0, amount: s, status: n.stat };
+}, Os = (e, t, n, i) => {
+  if (Zn(e, t) && !i.chance(ei(e, t, n.chance ?? 1)))
     return { targetId: t.id, kind: n.kind, hit: !1, amount: 0 };
   if (n.kind === "DOT")
-    return t.dots.push({ id: `${e.id}:${t.dots.length}`, power: J(n.power ?? 0.04, 0, 1), turns: Math.max(1, Math.floor(n.duration ?? 2)), sourceId: e.id }), { targetId: t.id, kind: n.kind, hit: !0, amount: n.power ?? 0.04, status: "DOT" };
+    return t.dots.push({ id: `${e.id}:${t.dots.length}`, power: j(n.power ?? 0.04, 0, 1), turns: Math.max(1, Math.floor(n.duration ?? 2)), sourceId: e.id }), { targetId: t.id, kind: n.kind, hit: !0, amount: n.power ?? 0.04, status: "DOT" };
   if (n.kind === "CONTROL") {
     const s = n.control ?? "STUN";
     return t.controls.push({ kind: s, turns: Math.max(1, Math.floor(n.duration ?? 1)), sourceId: e.id }), { targetId: t.id, kind: n.kind, hit: !0, amount: 0, status: s };
   }
   if (n.kind === "BREAK") {
-    const s = t.statuses.some((l) => l.kind === "CRACK"), o = J(((n.value ?? 20) + Te(e, "breakPower") * (n.power ?? 1)) * (s ? 1.3 : 1));
-    t.breakGauge = J(t.breakGauge + o, 0, t.bossState?.profile.breakThreshold ?? 100);
+    const s = t.statuses.some((c) => c.kind === "CRACK"), o = j(((n.value ?? 20) + ge(e, "breakPower") * (n.power ?? 1)) * (s ? 1.3 : 1));
+    t.breakGauge = j(t.breakGauge + o, 0, t.bossState?.profile.breakThreshold ?? 100);
     const a = t.bossState?.profile.breakThreshold ?? 100;
     return t.breakGauge >= a && (t.breakGauge = 0, t.controls.push({ kind: "STUN", turns: 1, sourceId: "break" })), { targetId: t.id, kind: n.kind, hit: !0, amount: o };
   }
   if (n.kind === "COUNTER")
-    return t.counter = { power: J(n.power ?? 0.6, 0, 10), turns: Math.max(1, Math.floor(n.duration ?? 2)), sourceId: e.id }, { targetId: t.id, kind: n.kind, hit: !0, amount: n.power ?? 0.6, status: "COUNTER" };
+    return t.counter = { power: j(n.power ?? 0.6, 0, 10), turns: Math.max(1, Math.floor(n.duration ?? 2)), sourceId: e.id }, { targetId: t.id, kind: n.kind, hit: !0, amount: n.power ?? 0.6, status: "COUNTER" };
   if (n.kind === "STATUS") {
     const s = n.status, o = Math.max(1, Math.floor(n.duration ?? 2));
     if (s === "STUN" || s === "SILENCE")
       return t.controls.push({ kind: s, turns: o, sourceId: e.id }), { targetId: t.id, kind: n.kind, hit: !0, amount: 0, status: s };
     if (s === "SHIELD") {
-      const d = mi(e, t, n);
-      return t.statuses.push({ kind: s, power: d.amount, turns: o, sourceId: e.id }), { ...d, kind: n.kind, status: s };
+      const l = nr(e, t, n);
+      return t.statuses.push({ kind: s, power: l.amount, turns: o, sourceId: e.id }), { ...l, kind: n.kind, status: s };
     }
     const a = {
       BURN: 0.035,
@@ -1164,114 +1164,114 @@ const tt = (e, t, n) => {
       VULNERABLE: 0.16,
       SLOW: 0.18,
       REGENERATION: 0.08
-    }, l = J(n.power ?? a[s] ?? 0, 0, s === "REGENERATION" || s === "BURN" ? 1 : 2);
-    return t.statuses.push({ kind: s, power: l, turns: o, sourceId: e.id }), { targetId: t.id, kind: n.kind, hit: !0, amount: l, status: s };
+    }, c = j(n.power ?? a[s] ?? 0, 0, s === "REGENERATION" || s === "BURN" ? 1 : 2);
+    return t.statuses.push({ kind: s, power: c, turns: o, sourceId: e.id }), { targetId: t.id, kind: n.kind, hit: !0, amount: c, status: s };
   }
-  const i = J(n.value ?? 10, 0, 100);
-  return t.ultimate = J(t.ultimate + i, 0, 100), { targetId: t.id, kind: n.kind, hit: !0, amount: i };
-}, pi = (e, t) => {
+  const r = j(n.value ?? 10, 0, 100);
+  return t.ultimate = j(t.ultimate + r, 0, 100), { targetId: t.id, kind: n.kind, hit: !0, amount: r };
+}, ir = (e, t) => {
   if (!t.bossState) return;
-  const n = t.hp / Math.max(1, t.stats.maxHp), r = [...t.bossState.profile.phases ?? []].sort((i, s) => s.hpRatio - i.hpRatio);
-  for (const i of r)
-    if (!(n > i.hpRatio || t.bossState.triggeredPhaseIds.includes(i.id))) {
-      t.bossState.triggeredPhaseIds.push(i.id), i.attackMultiplier !== void 0 && t.modifiers.push({ stat: "attack", value: i.attackMultiplier - 1, turns: Number.MAX_SAFE_INTEGER, sourceId: `phase:${i.id}` }), i.defenseMultiplier !== void 0 && t.modifiers.push({ stat: "defense", value: i.defenseMultiplier - 1, turns: Number.MAX_SAFE_INTEGER, sourceId: `phase:${i.id}` }), i.speedMultiplier !== void 0 && t.modifiers.push({ stat: "speed", value: i.speedMultiplier - 1, turns: Number.MAX_SAFE_INTEGER, sourceId: `phase:${i.id}` }), i.weakPoint && (t.bossState.weakPoint = i.weakPoint), t.ultimate = J(t.ultimate + (i.ultimateGain ?? 0), 0, 100);
-      for (const [s, o] of (i.summons ?? []).entries()) {
-        const a = dr(o);
-        a.side = t.side, a.id = `${t.id}:${i.id}:${s}:${a.id}`;
-        const l = li(a);
-        di(l, e.synergies[t.side]), e.units.push(l);
+  const n = t.hp / Math.max(1, t.stats.maxHp), i = [...t.bossState.profile.phases ?? []].sort((r, s) => s.hpRatio - r.hpRatio);
+  for (const r of i)
+    if (!(n > r.hpRatio || t.bossState.triggeredPhaseIds.includes(r.id))) {
+      t.bossState.triggeredPhaseIds.push(r.id), r.attackMultiplier !== void 0 && t.modifiers.push({ stat: "attack", value: r.attackMultiplier - 1, turns: Number.MAX_SAFE_INTEGER, sourceId: `phase:${r.id}` }), r.defenseMultiplier !== void 0 && t.modifiers.push({ stat: "defense", value: r.defenseMultiplier - 1, turns: Number.MAX_SAFE_INTEGER, sourceId: `phase:${r.id}` }), r.speedMultiplier !== void 0 && t.modifiers.push({ stat: "speed", value: r.speedMultiplier - 1, turns: Number.MAX_SAFE_INTEGER, sourceId: `phase:${r.id}` }), r.weakPoint && (t.bossState.weakPoint = r.weakPoint), t.ultimate = j(t.ultimate + (r.ultimateGain ?? 0), 0, 100);
+      for (const [s, o] of (r.summons ?? []).entries()) {
+        const a = Kn(o);
+        a.side = t.side, a.id = `${t.id}:${r.id}:${s}:${a.id}`;
+        const c = Zi(a);
+        er(c, e.synergies[t.side]), e.units.push(c);
       }
     }
-}, an = (e) => {
-  const t = e.units.some((r) => r.side === "PLAYER" && r.alive), n = e.units.some((r) => r.side === "ENEMY" && r.alive);
+}, Gt = (e) => {
+  const t = e.units.some((i) => i.side === "PLAYER" && i.alive), n = e.units.some((i) => i.side === "ENEMY" && i.alive);
   !t && !n ? e.outcome = "DRAW" : n ? t ? e.turn >= e.maxTurns && (e.outcome = "DRAW") : e.outcome = "ENEMY" : e.outcome = "PLAYER";
-}, Hs = (e, t, n, r) => {
+}, $s = (e, t, n, i) => {
   if (!t.alive || !n.alive || !t.counter || t.counter.turns <= 0) return;
-  const i = ui(
+  const r = tr(
     t,
     n,
     {},
     { kind: "DAMAGE", power: t.counter.power, chance: 1 },
-    r
+    i
   );
-  return n.bossState && pi(e, n), { actorId: t.id, targetId: n.id, damage: i.amount };
-}, js = (e, t, n) => {
+  return n.bossState && ir(e, n), { actorId: t.id, targetId: n.id, damage: r.amount };
+}, Ps = (e, t, n) => {
   if (e.outcome) throw new RangeError("Battle has already ended");
-  const r = e.units.find((d) => d.id === t.actorId);
-  if (!r?.alive) throw new RangeError(`Actor ${t.actorId} is unavailable`);
-  const i = e.skills[t.skillId];
-  if (!i || !r.skillIds.includes(i.id)) throw new RangeError(`Skill ${t.skillId} is unavailable`);
-  if (!Ln(e, r.id).some((d) => d.id === i.id)) throw new RangeError(`Skill ${t.skillId} is not ready`);
-  const s = Bs(e, r, i, t.targetIds);
+  const i = e.units.find((l) => l.id === t.actorId);
+  if (!i?.alive) throw new RangeError(`Actor ${t.actorId} is unavailable`);
+  const r = e.skills[t.skillId];
+  if (!r || !i.skillIds.includes(r.id)) throw new RangeError(`Skill ${t.skillId} is unavailable`);
+  if (!pn(e, i.id).some((l) => l.id === r.id)) throw new RangeError(`Skill ${t.skillId} is not ready`);
+  const s = xs(e, i, r, t.targetIds);
   if (s.length === 0) throw new RangeError(`Skill ${t.skillId} has no valid target`);
-  r.ultimate = J(r.ultimate - (i.ultimateCost ?? 0), 0, 100), (i.cooldown ?? 0) > 0 && (r.cooldowns[i.id] = Math.floor(i.cooldown ?? 0) + 1);
+  i.ultimate = j(i.ultimate - (r.ultimateCost ?? 0), 0, 100), (r.cooldown ?? 0) > 0 && (i.cooldowns[r.id] = Math.floor(r.cooldown ?? 0) + 1);
   const o = [];
   let a;
-  for (const d of i.effects) {
-    for (const u of s.filter((h) => h.alive)) {
-      let h;
-      if (d.kind === "DAMAGE" ? h = ui(r, u, i, d, n) : d.kind === "HEAL" ? h = qs(r, u, d) : d.kind === "SHIELD" ? h = mi(r, u, d) : d.kind === "BUFF" || d.kind === "DEBUFF" ? h = Gs(r, u, d, n) : h = Us(r, u, d, n), o.push(h), d.kind === "DAMAGE" && h.hit && u.bossState && pi(e, u), d.kind === "DAMAGE" && h.hit && (h.amount > 0 || (h.absorbed ?? 0) > 0) && fr(r, u) && (a = Hs(e, u, r, n) ?? a), an(e), e.outcome) break;
+  for (const l of r.effects) {
+    for (const d of s.filter((f) => f.alive)) {
+      let f;
+      if (l.kind === "DAMAGE" ? f = tr(i, d, r, l, n) : l.kind === "HEAL" ? f = Ls(i, d, l) : l.kind === "SHIELD" ? f = nr(i, d, l) : l.kind === "BUFF" || l.kind === "DEBUFF" ? f = Ds(i, d, l, n) : f = Os(i, d, l, n), o.push(f), l.kind === "DAMAGE" && f.hit && d.bossState && ir(e, d), l.kind === "DAMAGE" && f.hit && (f.amount > 0 || (f.absorbed ?? 0) > 0) && Zn(i, d) && (a = $s(e, d, i, n) ?? a), Gt(e), e.outcome) break;
     }
     if (e.outcome) break;
   }
-  (i.ultimateCost ?? 0) === 0 && (r.ultimate = J(r.ultimate + 12, 0, 100));
-  const l = { turn: e.turn, actorId: r.id, skillId: i.id, resolutions: o, counter: a };
-  return e.log.push(l), an(e), l;
-}, Ys = (e, t) => {
+  (r.ultimateCost ?? 0) === 0 && (i.ultimate = j(i.ultimate + 12, 0, 100));
+  const c = { turn: e.turn, actorId: i.id, skillId: r.id, resolutions: o, counter: a };
+  return e.log.push(c), Gt(e), c;
+}, Fs = (e, t) => {
   for (const n of t.dots) {
-    const r = Math.max(1, Pt(t.stats.maxHp * n.power));
-    t.hp = J(t.hp - Math.min(t.hp, r), 0, t.stats.maxHp), n.turns -= 1;
+    const i = Math.max(1, yt(t.stats.maxHp * n.power));
+    t.hp = j(t.hp - Math.min(t.hp, i), 0, t.stats.maxHp), n.turns -= 1;
   }
   t.dots = t.dots.filter((n) => n.turns > 0);
   for (const n of t.statuses)
     if (n.kind === "BURN") {
-      const r = Math.max(1, Pt(t.stats.maxHp * n.power));
-      t.hp = J(t.hp - Math.min(t.hp, r), 0, t.stats.maxHp);
+      const i = Math.max(1, yt(t.stats.maxHp * n.power));
+      t.hp = j(t.hp - Math.min(t.hp, i), 0, t.stats.maxHp);
     } else if (n.kind === "REGENERATION" && t.hp > 0) {
-      const r = Math.max(1, Pt(t.stats.maxHp * n.power));
-      t.hp = J(t.hp + r, 0, t.stats.maxHp);
+      const i = Math.max(1, yt(t.stats.maxHp * n.power));
+      t.hp = j(t.hp + i, 0, t.stats.maxHp);
     }
-  return t.alive = t.hp > 0, an(e), t.controls.some((n) => n.kind === "STUN" && n.turns > 0);
-}, Vs = (e) => {
+  return t.alive = t.hp > 0, Gt(e), t.controls.some((n) => n.kind === "STUN" && n.turns > 0);
+}, Bs = (e) => {
   for (const n of Object.keys(e.cooldowns)) e.cooldowns[n] = Math.max(0, (e.cooldowns[n] ?? 0) - 1);
   for (const n of e.modifiers) n.turns < Number.MAX_SAFE_INTEGER && (n.turns -= 1);
   e.modifiers = e.modifiers.filter((n) => n.turns > 0);
   for (const n of e.controls) n.turns -= 1;
   e.controls = e.controls.filter((n) => n.turns > 0);
   for (const n of e.statuses) n.turns -= 1;
-  const t = e.statuses.filter((n) => n.kind === "SHIELD" && n.turns <= 0).reduce((n, r) => n + r.power, 0);
-  e.shield = J(e.shield - t, 0, e.stats.maxHp * 3), e.statuses = e.statuses.filter((n) => n.turns > 0 && (n.kind !== "SHIELD" || n.power > 0)), e.counter && (e.counter.turns -= 1, e.counter.turns <= 0 && (e.counter = null));
-}, Xs = (e) => {
+  const t = e.statuses.filter((n) => n.kind === "SHIELD" && n.turns <= 0).reduce((n, i) => n + i.power, 0);
+  e.shield = j(e.shield - t, 0, e.stats.maxHp * 3), e.statuses = e.statuses.filter((n) => n.turns > 0 && (n.kind !== "SHIELD" || n.power > 0)), e.counter && (e.counter.turns -= 1, e.counter.turns <= 0 && (e.counter = null));
+}, Gs = (e) => {
   for (const t of e.units) {
     const n = t.bossState;
     if (!t.alive || !n || n.enraged || !n.profile.enrageTurn || e.turn < n.profile.enrageTurn) continue;
     n.enraged = !0;
-    const r = (n.profile.enrageMultiplier ?? 1.5) - 1;
+    const i = (n.profile.enrageMultiplier ?? 1.5) - 1;
     t.modifiers.push(
-      { stat: "attack", value: r, turns: Number.MAX_SAFE_INTEGER, sourceId: "enrage" },
-      { stat: "speed", value: r * 0.5, turns: Number.MAX_SAFE_INTEGER, sourceId: "enrage" }
+      { stat: "attack", value: i, turns: Number.MAX_SAFE_INTEGER, sourceId: "enrage" },
+      { stat: "speed", value: i * 0.5, turns: Number.MAX_SAFE_INTEGER, sourceId: "enrage" }
     );
   }
-}, Dn = (e, t, n) => {
+}, fn = (e, t, n) => {
   if (e.outcome) return e;
-  e.turn += 1, Xs(e);
-  const r = pr(e);
-  for (const i of r) {
+  e.turn += 1, Gs(e);
+  const i = Qn(e);
+  for (const r of i) {
     if (e.outcome) break;
-    const s = e.units.find((a) => a.id === i);
+    const s = e.units.find((a) => a.id === r);
     if (!s?.alive) continue;
-    const o = Ys(e, s);
+    const o = Fs(e, s);
     if (!e.outcome && !o) {
-      const a = t.commands?.[i] ?? t.commandProvider?.(e, i, n) ?? null;
-      a && js(e, a, n);
+      const a = t.commands?.[r] ?? t.commandProvider?.(e, r, n) ?? null;
+      a && Ps(e, a, n);
     }
-    Vs(s);
+    Bs(s);
   }
-  return an(e), e;
-}, fi = (e, t, n) => {
-  for (; !e.outcome && e.turn < e.maxTurns; ) Dn(e, { commandProvider: t }, n);
-  return an(e), e;
-}, Ws = {
+  return Gt(e), e;
+}, rr = (e, t, n) => {
+  for (; !e.outcome && e.turn < e.maxTurns; ) fn(e, { commandProvider: t }, n);
+  return Gt(e), e;
+}, qs = {
   strike: { id: "strike", name: "Stone Strike", target: "ENEMY", effects: [{ kind: "DAMAGE", power: 1 }], tags: ["ATTACK"] },
   sweep: { id: "sweep", name: "Shard Sweep", target: "ALL_ENEMIES", effects: [{ kind: "DAMAGE", power: 0.68 }], cooldown: 2, tags: ["ATTACK"] },
   mend: {
@@ -1326,7 +1326,7 @@ const tt = (e, t, n) => {
     ultimateCost: 100,
     tags: ["ATTACK", "BREAK", "ULTIMATE"]
   }
-}, Ks = ["BALANCED", "AGGRESSIVE", "DEFENSIVE", "BOSS_FOCUS", "RESOURCE_SAVE"], zs = [...Ks, "CONTROL", "BOSS_HUNTER"], pe = (e, t) => e.tags?.includes(t) ?? !1, Er = (e) => e.side === "PLAYER" ? "ENEMY" : "PLAYER", kr = {
+}, Us = ["BALANCED", "AGGRESSIVE", "DEFENSIVE", "BOSS_FOCUS", "RESOURCE_SAVE"], Hs = [...Us, "CONTROL", "BOSS_HUNTER"], ie = (e, t) => e.tags?.includes(t) ?? !1, ti = (e) => e.side === "PLAYER" ? "ENEMY" : "PLAYER", Ai = {
   FIRE: ["EARTH"],
   EARTH: ["WIND"],
   WIND: ["WATER"],
@@ -1336,171 +1336,171 @@ const tt = (e, t, n) => {
   METAL: ["CRYSTAL"],
   CRYSTAL: ["ANCIENT"],
   ANCIENT: ["METAL"]
-}, Ae = (e, t) => {
+}, le = (e, t) => {
   e.includes(t) || e.push(t);
-}, hi = (e, t, n) => {
-  if (!pe(t, "ATTACK") && !t.effects.some((i) => i.kind === "DAMAGE")) return { score: 0 };
+}, sr = (e, t, n) => {
+  if (!ie(t, "ATTACK") && !t.effects.some((r) => r.kind === "DAMAGE")) return { score: 0 };
   if (t.element && n.bossState?.weakPoint === t.element)
     return { score: 350, reason: "element-weak-point" };
-  const r = t.element ?? e.element;
-  return !r || !n.element || r === "NEUTRAL" || n.element === "NEUTRAL" ? { score: 0 } : kr[r]?.includes(n.element) ? { score: 120, reason: "element-advantage" } : kr[n.element]?.includes(r) ? { score: -170, reason: "element-resisted" } : { score: 0 };
-}, gr = (e, t) => gt(e, t.side).sort(
-  (n, r) => n.hp / Math.max(1, n.stats.maxHp) - r.hp / Math.max(1, r.stats.maxHp) || n.id.localeCompare(r.id)
-)[0], zn = (e, t, n) => e.modifiers.some(
-  (r) => r.turns > 0 && r.sourceId !== "team-synergy" && r.stat === t && (n ? r.value > 0 : r.value < 0)
-), bt = (e, t) => e.controls.some((n) => n.turns > 0 && n.kind === t), vn = (e, t) => e.statuses.some((n) => n.turns > 0 && n.kind === t), Qs = (e, t) => e.effects.reduce((n, r) => {
-  if (r.kind === "DEBUFF" && r.stat) return n + (zn(t, r.stat, !1) ? -55 : 35);
-  if (r.kind === "DOT") return n + (t.dots.some((i) => i.turns > 0) ? -55 : 35);
-  if (r.kind === "CONTROL") return n + (bt(t, r.control ?? "STUN") ? -70 : 45);
-  if (r.kind === "STATUS" && r.status) {
-    if (r.status === "STUN" || r.status === "SILENCE")
-      return n + (bt(t, r.status) ? -70 : 45);
-    if (["BURN", "CRACK", "VULNERABLE", "SLOW"].includes(r.status))
-      return n + (vn(t, r.status) ? -55 : 35);
+  const i = t.element ?? e.element;
+  return !i || !n.element || i === "NEUTRAL" || n.element === "NEUTRAL" ? { score: 0 } : Ai[i]?.includes(n.element) ? { score: 120, reason: "element-advantage" } : Ai[n.element]?.includes(i) ? { score: -170, reason: "element-resisted" } : { score: 0 };
+}, ni = (e, t) => et(e, t.side).sort(
+  (n, i) => n.hp / Math.max(1, n.stats.maxHp) - i.hp / Math.max(1, i.stats.maxHp) || n.id.localeCompare(i.id)
+)[0], On = (e, t, n) => e.modifiers.some(
+  (i) => i.turns > 0 && i.sourceId !== "team-synergy" && i.stat === t && (n ? i.value > 0 : i.value < 0)
+), lt = (e, t) => e.controls.some((n) => n.turns > 0 && n.kind === t), tn = (e, t) => e.statuses.some((n) => n.turns > 0 && n.kind === t), Ys = (e, t) => e.effects.reduce((n, i) => {
+  if (i.kind === "DEBUFF" && i.stat) return n + (On(t, i.stat, !1) ? -55 : 35);
+  if (i.kind === "DOT") return n + (t.dots.some((r) => r.turns > 0) ? -55 : 35);
+  if (i.kind === "CONTROL") return n + (lt(t, i.control ?? "STUN") ? -70 : 45);
+  if (i.kind === "STATUS" && i.status) {
+    if (i.status === "STUN" || i.status === "SILENCE")
+      return n + (lt(t, i.status) ? -70 : 45);
+    if (["BURN", "CRACK", "VULNERABLE", "SLOW"].includes(i.status))
+      return n + (tn(t, i.status) ? -55 : 35);
   }
   return n;
-}, 0), Cr = (e, t, n, r) => {
-  let i = Math.round((1 - t.hp / Math.max(1, t.stats.maxHp)) * 100);
-  const s = hi(e, n, t);
-  if (i += s.score, i += Qs(n, t), n.effects.some((o) => !["HEAL", "SHIELD", "BUFF", "COUNTER", "ULTIMATE_GAIN"].includes(o.kind))) {
-    const o = Te(e, "accuracy"), a = Te(t, "resistance");
-    i += Math.max(-120, Math.min(50, Math.round((o - a) / Math.max(200, o + a + 200) * 240)));
+}, 0), wi = (e, t, n, i) => {
+  let r = Math.round((1 - t.hp / Math.max(1, t.stats.maxHp)) * 100);
+  const s = sr(e, n, t);
+  if (r += s.score, r += Ys(n, t), n.effects.some((o) => !["HEAL", "SHIELD", "BUFF", "COUNTER", "ULTIMATE_GAIN"].includes(o.kind))) {
+    const o = ge(e, "accuracy"), a = ge(t, "resistance");
+    r += Math.max(-120, Math.min(50, Math.round((o - a) / Math.max(200, o + a + 200) * 240)));
   }
-  return t.bossState && (r === "BOSS_HUNTER" || r === "BOSS_FOCUS") && (i += 2e3), t.bossState && r === "CONTROL" && !bt(t, "STUN") && (i += 1200), i;
-}, Ei = (e, t, n, r) => {
-  const i = gt(e, Er(t)), s = i.filter((a) => a.bossState);
-  return [...r.target === "BOSS" && s.length > 0 ? s : i].sort(
-    (a, l) => Cr(t, l, r, n) - Cr(t, a, r, n) || a.hp / Math.max(1, a.stats.maxHp) - l.hp / Math.max(1, l.stats.maxHp) || a.id.localeCompare(l.id)
+  return t.bossState && (i === "BOSS_HUNTER" || i === "BOSS_FOCUS") && (r += 2e3), t.bossState && i === "CONTROL" && !lt(t, "STUN") && (r += 1200), r;
+}, or = (e, t, n, i) => {
+  const r = et(e, ti(t)), s = r.filter((a) => a.bossState);
+  return [...i.target === "BOSS" && s.length > 0 ? s : r].sort(
+    (a, c) => wi(t, c, i, n) - wi(t, a, i, n) || a.hp / Math.max(1, a.stats.maxHp) - c.hp / Math.max(1, c.stats.maxHp) || a.id.localeCompare(c.id)
   )[0];
-}, Js = (e, t) => {
+}, js = (e, t) => {
   switch (e) {
     case "AGGRESSIVE":
-      return (pe(t, "ATTACK") ? 180 : 0) + (pe(t, "ULTIMATE") ? 200 : 0);
+      return (ie(t, "ATTACK") ? 180 : 0) + (ie(t, "ULTIMATE") ? 200 : 0);
     case "DEFENSIVE":
-      return (pe(t, "HEAL") ? 220 : 0) + (pe(t, "DEFENSE") ? 180 : 0);
+      return (ie(t, "HEAL") ? 220 : 0) + (ie(t, "DEFENSE") ? 180 : 0);
     case "CONTROL":
-      return (pe(t, "CONTROL") ? 240 : 0) + (pe(t, "BREAK") ? 190 : 0);
+      return (ie(t, "CONTROL") ? 240 : 0) + (ie(t, "BREAK") ? 190 : 0);
     case "BOSS_HUNTER":
     case "BOSS_FOCUS":
-      return (pe(t, "ATTACK") ? 100 : 0) + (pe(t, "BREAK") ? 210 : 0);
+      return (ie(t, "ATTACK") ? 100 : 0) + (ie(t, "BREAK") ? 210 : 0);
     case "RESOURCE_SAVE":
       return (t.ultimateCost ?? 0) > 0 ? -1050 : (t.cooldown ?? 0) > 1 ? -120 : 130;
     case "BALANCED":
-      return pe(t, "ATTACK") ? 70 : 50;
+      return ie(t, "ATTACK") ? 70 : 50;
   }
-}, gi = (e, t, n, r) => {
-  if (n.target === "ALL_ENEMIES") return gt(e, Er(t));
+}, ar = (e, t, n, i) => {
+  if (n.target === "ALL_ENEMIES") return et(e, ti(t));
   if (n.target === "ENEMY" || n.target === "BOSS") {
-    const i = Ei(e, t, r, n);
-    return i ? [i] : [];
-  }
-  return [];
-}, Zs = (e, t, n) => {
-  if (n.target === "SELF") return [t];
-  if (n.target === "ALL_ALLIES") return gt(e, t.side);
-  if (n.target === "ALLY_LOWEST") {
-    const r = gr(e, t);
+    const r = or(e, t, i, n);
     return r ? [r] : [];
   }
   return [];
-}, Je = (e, t, n = 180, r = 220) => {
+}, Vs = (e, t, n) => {
+  if (n.target === "SELF") return [t];
+  if (n.target === "ALL_ALLIES") return et(e, t.side);
+  if (n.target === "ALLY_LOWEST") {
+    const i = ni(e, t);
+    return i ? [i] : [];
+  }
+  return [];
+}, Pe = (e, t, n = 180, i = 220) => {
   if (t === 0) return 0;
-  const i = e / t;
-  return Math.round(n * i - r * (1 - i));
-}, eo = (e, t, n, r, i) => {
-  const s = gi(e, t, n, r), o = Zs(e, t, n);
+  const r = e / t;
+  return Math.round(n * r - i * (1 - r));
+}, Xs = (e, t, n, i, r) => {
+  const s = ar(e, t, n, i), o = Vs(e, t, n);
   let a = 0;
-  for (const l of n.effects)
-    if (l.kind === "BUFF" && l.stat && o.length > 0) {
-      const d = o.filter((u) => !zn(u, l.stat, !0)).length;
-      a += Je(d, o.length), Ae(i, d > 0 ? "buff-coverage" : "buff-already-active");
-    } else if (l.kind === "DEBUFF" && l.stat && s.length > 0) {
-      const d = s.filter((u) => !zn(u, l.stat, !1)).length;
-      a += Je(d, s.length), Ae(i, d > 0 ? "debuff-coverage" : "debuff-already-active");
-    } else if (l.kind === "DOT" && s.length > 0) {
-      const d = s.filter((u) => !u.dots.some((h) => h.turns > 0)).length;
-      a += Je(d, s.length, 160, 210), Ae(i, d > 0 ? "dot-window" : "dot-already-active");
-    } else if (l.kind === "CONTROL" && s.length > 0) {
-      const d = l.control ?? "STUN", u = s.filter((h) => !bt(h, d)).length;
-      a += Je(u, s.length, 190, 260), Ae(i, u > 0 ? "control-window" : "control-already-active");
-    } else if (l.kind === "BREAK" && s.length > 0) {
-      const d = s.filter((h) => !bt(h, "STUN")).length, u = Math.max(
+  for (const c of n.effects)
+    if (c.kind === "BUFF" && c.stat && o.length > 0) {
+      const l = o.filter((d) => !On(d, c.stat, !0)).length;
+      a += Pe(l, o.length), le(r, l > 0 ? "buff-coverage" : "buff-already-active");
+    } else if (c.kind === "DEBUFF" && c.stat && s.length > 0) {
+      const l = s.filter((d) => !On(d, c.stat, !1)).length;
+      a += Pe(l, s.length), le(r, l > 0 ? "debuff-coverage" : "debuff-already-active");
+    } else if (c.kind === "DOT" && s.length > 0) {
+      const l = s.filter((d) => !d.dots.some((f) => f.turns > 0)).length;
+      a += Pe(l, s.length, 160, 210), le(r, l > 0 ? "dot-window" : "dot-already-active");
+    } else if (c.kind === "CONTROL" && s.length > 0) {
+      const l = c.control ?? "STUN", d = s.filter((f) => !lt(f, l)).length;
+      a += Pe(d, s.length, 190, 260), le(r, d > 0 ? "control-window" : "control-already-active");
+    } else if (c.kind === "BREAK" && s.length > 0) {
+      const l = s.filter((f) => !lt(f, "STUN")).length, d = Math.max(
         0,
-        ...s.map((h) => h.breakGauge / Math.max(1, h.bossState?.profile.breakThreshold ?? 100))
+        ...s.map((f) => f.breakGauge / Math.max(1, f.bossState?.profile.breakThreshold ?? 100))
       );
-      a += Je(d, s.length, 100 + Math.round(u * 160), 230), Ae(i, d > 0 ? "break-progress" : "break-already-controlled");
-    } else if (l.kind === "SHIELD" && o.length > 0) {
-      const d = o.filter((u) => u.shield < u.stats.maxHp * 0.25).length;
-      a += Je(d, o.length, 150, 230), Ae(i, d > 0 ? "shield-window" : "shield-already-active");
-    } else if (l.kind === "STATUS" && l.status) {
-      if ((l.status === "STUN" || l.status === "SILENCE") && s.length > 0) {
-        const d = s.filter((u) => !bt(u, l.status)).length;
-        a += Je(d, s.length, 190, 260), Ae(i, d > 0 ? "control-window" : "control-already-active");
-      } else if (["BURN", "CRACK", "VULNERABLE", "SLOW"].includes(l.status) && s.length > 0) {
-        const d = s.filter((u) => !vn(u, l.status)).length;
-        a += Je(d, s.length, 150, 210), Ae(i, d > 0 ? l.status === "BURN" ? "dot-window" : "debuff-coverage" : l.status === "BURN" ? "dot-already-active" : "debuff-already-active");
-      } else if (l.status === "REGENERATION" && o.length > 0) {
-        const d = o.filter((u) => !vn(u, l.status) && u.hp < u.stats.maxHp).length;
-        a += Je(d, o.length, 130, 190), Ae(i, d > 0 ? "buff-coverage" : "buff-already-active");
-      } else if (l.status === "SHIELD" && o.length > 0) {
-        const d = o.filter((u) => !vn(u, l.status) && u.shield < u.stats.maxHp * 0.25).length;
-        a += Je(d, o.length, 150, 230), Ae(i, d > 0 ? "shield-window" : "shield-already-active");
+      a += Pe(l, s.length, 100 + Math.round(d * 160), 230), le(r, l > 0 ? "break-progress" : "break-already-controlled");
+    } else if (c.kind === "SHIELD" && o.length > 0) {
+      const l = o.filter((d) => d.shield < d.stats.maxHp * 0.25).length;
+      a += Pe(l, o.length, 150, 230), le(r, l > 0 ? "shield-window" : "shield-already-active");
+    } else if (c.kind === "STATUS" && c.status) {
+      if ((c.status === "STUN" || c.status === "SILENCE") && s.length > 0) {
+        const l = s.filter((d) => !lt(d, c.status)).length;
+        a += Pe(l, s.length, 190, 260), le(r, l > 0 ? "control-window" : "control-already-active");
+      } else if (["BURN", "CRACK", "VULNERABLE", "SLOW"].includes(c.status) && s.length > 0) {
+        const l = s.filter((d) => !tn(d, c.status)).length;
+        a += Pe(l, s.length, 150, 210), le(r, l > 0 ? c.status === "BURN" ? "dot-window" : "debuff-coverage" : c.status === "BURN" ? "dot-already-active" : "debuff-already-active");
+      } else if (c.status === "REGENERATION" && o.length > 0) {
+        const l = o.filter((d) => !tn(d, c.status) && d.hp < d.stats.maxHp).length;
+        a += Pe(l, o.length, 130, 190), le(r, l > 0 ? "buff-coverage" : "buff-already-active");
+      } else if (c.status === "SHIELD" && o.length > 0) {
+        const l = o.filter((d) => !tn(d, c.status) && d.shield < d.stats.maxHp * 0.25).length;
+        a += Pe(l, o.length, 150, 230), le(r, l > 0 ? "shield-window" : "shield-already-active");
       }
     }
   return a;
-}, to = (e, t, n, r) => {
-  const i = gt(e, Er(t)), s = gr(e, t), o = s ? s.hp / Math.max(1, s.stats.maxHp) : 1, a = gi(e, t, n, r), l = a.find((w) => w.bossState);
-  let d = n.priority ?? 0;
-  const u = [];
-  if (d += Js(r, n), t.role === "BREAKER" && pe(n, "BREAK") && (d += 180), t.role === "GUARDIAN" && pe(n, "DEFENSE") && (d += 180), pe(n, "HEAL") && (d += Math.round((1 - o) * 500), o <= 0.42 ? (d += 1200, u.push("emergency-heal")) : o >= 0.98 && (d -= 600)), pe(n, "DEFENSE")) {
-    const w = t.hp / Math.max(1, t.stats.maxHp);
-    d += Math.round((1 - w) * 250), t.shield > t.stats.maxHp * 0.4 && (d -= 300);
+}, Ws = (e, t, n, i) => {
+  const r = et(e, ti(t)), s = ni(e, t), o = s ? s.hp / Math.max(1, s.stats.maxHp) : 1, a = ar(e, t, n, i), c = a.find((y) => y.bossState);
+  let l = n.priority ?? 0;
+  const d = [];
+  if (l += js(i, n), t.role === "BREAKER" && ie(n, "BREAK") && (l += 180), t.role === "GUARDIAN" && ie(n, "DEFENSE") && (l += 180), ie(n, "HEAL") && (l += Math.round((1 - o) * 500), o <= 0.42 ? (l += 1200, d.push("emergency-heal")) : o >= 0.98 && (l -= 600)), ie(n, "DEFENSE")) {
+    const y = t.hp / Math.max(1, t.stats.maxHp);
+    l += Math.round((1 - y) * 250), t.shield > t.stats.maxHp * 0.4 && (l -= 300);
   }
-  if ((n.ultimateCost ?? 0) > 0 ? (d += 900, Ae(u, "ready-ultimate")) : r === "RESOURCE_SAVE" && Ae(u, "resource-conservation"), n.target === "ALL_ENEMIES" && (d += i.length * 90, i.length >= 3 ? (d += 320, Ae(u, "multi-target")) : i.length === 1 && (d -= 100)), l && (r === "BOSS_HUNTER" || r === "BOSS_FOCUS") && (n.target === "ENEMY" || n.target === "BOSS") && (d += 420, Ae(u, "boss-focus")), l && (pe(n, "BREAK") || pe(n, "CONTROL")) && !bt(l, "STUN") && (d += 260, Ae(u, "break-window")), d += eo(e, t, n, r, u), a.length > 0) {
-    const w = a.map((m) => hi(t, n, m));
-    d += Math.round(w.reduce((m, A) => m + A.score, 0) / a.length);
-    for (const m of w) m.reason && Ae(u, m.reason);
-    if (n.effects.some((m) => !["HEAL", "SHIELD", "BUFF", "COUNTER", "ULTIMATE_GAIN"].includes(m.kind))) {
-      const m = Te(t, "accuracy"), A = a.reduce((k, T) => k + Te(T, "resistance"), 0) / a.length, S = Math.round((m - A) / Math.max(200, m + A + 200) * 300);
-      d += Math.max(-180, Math.min(60, S)), A > m && Ae(u, "target-resistance");
+  if ((n.ultimateCost ?? 0) > 0 ? (l += 900, le(d, "ready-ultimate")) : i === "RESOURCE_SAVE" && le(d, "resource-conservation"), n.target === "ALL_ENEMIES" && (l += r.length * 90, r.length >= 3 ? (l += 320, le(d, "multi-target")) : r.length === 1 && (l -= 100)), c && (i === "BOSS_HUNTER" || i === "BOSS_FOCUS") && (n.target === "ENEMY" || n.target === "BOSS") && (l += 420, le(d, "boss-focus")), c && (ie(n, "BREAK") || ie(n, "CONTROL")) && !lt(c, "STUN") && (l += 260, le(d, "break-window")), l += Xs(e, t, n, i, d), a.length > 0) {
+    const y = a.map((u) => sr(t, n, u));
+    l += Math.round(y.reduce((u, I) => u + I.score, 0) / a.length);
+    for (const u of y) u.reason && le(d, u.reason);
+    if (n.effects.some((u) => !["HEAL", "SHIELD", "BUFF", "COUNTER", "ULTIMATE_GAIN"].includes(u.kind))) {
+      const u = ge(t, "accuracy"), I = a.reduce((b, R) => b + ge(R, "resistance"), 0) / a.length, g = Math.round((u - I) / Math.max(200, u + I + 200) * 300);
+      l += Math.max(-180, Math.min(60, g)), I > u && le(d, "target-resistance");
     }
   }
-  const h = a.filter((w) => w.bossState);
-  if (h.some((w) => (w.bossState?.triggeredPhaseIds.length ?? 0) > 0)) {
-    const w = Math.max(...h.map((m) => m.bossState?.triggeredPhaseIds.length ?? 0)), E = (pe(n, "ATTACK") ? 70 : 0) + (pe(n, "BREAK") || pe(n, "CONTROL") ? 130 : 0) + (pe(n, "ULTIMATE") ? 100 : 0) + Math.min(90, w * 30);
-    E > 0 && (d += E, Ae(u, "boss-phase-active"));
+  const f = a.filter((y) => y.bossState);
+  if (f.some((y) => (y.bossState?.triggeredPhaseIds.length ?? 0) > 0)) {
+    const y = Math.max(...f.map((u) => u.bossState?.triggeredPhaseIds.length ?? 0)), h = (ie(n, "ATTACK") ? 70 : 0) + (ie(n, "BREAK") || ie(n, "CONTROL") ? 130 : 0) + (ie(n, "ULTIMATE") ? 100 : 0) + Math.min(90, y * 30);
+    h > 0 && (l += h, le(d, "boss-phase-active"));
   }
-  if (h.some((w) => w.bossState?.enraged)) {
-    const w = (pe(n, "ATTACK") ? 100 : 0) + (pe(n, "BREAK") || pe(n, "CONTROL") ? 240 : 0) + (pe(n, "ULTIMATE") ? 420 : 0) + (pe(n, "HEAL") || pe(n, "DEFENSE") ? 120 : 0);
-    w > 0 && (d += w, Ae(u, "boss-enraged"));
+  if (f.some((y) => y.bossState?.enraged)) {
+    const y = (ie(n, "ATTACK") ? 100 : 0) + (ie(n, "BREAK") || ie(n, "CONTROL") ? 240 : 0) + (ie(n, "ULTIMATE") ? 420 : 0) + (ie(n, "HEAL") || ie(n, "DEFENSE") ? 120 : 0);
+    y > 0 && (l += y, le(d, "boss-enraged"));
   }
-  return { score: d, reasons: u };
-}, no = (e, t, n, r) => {
+  return { score: l, reasons: d };
+}, Ks = (e, t, n, i) => {
   if (n.target === "ALLY_LOWEST") {
-    const i = gr(e, t);
-    return { actorId: t.id, skillId: n.id, targetIds: i ? [i.id] : void 0 };
+    const r = ni(e, t);
+    return { actorId: t.id, skillId: n.id, targetIds: r ? [r.id] : void 0 };
   }
   if (n.target === "ENEMY" || n.target === "BOSS") {
-    const i = Ei(e, t, n.target === "BOSS" ? "BOSS_HUNTER" : r, n);
-    return { actorId: t.id, skillId: n.id, targetIds: i ? [i.id] : void 0 };
+    const r = or(e, t, n.target === "BOSS" ? "BOSS_HUNTER" : i, n);
+    return { actorId: t.id, skillId: n.id, targetIds: r ? [r.id] : void 0 };
   }
   return { actorId: t.id, skillId: n.id };
-}, ro = (e, t, n, r) => {
-  if (!zs.includes(n)) throw new RangeError(`Unknown AI strategy ${String(n)}`);
-  const i = e.units.find((d) => d.id === t);
-  if (!i?.alive || e.outcome) return { command: null, score: Number.NEGATIVE_INFINITY, reasons: ["actor-unavailable"] };
-  const s = Ln(e, t).map((d) => ({ skill: d, ...to(e, i, d, n) }));
+}, zs = (e, t, n, i) => {
+  if (!Hs.includes(n)) throw new RangeError(`Unknown AI strategy ${String(n)}`);
+  const r = e.units.find((l) => l.id === t);
+  if (!r?.alive || e.outcome) return { command: null, score: Number.NEGATIVE_INFINITY, reasons: ["actor-unavailable"] };
+  const s = pn(e, t).map((l) => ({ skill: l, ...Ws(e, r, l, n) }));
   if (s.length === 0) return { command: null, score: Number.NEGATIVE_INFINITY, reasons: ["no-usable-skill"] };
-  const o = Math.max(...s.map((d) => d.score)), l = s.filter((d) => d.score === o).sort((d, u) => d.skill.id.localeCompare(u.skill.id))[0];
-  return l ? { command: no(e, i, l.skill, n), score: l.score, reasons: l.reasons } : { command: null, score: Number.NEGATIVE_INFINITY, reasons: ["no-usable-skill"] };
-}, io = (e, t, n, r) => ro(e, t, n).command, Gt = (e = "BALANCED") => (t, n, r) => {
-  const i = t.units.find((s) => s.id === n);
-  return i ? io(t, n, typeof e == "function" ? e(i) : e) : null;
-}, Ze = 1e6, Rn = Number.MAX_SAFE_INTEGER, Tt = 100, so = ["BATTLE", "MINING", "TREASURE", "ELITE", "REST", "RANDOM_EVENT", "BOSS"], Ut = {
-  maxFloor: Ze,
+  const o = Math.max(...s.map((l) => l.score)), c = s.filter((l) => l.score === o).sort((l, d) => l.skill.id.localeCompare(d.skill.id))[0];
+  return c ? { command: Ks(e, r, c.skill, n), score: c.score, reasons: c.reasons } : { command: null, score: Number.NEGATIVE_INFINITY, reasons: ["no-usable-skill"] };
+}, Js = (e, t, n, i) => zs(e, t, n).command, Mt = (e = "BALANCED") => (t, n, i) => {
+  const r = t.units.find((s) => s.id === n);
+  return r ? Js(t, n, typeof e == "function" ? e(r) : e) : null;
+}, Fe = 1e6, rn = Number.MAX_SAFE_INTEGER, dt = 100, Qs = ["BATTLE", "MINING", "TREASURE", "ELITE", "REST", "RANDOM_EVENT", "BOSS"], Rt = {
+  maxFloor: Fe,
   checkpointInterval: 10,
   efficiency: { ACTIVE: 1, AUTO: 0.94, OFFLINE: 0.78 }
-}, xr = ["CRYSTAL_CAVERN", "MAGMA_VEIN", "FOSSIL_DEPTHS", "ASTRAL_RIFT"], Or = ["FIRE", "WATER", "EARTH", "WIND", "LIGHT", "DARK", "METAL", "CRYSTAL"], oo = {
+}, vi = ["CRYSTAL_CAVERN", "MAGMA_VEIN", "FOSSIL_DEPTHS", "ASTRAL_RIFT"], Mi = ["FIRE", "WATER", "EARTH", "WIND", "LIGHT", "DARK", "METAL", "CRYSTAL"], Zs = {
   BATTLE: { label: "Shard Ambush", description: "通常戦闘。安定したDepth Creditを得る。", rewardMultiplier: 1, powerMultiplier: 1, equipmentChance: 0.18, recoveryRatio: 0, risk: 0.12 },
   MINING: { label: "Resonance Vein", description: "採掘力を試し、Creditと装備鉱石を回収する。", rewardMultiplier: 1.18, powerMultiplier: 0.62, equipmentChance: 0.34, recoveryRatio: 0, risk: 0.32 },
   TREASURE: { label: "Sealed Geode", description: "罠を見切れば高密度の報酬を得る。", rewardMultiplier: 1.72, powerMultiplier: 0.38, equipmentChance: 0.78, recoveryRatio: 0, risk: 0.58 },
@@ -1508,12 +1508,12 @@ const tt = (e, t, n) => {
   REST: { label: "Quiet Stratum", description: "安全な地層で共鳴を30%回復する。", rewardMultiplier: 0.28, powerMultiplier: 0, equipmentChance: 0, recoveryRatio: 0.3, risk: 0 },
   RANDOM_EVENT: { label: "Unknown Signal", description: "Seedで固定された未知現象を突破する。", rewardMultiplier: 1.42, powerMultiplier: 0.82, equipmentChance: 0.42, recoveryRatio: 0.08, risk: 0.85 },
   BOSS: { label: "Depth Guardian", description: "10層ごとのGuardian戦。Checkpointを確保する。", rewardMultiplier: 4, powerMultiplier: 1.15, equipmentChance: 1, recoveryRatio: 0, risk: 0.3 }
-}, ao = {
+}, eo = {
   LOW_GRAVITY: { id: "LOW_GRAVITY", label: "Low Gravity", attackMultiplier: 1, defenseMultiplier: 1, speedMultiplier: 1.12, accuracyMultiplier: 1, breakMultiplier: 1 },
   STONE_DUST: { id: "STONE_DUST", label: "Stone Dust", attackMultiplier: 1.06, defenseMultiplier: 1, speedMultiplier: 1, accuracyMultiplier: 0.9, breakMultiplier: 1 },
   FRACTURED_GROUND: { id: "FRACTURED_GROUND", label: "Fractured Ground", attackMultiplier: 1, defenseMultiplier: 0.93, speedMultiplier: 1, accuracyMultiplier: 1, breakMultiplier: 1.2 },
   RESONANT_AIR: { id: "RESONANT_AIR", label: "Resonant Air", attackMultiplier: 1.1, defenseMultiplier: 1.06, speedMultiplier: 1, accuracyMultiplier: 1.05, breakMultiplier: 1 }
-}, co = {
+}, to = {
   id: "BOSS_FLOOR",
   label: "Guardian Domain",
   attackMultiplier: 1.12,
@@ -1521,24 +1521,24 @@ const tt = (e, t, n) => {
   speedMultiplier: 1.04,
   accuracyMultiplier: 1.06,
   breakMultiplier: 1.1
-}, lo = [
+}, no = [
   { id: "WEEKLY_OVERCHARGE", label: "Weekly: Overcharge", attackMultiplier: 1.08, defenseMultiplier: 1, speedMultiplier: 1.04, accuracyMultiplier: 1, breakMultiplier: 1 },
   { id: "WEEKLY_FORTUNE", label: "Weekly: Fortune Vein", attackMultiplier: 1, defenseMultiplier: 1.03, speedMultiplier: 1, accuracyMultiplier: 1.03, breakMultiplier: 1.04 },
   { id: "WEEKLY_FRACTURE", label: "Weekly: Deep Fracture", attackMultiplier: 1.04, defenseMultiplier: 0.96, speedMultiplier: 1, accuracyMultiplier: 1, breakMultiplier: 1.12 }
-], Be = (e, t = Rn) => Number.isFinite(e) ? Math.max(0, Math.min(t, e)) : e > 0 ? t : 0, uo = (e, t = Ze) => {
+], Me = (e, t = rn) => Number.isFinite(e) ? Math.max(0, Math.min(t, e)) : e > 0 ? t : 0, io = (e, t = Fe) => {
   if (!Number.isSafeInteger(e) || e < 1 || e > t) throw new RangeError(`floor must be an integer within 1..${t}`);
   return e;
-}, mo = (e) => Math.round((1 + e * 0.032 + Math.pow(e, 1.18) * 18e-4) * 1e5) / 1e5, Lr = (e, t, n, r, i, s) => {
-  const o = r.reduce(
-    (u, h) => ({
-      attack: u.attack * h.attackMultiplier,
-      defense: u.defense * h.defenseMultiplier,
-      speed: u.speed * h.speedMultiplier,
-      accuracy: u.accuracy * h.accuracyMultiplier,
-      breakPower: u.breakPower * h.breakMultiplier
+}, ro = (e) => Math.round((1 + e * 0.032 + Math.pow(e, 1.18) * 18e-4) * 1e5) / 1e5, Ri = (e, t, n, i, r, s) => {
+  const o = i.reduce(
+    (d, f) => ({
+      attack: d.attack * f.attackMultiplier,
+      defense: d.defense * f.defenseMultiplier,
+      speed: d.speed * f.speedMultiplier,
+      accuracy: d.accuracy * f.accuracyMultiplier,
+      breakPower: d.breakPower * f.breakMultiplier
     }),
     { attack: 1, defense: 1, speed: 1, accuracy: 1, breakPower: 1 }
-  ), a = i ? 2.25 : 1, l = Math.round(Be((390 + e * 22) * n * a, 1e9)), d = {
+  ), a = r ? 2.25 : 1, c = Math.round(Me((390 + e * 22) * n * a, 1e9)), l = {
     id: "echo",
     name: "Guardian Echo",
     side: "ENEMY",
@@ -1546,7 +1546,7 @@ const tt = (e, t, n) => {
     family: "mine-echo",
     level: e,
     stats: {
-      maxHp: Math.round(l * 0.18),
+      maxHp: Math.round(c * 0.18),
       attack: Math.round((34 + e * 1.3) * n),
       defense: Math.round((22 + e) * n),
       speed: 86 + Math.min(300, e * 0.12),
@@ -1559,76 +1559,76 @@ const tt = (e, t, n) => {
     skillIds: ["strike", "stun"]
   };
   return {
-    id: i ? `floor-${e}-guardian` : `floor-${e}-enemy-${t}`,
-    name: i ? `Depth Guardian ${e / 10}` : `Depth Shard ${t + 1}`,
+    id: r ? `floor-${e}-guardian` : `floor-${e}-enemy-${t}`,
+    name: r ? `Depth Guardian ${e / 10}` : `Depth Shard ${t + 1}`,
     side: "ENEMY",
-    role: i ? "TANK" : t % 2 === 0 ? "STRIKER" : "CONTROLLER",
-    family: i ? "depth-guardian" : `mine-${e % 4}`,
+    role: r ? "TANK" : t % 2 === 0 ? "STRIKER" : "CONTROLLER",
+    family: r ? "depth-guardian" : `mine-${e % 4}`,
     level: e,
     stats: {
-      maxHp: l,
-      attack: Math.round(Be((42 + e * 1.7) * n * o.attack * (i ? 1.15 : 1), 1e8)),
-      defense: Math.round(Be((30 + e * 1.4) * n * o.defense * (i ? 1.25 : 1), 1e8)),
-      speed: Be((82 + Math.min(420, e * 0.14) + s.int(-3, 3)) * o.speed, 1e4),
-      accuracy: Be((100 + Math.min(500, e * 0.24)) * o.accuracy, 1e4),
-      resistance: Be(88 + Math.min(600, e * 0.26) + (i ? 40 : 0), 1e4),
+      maxHp: c,
+      attack: Math.round(Me((42 + e * 1.7) * n * o.attack * (r ? 1.15 : 1), 1e8)),
+      defense: Math.round(Me((30 + e * 1.4) * n * o.defense * (r ? 1.25 : 1), 1e8)),
+      speed: Me((82 + Math.min(420, e * 0.14) + s.int(-3, 3)) * o.speed, 1e4),
+      accuracy: Me((100 + Math.min(500, e * 0.24)) * o.accuracy, 1e4),
+      resistance: Me(88 + Math.min(600, e * 0.26) + (r ? 40 : 0), 1e4),
       critChance: Math.min(0.45, 0.06 + e * 22e-5),
       critDamage: Math.min(3, 1.45 + e * 5e-4),
-      breakPower: Be((18 + Math.min(300, e * 0.08)) * o.breakPower, 1e4)
+      breakPower: Me((18 + Math.min(300, e * 0.08)) * o.breakPower, 1e4)
     },
-    skillIds: i ? ["strike", "sweep", "fracture", "eclipse", "nova"] : t % 2 === 0 ? ["strike", "fracture"] : ["strike", "stun", "eclipse"],
-    initialUltimate: i ? 35 : 0,
-    boss: i ? {
-      weakPoint: s.pick(Or),
+    skillIds: r ? ["strike", "sweep", "fracture", "eclipse", "nova"] : t % 2 === 0 ? ["strike", "fracture"] : ["strike", "stun", "eclipse"],
+    initialUltimate: r ? 35 : 0,
+    boss: r ? {
+      weakPoint: s.pick(Mi),
       weakPointMultiplier: 1.65,
       breakThreshold: 140 + e * 0.2,
       enrageTurn: 14,
       enrageMultiplier: 1.55,
       phases: [
         { id: "fracture", hpRatio: 0.67, attackMultiplier: 1.12, speedMultiplier: 1.06, ultimateGain: 30 },
-        { id: "echoes", hpRatio: 0.34, defenseMultiplier: 1.18, weakPoint: s.pick(Or), summons: [d], ultimateGain: 45 }
+        { id: "echoes", hpRatio: 0.34, defenseMultiplier: 1.18, weakPoint: s.pick(Mi), summons: [l], ultimateGain: 45 }
       ]
     } : void 0
   };
-}, po = ["BATTLE", "MINING", "TREASURE", "ELITE", "REST", "RANDOM_EVENT"], fo = { BATTLE: 44, MINING: 18, TREASURE: 9, ELITE: 12, REST: 9, RANDOM_EVENT: 8 }, Ii = (e) => e.encounterType === "BATTLE" || e.encounterType === "ELITE" || e.encounterType === "BOSS", Ir = (e, t = "stoneverse-endless") => {
-  uo(e);
-  const n = new Re(`${t}:floor:${e}`), r = e % 10 === 0, i = r ? "BOSS" : e === 1 ? "BATTLE" : n.weighted(po, (S) => fo[S]), s = mo(e), o = Object.values(ao), a = Math.min(2, Math.floor(e / 75) + (e >= 20 ? 1 : 0)), l = n.shuffle(o).slice(0, a).map((S) => ({ ...S })), d = new Re(`${t}:weekly-rule`).pick(lo);
-  l.push({ ...d }), r && l.push({ ...co });
-  const h = i === "BATTLE" || i === "ELITE" || i === "BOSS" ? r ? Math.min(2, 1 + Math.floor(e / 400)) : 1 + Math.floor((e - 1) / 25) % 3 + (i === "ELITE" ? 1 : 0) : 0, w = i === "ELITE" ? s * 1.2 : s, E = Array.from({ length: h }, (S, k) => Lr(e, k, w, l, !1, n));
-  r && E.unshift(Lr(e, 0, s, l, !0, n));
-  const m = oo[i], A = { ...m, outcomeRoll: Math.round(n.next() * 1e6) / 1e6 };
+}, so = ["BATTLE", "MINING", "TREASURE", "ELITE", "REST", "RANDOM_EVENT"], oo = { BATTLE: 44, MINING: 18, TREASURE: 9, ELITE: 12, REST: 9, RANDOM_EVENT: 8 }, cr = (e) => e.encounterType === "BATTLE" || e.encounterType === "ELITE" || e.encounterType === "BOSS", ii = (e, t = "stoneverse-endless") => {
+  io(e);
+  const n = new Ee(`${t}:floor:${e}`), i = e % 10 === 0, r = i ? "BOSS" : e === 1 ? "BATTLE" : n.weighted(so, (g) => oo[g]), s = ro(e), o = Object.values(eo), a = Math.min(2, Math.floor(e / 75) + (e >= 20 ? 1 : 0)), c = n.shuffle(o).slice(0, a).map((g) => ({ ...g })), l = new Ee(`${t}:weekly-rule`).pick(no);
+  c.push({ ...l }), i && c.push({ ...to });
+  const f = r === "BATTLE" || r === "ELITE" || r === "BOSS" ? i ? Math.min(2, 1 + Math.floor(e / 400)) : 1 + Math.floor((e - 1) / 25) % 3 + (r === "ELITE" ? 1 : 0) : 0, y = r === "ELITE" ? s * 1.2 : s, h = Array.from({ length: f }, (g, b) => Ri(e, b, y, c, !1, n));
+  i && h.unshift(Ri(e, 0, s, c, !0, n));
+  const u = Zs[r], I = { ...u, outcomeRoll: Math.round(n.next() * 1e6) / 1e6 };
   return {
     floor: e,
-    biome: xr[Math.floor((e - 1) / 25) % xr.length],
-    encounterType: i,
-    isBossFloor: r,
+    biome: vi[Math.floor((e - 1) / 25) % vi.length],
+    encounterType: r,
+    isBossFloor: i,
     difficulty: s,
-    rules: l,
-    enemies: E,
-    encounter: A,
-    baseReward: Math.round(Be((40 + e * 13 + Math.pow(e, 1.25) * 1.8) * m.rewardMultiplier))
+    rules: c,
+    enemies: h,
+    encounter: I,
+    baseReward: Math.round(Me((40 + e * 13 + Math.pow(e, 1.25) * 1.8) * u.rewardMultiplier))
   };
-}, yr = (e) => e.reduce((t, n) => Be(
+}, ri = (e) => e.reduce((t, n) => Me(
   t + n.stats.maxHp * 0.08 + n.stats.attack * 4 + n.stats.defense * 2 + n.stats.speed + n.stats.breakPower * 2
-), 0), ho = (e) => {
+), 0), ao = (e) => {
   if (e.encounterType === "REST") return 0;
-  const t = e.enemies.length ? e.enemies.reduce((r, i) => Be(r + i.stats.maxHp * 0.08 + i.stats.attack * 4 + i.stats.defense * 2), 0) : Be((190 + e.floor * 11.5) * e.difficulty), n = 1 + e.encounter.risk * (e.encounter.outcomeRoll - 0.5);
-  return Math.round(Be(t * e.encounter.powerMultiplier * n));
-}, Sr = (e, t) => {
+  const t = e.enemies.length ? e.enemies.reduce((i, r) => Me(i + r.stats.maxHp * 0.08 + r.stats.attack * 4 + r.stats.defense * 2), 0) : Me((190 + e.floor * 11.5) * e.difficulty), n = 1 + e.encounter.risk * (e.encounter.outcomeRoll - 0.5);
+  return Math.round(Me(t * e.encounter.powerMultiplier * n));
+}, si = (e, t) => {
   if (!Number.isFinite(t) || t < 0) throw new RangeError("Endless party power must be finite and non-negative");
-  const n = e.encounterType === "REST" || t >= ho(e);
+  const n = e.encounterType === "REST" || t >= ao(e);
   return {
     outcome: n ? "PLAYER" : "ENEMY",
     turns: 0,
     encounterType: e.encounterType,
     recoveredRatio: n ? e.encounter.recoveryRatio : 0
   };
-}, $n = (e) => {
-  if (!Number.isSafeInteger(e) || e < 0 || e > Tt) throw new RangeError("Endless resonance integrity is invalid");
-  return 0.75 + e / Tt * 0.25;
-}, Eo = (e, t, n) => {
-  const r = e.resonanceIntegrity;
-  $n(r);
+}, hn = (e) => {
+  if (!Number.isSafeInteger(e) || e < 0 || e > dt) throw new RangeError("Endless resonance integrity is invalid");
+  return 0.75 + e / dt * 0.25;
+}, co = (e, t, n) => {
+  const i = e.resonanceIntegrity;
+  hn(i);
   const s = n ? Math.round({
     BATTLE: 3,
     MINING: 2,
@@ -1637,9 +1637,9 @@ const tt = (e, t, n) => {
     REST: 0,
     RANDOM_EVENT: 5,
     BOSS: 10
-  }[t.encounterType] * (0.75 + t.encounter.outcomeRoll * 0.5)) : Math.ceil(8 + t.encounter.risk * 12), o = Math.max(0, r - s), a = n ? Math.round(t.encounter.recoveryRatio * Tt) : 0;
-  return e.resonanceIntegrity = Math.min(Tt, o + a), e.resonanceIntegrity - o;
-}, go = (e, t = "ACTIVE") => {
+  }[t.encounterType] * (0.75 + t.encounter.outcomeRoll * 0.5)) : Math.ceil(8 + t.encounter.risk * 12), o = Math.max(0, i - s), a = n ? Math.round(t.encounter.recoveryRatio * dt) : 0;
+  return e.resonanceIntegrity = Math.min(dt, o + a), e.resonanceIntegrity - o;
+}, lo = (e, t = "ACTIVE") => {
   if (!e) throw new TypeError("Endless run requires a seed");
   return {
     seed: e,
@@ -1652,117 +1652,117 @@ const tt = (e, t, n) => {
     totalReward: 0,
     clearedBosses: 0,
     battles: 0,
-    resonanceIntegrity: Tt
+    resonanceIntegrity: dt
   };
-}, bn = ["CORE", "RUNE", "RELIC", "CHARM"], fn = ["COMMON", "UNCOMMON", "RARE", "EPIC", "LEGENDARY", "MYTHIC"], cn = {
+}, sn = ["CORE", "RUNE", "RELIC", "CHARM"], Xt = ["COMMON", "UNCOMMON", "RARE", "EPIC", "LEGENDARY", "MYTHIC"], qt = {
   BASTION: { id: "BASTION", name: "Bastion", bonuses: [{ pieces: 2, stat: "defense", value: 0.12 }, { pieces: 4, stat: "maxHp", value: 0.2 }] },
   RESONANCE: { id: "RESONANCE", name: "Resonance", bonuses: [{ pieces: 2, stat: "ultimateStart", value: 12 }, { pieces: 4, stat: "speed", value: 0.15 }] },
   HUNTER: { id: "HUNTER", name: "Hunter", bonuses: [{ pieces: 2, stat: "critChance", value: 0.1 }, { pieces: 4, stat: "critDamage", value: 0.35 }] },
   ABYSSAL: { id: "ABYSSAL", name: "Abyssal", bonuses: [{ pieces: 2, stat: "breakPower", value: 0.15 }, { pieces: 4, stat: "attack", value: 0.18 }] }
-}, Qn = (e) => {
-  const t = { NORMAL: "COMMON", RARE: "UNCOMMON", SR: "RARE", SSR: "EPIC", UR: "LEGENDARY", LEGENDARY: "MYTHIC" }, n = { maxHp: "maxHp", power: "attack", defense: "defense", speed: "speed", purity: "accuracy", hardness: "resistance", resonance: "breakPower" }, r = e.setId ?? ["BASTION", "RESONANCE", "HUNTER", "ABYSSAL"].find((s) => e.definitionId.startsWith(`${s}_`)) ?? null, i = ["NORMAL", "RARE", "SR", "SSR", "UR", "LEGENDARY"].indexOf(e.rarity) + 1;
+}, $n = (e) => {
+  const t = { NORMAL: "COMMON", RARE: "UNCOMMON", SR: "RARE", SSR: "EPIC", UR: "LEGENDARY", LEGENDARY: "MYTHIC" }, n = { maxHp: "maxHp", power: "attack", defense: "defense", speed: "speed", purity: "accuracy", hardness: "resistance", resonance: "breakPower" }, i = e.setId ?? ["BASTION", "RESONANCE", "HUNTER", "ABYSSAL"].find((s) => e.definitionId.startsWith(`${s}_`)) ?? null, r = ["NORMAL", "RARE", "SR", "SSR", "UR", "LEGENDARY"].indexOf(e.rarity) + 1;
   return {
     id: e.instanceId,
     name: e.definitionId.replaceAll("_", " ").toLowerCase(),
     slot: e.slot,
     rarity: t[e.rarity],
     level: e.level,
-    setId: r,
+    setId: i,
     locked: e.locked,
     affixes: e.affixes.map((s, o) => ({
       id: `${s.sourceStat ?? s.stat}:${o}`,
       stat: s.sourceStat ?? n[s.stat],
       value: s.value,
-      tier: Math.max(1, Math.min(10, i))
+      tier: Math.max(1, Math.min(10, r))
     })),
-    score: Math.max(1, Math.round(e.level * 4 + i * 100 + e.affixes.reduce((s, o) => s + Math.abs(o.value) * (o.operation === "PERCENT" ? 1e3 : 1), 0)))
+    score: Math.max(1, Math.round(e.level * 4 + r * 100 + e.affixes.reduce((s, o) => s + Math.abs(o.value) * (o.operation === "PERCENT" ? 1e3 : 1), 0)))
   };
-}, yi = 1e4, nn = Number.MAX_SAFE_INTEGER, ze = (e) => fn.indexOf(e), Io = { COMMON: 1, UNCOMMON: 2, RARE: 3, EPIC: 4, LEGENDARY: 5, MYTHIC: 6 }, Si = ["maxHp", "attack", "defense", "speed", "accuracy", "resistance", "critChance", "critDamage", "breakPower"], yo = Object.keys(cn), Ue = (e, t, n = 0, r = pn) => {
-  if (!Number.isFinite(e) || e < n || e > r) throw new RangeError(`${t} must be finite and within ${n}..${r}`);
+}, lr = 1e4, $t = Number.MAX_SAFE_INTEGER, De = (e) => Xt.indexOf(e), uo = { COMMON: 1, UNCOMMON: 2, RARE: 3, EPIC: 4, LEGENDARY: 5, MYTHIC: 6 }, dr = ["maxHp", "attack", "defense", "speed", "accuracy", "resistance", "critChance", "critDamage", "breakPower"], mo = Object.keys(qt), be = (e, t, n = 0, i = Vt) => {
+  if (!Number.isFinite(e) || e < n || e > i) throw new RangeError(`${t} must be finite and within ${n}..${i}`);
   return e;
-}, ln = (e, t = pn) => Number.isFinite(e) ? Math.max(0, Math.min(t, e)) : e > 0 ? t : 0, So = (e, t) => (Ue(e, "salvageMaterials", 0, nn), Ue(t, "materialsGained", 0, nn), Math.min(nn, e + t)), Ao = (e, t) => {
+}, Ut = (e, t = Vt) => Number.isFinite(e) ? Math.max(0, Math.min(t, e)) : e > 0 ? t : 0, po = (e, t) => (be(e, "salvageMaterials", 0, $t), be(t, "materialsGained", 0, $t), Math.min($t, e + t)), fo = (e, t) => {
   const n = Math.min(3, Math.log10(e + 1) * 0.45);
-  return t.weighted(fn, (r) => ([5e3, 2500, 900, 250, 55, 8][ze(r)] ?? 1) * Math.pow(1 + n, ze(r)));
-}, wo = (e, t, n, r, i) => {
-  const s = 0.85 + i.next() * 0.3, o = ze(n) + 1;
-  return e === "maxHp" ? Math.round(ln((15 + t * 3.5) * o * r * s)) : e === "attack" || e === "defense" ? Math.round(ln((3 + t * 0.55) * o * r * s)) : Math.round(Math.min(5, (e === "speed" ? 8e-3 : e === "critDamage" ? 0.025 : 0.012) * o * r * s) * 1e5) / 1e5;
-}, vo = (e, t, n) => {
-  const r = e.reduce((i, s) => {
+  return t.weighted(Xt, (i) => ([5e3, 2500, 900, 250, 55, 8][De(i)] ?? 1) * Math.pow(1 + n, De(i)));
+}, ho = (e, t, n, i, r) => {
+  const s = 0.85 + r.next() * 0.3, o = De(n) + 1;
+  return e === "maxHp" ? Math.round(Ut((15 + t * 3.5) * o * i * s)) : e === "attack" || e === "defense" ? Math.round(Ut((3 + t * 0.55) * o * i * s)) : Math.round(Math.min(5, (e === "speed" ? 8e-3 : e === "critDamage" ? 0.025 : 0.012) * o * i * s) * 1e5) / 1e5;
+}, Eo = (e, t, n) => {
+  const i = e.reduce((r, s) => {
     const o = s.stat === "maxHp" ? s.value / 10 : s.stat === "attack" || s.stat === "defense" ? s.value : s.value * 1e3;
-    return ln(i + o * s.tier);
+    return Ut(r + o * s.tier);
   }, 0);
-  return Math.round(ln(r + t * 4 + (ze(n) + 1) * 100));
-}, Pn = (e) => {
-  if (!e.id || !e.name || !bn.includes(e.slot) || !fn.includes(e.rarity))
+  return Math.round(Ut(i + t * 4 + (De(n) + 1) * 100));
+}, En = (e) => {
+  if (!e.id || !e.name || !sn.includes(e.slot) || !Xt.includes(e.rarity))
     throw new TypeError("Invalid equipment identity");
-  if (Ue(e.level, `${e.id}.level`, 1, 1e6), Ue(e.score, `${e.id}.score`), e.setId && !cn[e.setId]) throw new RangeError(`Unknown set ${e.setId}`);
+  if (be(e.level, `${e.id}.level`, 1, 1e6), be(e.score, `${e.id}.score`), e.setId && !qt[e.setId]) throw new RangeError(`Unknown set ${e.setId}`);
   for (const t of e.affixes) {
-    if (!t.id || !Si.includes(t.stat)) throw new TypeError(`Invalid affix on ${e.id}`);
-    Ue(t.value, `${e.id}.${t.id}.value`), Ue(t.tier, `${e.id}.${t.id}.tier`, 1, 10);
+    if (!t.id || !dr.includes(t.stat)) throw new TypeError(`Invalid affix on ${e.id}`);
+    be(t.value, `${e.id}.${t.id}.value`), be(t.tier, `${e.id}.${t.id}.tier`, 1, 10);
   }
-}, Ai = (e, t) => {
-  const n = Math.floor(Ue(e.level, "equipment.level", 1, 1e6)), r = e.slot ?? t.pick(bn), i = e.rarity ?? Ao(n, t);
-  if (!bn.includes(r) || !fn.includes(i)) throw new RangeError("Unknown equipment slot or rarity");
-  const s = e.setId === void 0 ? t.chance(Math.min(0.65, 0.12 + ze(i) * 0.08)) ? t.pick(yo) : null : e.setId;
-  if (s && !cn[s]) throw new RangeError(`Unknown equipment set ${s}`);
-  const a = t.shuffle(Si).slice(0, Io[i]).map((h, w) => {
-    const E = Math.min(10, 1 + ze(i) + t.int(0, 2));
-    return { id: `${h}:${w}`, stat: h, value: wo(h, n, i, E, t), tier: E };
-  }), u = {
+}, ur = (e, t) => {
+  const n = Math.floor(be(e.level, "equipment.level", 1, 1e6)), i = e.slot ?? t.pick(sn), r = e.rarity ?? fo(n, t);
+  if (!sn.includes(i) || !Xt.includes(r)) throw new RangeError("Unknown equipment slot or rarity");
+  const s = e.setId === void 0 ? t.chance(Math.min(0.65, 0.12 + De(r) * 0.08)) ? t.pick(mo) : null : e.setId;
+  if (s && !qt[s]) throw new RangeError(`Unknown equipment set ${s}`);
+  const a = t.shuffle(dr).slice(0, uo[r]).map((f, y) => {
+    const h = Math.min(10, 1 + De(r) + t.int(0, 2));
+    return { id: `${f}:${y}`, stat: f, value: ho(f, n, r, h, t), tier: h };
+  }), d = {
     id: `eq:${(e.source ?? "mine").replace(/[^a-z0-9_-]/gi, "").slice(0, 24) || "drop"}:${n}:${t.int(0, 2147483647).toString(36)}:${t.int(0, 2147483647).toString(36)}`,
-    name: `${s ? cn[s].name : i.toLowerCase()} ${r.toLowerCase()}`,
-    slot: r,
-    rarity: i,
+    name: `${s ? qt[s].name : r.toLowerCase()} ${i.toLowerCase()}`,
+    slot: i,
+    rarity: r,
     level: n,
     setId: s,
     affixes: a,
-    score: vo(a, n, i),
+    score: Eo(a, n, r),
     locked: !1
   };
-  return Pn(u), u;
-}, Mo = (e = 300, t = 0) => ({
-  capacity: Math.floor(Ue(e, "inventory.capacity", 1, yi)),
+  return En(d), d;
+}, go = (e = 300, t = 0) => ({
+  capacity: Math.floor(be(e, "inventory.capacity", 1, lr)),
   items: [],
-  salvageMaterials: Ue(t, "inventory.salvageMaterials", 0, nn)
-}), wi = (e, t = {}) => (Pn(e), e.locked || e.setId && t.alwaysKeepSets?.includes(e.setId) ? !0 : !(t.allowedSlots && !t.allowedSlots.includes(e.slot) || t.minRarity && ze(e.rarity) < ze(t.minRarity) || t.minScore !== void 0 && e.score < Ue(t.minScore, "lootFilter.minScore"))), Ro = (e) => (Pn(e), Math.max(1, Math.floor(ln((ze(e.rarity) + 1) ** 2 * (10 + Math.sqrt(e.level) * 8))))), Jt = (e, t) => {
-  const n = Ro(t), r = e.salvageMaterials;
-  return e.salvageMaterials = So(r, n), e.salvageMaterials - r;
-}, bo = (e, t) => {
+  salvageMaterials: be(t, "inventory.salvageMaterials", 0, $t)
+}), mr = (e, t = {}) => (En(e), e.locked || e.setId && t.alwaysKeepSets?.includes(e.setId) ? !0 : !(t.allowedSlots && !t.allowedSlots.includes(e.slot) || t.minRarity && De(e.rarity) < De(t.minRarity) || t.minScore !== void 0 && e.score < be(t.minScore, "lootFilter.minScore"))), Io = (e) => (En(e), Math.max(1, Math.floor(Ut((De(e.rarity) + 1) ** 2 * (10 + Math.sqrt(e.level) * 8))))), Lt = (e, t) => {
+  const n = Io(t), i = e.salvageMaterials;
+  return e.salvageMaterials = po(i, n), e.salvageMaterials - i;
+}, So = (e, t) => {
   const n = e.items.findIndex((s) => s.id === t);
   if (n < 0) throw new RangeError(`Equipment ${t} is not in inventory`);
-  const r = e.items[n];
-  if (!r || r.locked) throw new RangeError(`Equipment ${t} cannot be salvaged`);
+  const i = e.items[n];
+  if (!i || i.locked) throw new RangeError(`Equipment ${t} cannot be salvaged`);
   e.items.splice(n, 1);
-  const i = Jt(e, r);
-  return { accepted: !1, salvagedIds: [r.id], materialsGained: i, reason: "SALVAGED" };
-}, rn = (e, t, n = {}) => {
-  if (Pn(t), Ue(e.capacity, "inventory.capacity", 1, yi), !Number.isSafeInteger(e.capacity)) throw new RangeError("inventory.capacity must be a safe integer");
-  if (Ue(e.salvageMaterials, "inventory.salvageMaterials", 0, nn), e.items.length > e.capacity) throw new RangeError("Inventory is already over capacity");
+  const r = Lt(e, i);
+  return { accepted: !1, salvagedIds: [i.id], materialsGained: r, reason: "SALVAGED" };
+}, Pt = (e, t, n = {}) => {
+  if (En(t), be(e.capacity, "inventory.capacity", 1, lr), !Number.isSafeInteger(e.capacity)) throw new RangeError("inventory.capacity must be a safe integer");
+  if (be(e.salvageMaterials, "inventory.salvageMaterials", 0, $t), e.items.length > e.capacity) throw new RangeError("Inventory is already over capacity");
   if (e.items.some((o) => o.id === t.id)) throw new RangeError(`Duplicate equipment id ${t.id}`);
-  if (!wi(t, n) && n.autoSalvage) {
-    const o = Jt(e, t);
+  if (!mr(t, n) && n.autoSalvage) {
+    const o = Lt(e, t);
     return { accepted: !1, salvagedIds: [t.id], materialsGained: o, reason: "FILTERED" };
   }
   if (e.items.length < e.capacity)
     return e.items.push(t), { accepted: !0, salvagedIds: [], materialsGained: 0, reason: "ADDED" };
   if (!n.autoSalvage) {
     if (t.locked) throw new RangeError("Locked equipment cannot enter a full inventory");
-    const o = Jt(e, t);
+    const o = Lt(e, t);
     return { accepted: !1, salvagedIds: [t.id], materialsGained: o, reason: "CAPACITY" };
   }
-  const r = e.items.filter((o) => !o.locked && !(o.setId && n.alwaysKeepSets?.includes(o.setId))).sort((o, a) => o.score - a.score || ze(o.rarity) - ze(a.rarity) || o.id.localeCompare(a.id))[0];
-  if (!r || r.score >= t.score) {
-    const o = Jt(e, t);
+  const i = e.items.filter((o) => !o.locked && !(o.setId && n.alwaysKeepSets?.includes(o.setId))).sort((o, a) => o.score - a.score || De(o.rarity) - De(a.rarity) || o.id.localeCompare(a.id))[0];
+  if (!i || i.score >= t.score) {
+    const o = Lt(e, t);
     return { accepted: !1, salvagedIds: [t.id], materialsGained: o, reason: "CAPACITY" };
   }
-  const i = e.items.findIndex((o) => o.id === r.id);
-  e.items.splice(i, 1, t);
-  const s = Jt(e, r);
-  return { accepted: !0, salvagedIds: [r.id], materialsGained: s, reason: "REPLACED" };
-}, Xe = (e, t) => {
-  const n = (r) => Number.isFinite(r) ? Math.max(0, Math.floor(r)) : r > 0 ? Number.MAX_SAFE_INTEGER : 0;
+  const r = e.items.findIndex((o) => o.id === i.id);
+  e.items.splice(r, 1, t);
+  const s = Lt(e, i);
+  return { accepted: !0, salvagedIds: [i.id], materialsGained: s, reason: "REPLACED" };
+}, Ce = (e, t) => {
+  const n = (i) => Number.isFinite(i) ? Math.max(0, Math.floor(i)) : i > 0 ? Number.MAX_SAFE_INTEGER : 0;
   return Math.min(Number.MAX_SAFE_INTEGER, n(e) + n(t));
-}, vi = {
+}, pr = {
   maxHp: "maxHp",
   power: "attack",
   defense: "defense",
@@ -1770,32 +1770,32 @@ const tt = (e, t, n) => {
   purity: "resistance",
   speed: "speed",
   resonance: "breakPower"
-}, To = ["BASTION", "RESONANCE", "HUNTER", "ABYSSAL"], No = (e) => e.setId ?? To.find((t) => e.definitionId.startsWith(`${t}_`)) ?? null, St = (e, t) => e * (1 + t), _o = (e) => {
-  const t = e.skills.flatMap((r) => Et[r.skillId]?.tags ?? []);
+}, yo = ["BASTION", "RESONANCE", "HUNTER", "ABYSSAL"], Ao = (e) => e.setId ?? yo.find((t) => e.definitionId.startsWith(`${t}_`)) ?? null, it = (e, t) => e * (1 + t), wo = (e) => {
+  const t = e.skills.flatMap((i) => Ze[i.skillId]?.tags ?? []);
   if (t.includes("support")) return "SUPPORT";
   if (t.includes("control") && e.stats.speed >= e.stats.power) return "CONTROLLER";
-  if (t.some((r) => r === "break") || e.traitIds.some((r) => /fract|break/i.test(r))) return "BREAKER";
-  const n = fe[e.speciesId]?.role;
+  if (t.some((i) => i === "break") || e.traitIds.some((i) => /fract|break/i.test(i))) return "BREAKER";
+  const n = re[e.speciesId]?.role;
   return n === "TANK" ? "GUARDIAN" : n === "SUPPORT" ? "SUPPORT" : n === "CONTROL" ? "CONTROLLER" : e.stats.defense > e.stats.power * 1.2 ? "VANGUARD" : "STRIKER";
-}, ko = (e) => e.type, Co = (e) => e === "BURN" ? { kind: "STATUS", status: "BURN" } : e === "FRACTURE" ? { kind: "STATUS", status: "CRACK" } : e === "STUN" ? { kind: "STATUS", status: "STUN" } : e === "REGEN" ? { kind: "STATUS", status: "REGENERATION" } : e === "TAUNT" ? { kind: "CONTROL", control: "TAUNT" } : { kind: "STATUS", status: "VULNERABLE" }, xo = (e) => {
-  const t = e.type === "STATUS" ? Co(e.statusId) : void 0;
+}, vo = (e) => e.type, Mo = (e) => e === "BURN" ? { kind: "STATUS", status: "BURN" } : e === "FRACTURE" ? { kind: "STATUS", status: "CRACK" } : e === "STUN" ? { kind: "STATUS", status: "STUN" } : e === "REGEN" ? { kind: "STATUS", status: "REGENERATION" } : e === "TAUNT" ? { kind: "CONTROL", control: "TAUNT" } : { kind: "STATUS", status: "VULNERABLE" }, Ro = (e) => {
+  const t = e.type === "STATUS" ? Mo(e.statusId) : void 0;
   return {
-    kind: t?.kind ?? ko(e),
+    kind: t?.kind ?? vo(e),
     power: e.power ?? (e.type === "STATUS" ? e.value : void 0),
     value: e.value === void 0 ? void 0 : Math.abs(e.value),
     duration: e.duration,
     chance: e.chance,
-    stat: e.stat ? vi[e.stat] : void 0,
+    stat: e.stat ? pr[e.stat] : void 0,
     control: t?.control,
     status: t?.status
   };
-}, Mi = (e) => ({
+}, fr = (e) => ({
   id: e.id,
   name: e.name,
   target: e.target === "ALLY" ? "ALLY_LOWEST" : e.target,
   element: e.element,
   effects: e.effects.flatMap((t) => [
-    xo(t),
+    Ro(t),
     ...t.type === "STATUS" && t.statusId === "FRACTURE" ? [{ kind: "BREAK", power: 0.65, value: 15, chance: t.chance }] : []
   ]),
   cooldown: e.cooldown,
@@ -1809,13 +1809,13 @@ const tt = (e, t, n) => {
     ...e.tags.includes("break") || e.effects.some((t) => t.type === "STATUS" && t.statusId === "FRACTURE") ? ["BREAK"] : [],
     ...e.tags.includes("ultimate") ? ["ULTIMATE"] : []
   ]
-}), Ri = (e, t = "PLAYER") => {
-  const n = fe[e.speciesId], r = e.mutation === "PERFECT" ? 1.08 : e.mutation === "ANCIENT" || e.mutation === "PRISMATIC" ? 1.04 : 1, i = 1 + Math.min(0.07, e.affinity.rank * 0.01), s = Object.values(e.equipment).filter((w) => !!w), a = e.skills.map((w) => Et[w.skillId]).filter((w) => !!w).map((w) => w.id);
+}), hr = (e, t = "PLAYER") => {
+  const n = re[e.speciesId], i = e.mutation === "PERFECT" ? 1.08 : e.mutation === "ANCIENT" || e.mutation === "PRISMATIC" ? 1.04 : 1, r = 1 + Math.min(0.07, e.affinity.rank * 0.01), s = Object.values(e.equipment).filter((y) => !!y), a = e.skills.map((y) => Ze[y.skillId]).filter((y) => !!y).map((y) => y.id);
   a.length || a.push("strike");
-  const l = e.parents[0]?.speciesId ? `lineage:${e.parents[0].speciesId}` : n?.family, d = {
-    maxHp: Math.max(1, e.stats.maxHp * r * i),
-    attack: Math.max(1, e.stats.power * r * i),
-    defense: Math.max(1, (e.stats.defense + e.stats.hardness * 0.2) * r * i),
+  const c = e.parents[0]?.speciesId ? `lineage:${e.parents[0].speciesId}` : n?.family, l = {
+    maxHp: Math.max(1, e.stats.maxHp * i * r),
+    attack: Math.max(1, e.stats.power * i * r),
+    defense: Math.max(1, (e.stats.defense + e.stats.hardness * 0.2) * i * r),
     speed: Math.max(1, e.stats.speed * (1 + e.individualValues.speed / 310)),
     accuracy: Math.max(1, 92 + e.individualValues.purity * 1.2 + e.stats.purity * 0.08),
     resistance: Math.max(1, 82 + e.individualValues.hardness + e.stats.hardness * 0.12),
@@ -1823,62 +1823,62 @@ const tt = (e, t, n) => {
     critDamage: Math.min(3, 1.45 + e.individualValues.power / 155),
     breakPower: Math.max(1, 15 + e.stats.resonance * 0.22 + e.individualValues.resonance * 0.7)
   };
-  for (const w of e.traitIds)
-    for (const E of Yt[w]?.effects ?? []) {
-      if (E.trigger !== "ALWAYS" && E.trigger !== "BATTLE_START" || !E.stat || E.value === void 0) continue;
-      const m = vi[E.stat];
-      m && (m === "critChance" || m === "critDamage" || (d[m] = Math.max(1, E.operation === "PERCENT" ? St(d[m], E.value) : d[m] + E.value)));
+  for (const y of e.traitIds)
+    for (const h of Nt[y]?.effects ?? []) {
+      if (h.trigger !== "ALWAYS" && h.trigger !== "BATTLE_START" || !h.stat || h.value === void 0) continue;
+      const u = pr[h.stat];
+      u && (u === "critChance" || u === "critDamage" || (l[u] = Math.max(1, h.operation === "PERCENT" ? it(l[u], h.value) : l[u] + h.value)));
     }
-  let u = 0;
-  for (const w of s)
-    for (const E of w.affixes) {
-      const m = E.sourceStat ?? (E.stat === "power" ? "attack" : E.stat === "purity" ? "accuracy" : E.stat === "hardness" ? "resistance" : E.stat === "resonance" ? "breakPower" : E.stat), A = E.operation === "PERCENT";
-      m === "maxHp" || m === "attack" || m === "defense" || m === "speed" || m === "accuracy" || m === "resistance" || m === "breakPower" ? d[m] = Math.max(1, A ? St(d[m], E.value) : d[m] + E.value) : m === "critChance" ? d.critChance = Math.max(0, d.critChance + (A ? E.value : E.value / 100)) : d.critDamage = Math.max(1, d.critDamage + (A ? E.value : E.value / 100));
+  let d = 0;
+  for (const y of s)
+    for (const h of y.affixes) {
+      const u = h.sourceStat ?? (h.stat === "power" ? "attack" : h.stat === "purity" ? "accuracy" : h.stat === "hardness" ? "resistance" : h.stat === "resonance" ? "breakPower" : h.stat), I = h.operation === "PERCENT";
+      u === "maxHp" || u === "attack" || u === "defense" || u === "speed" || u === "accuracy" || u === "resistance" || u === "breakPower" ? l[u] = Math.max(1, I ? it(l[u], h.value) : l[u] + h.value) : u === "critChance" ? l.critChance = Math.max(0, l.critChance + (I ? h.value : h.value / 100)) : l.critDamage = Math.max(1, l.critDamage + (I ? h.value : h.value / 100));
     }
-  const h = /* @__PURE__ */ new Map();
-  for (const w of s) {
-    const E = No(w);
-    E && h.set(E, (h.get(E) ?? 0) + 1);
+  const f = /* @__PURE__ */ new Map();
+  for (const y of s) {
+    const h = Ao(y);
+    h && f.set(h, (f.get(h) ?? 0) + 1);
   }
-  return (h.get("BASTION") ?? 0) >= 2 && (d.defense = St(d.defense, 0.12)), (h.get("BASTION") ?? 0) >= 4 && (d.maxHp = St(d.maxHp, 0.2)), (h.get("RESONANCE") ?? 0) >= 2 && (u += 12), (h.get("RESONANCE") ?? 0) >= 4 && (d.speed = St(d.speed, 0.15)), (h.get("HUNTER") ?? 0) >= 2 && (d.critChance += 0.1), (h.get("HUNTER") ?? 0) >= 4 && (d.critDamage += 0.35), (h.get("ABYSSAL") ?? 0) >= 2 && (d.breakPower = St(d.breakPower, 0.15)), (h.get("ABYSSAL") ?? 0) >= 4 && (d.attack = St(d.attack, 0.18)), {
+  return (f.get("BASTION") ?? 0) >= 2 && (l.defense = it(l.defense, 0.12)), (f.get("BASTION") ?? 0) >= 4 && (l.maxHp = it(l.maxHp, 0.2)), (f.get("RESONANCE") ?? 0) >= 2 && (d += 12), (f.get("RESONANCE") ?? 0) >= 4 && (l.speed = it(l.speed, 0.15)), (f.get("HUNTER") ?? 0) >= 2 && (l.critChance += 0.1), (f.get("HUNTER") ?? 0) >= 4 && (l.critDamage += 0.35), (f.get("ABYSSAL") ?? 0) >= 2 && (l.breakPower = it(l.breakPower, 0.15)), (f.get("ABYSSAL") ?? 0) >= 4 && (l.attack = it(l.attack, 0.18)), {
     id: e.instanceId,
     name: e.nickname || e.name,
     side: t,
-    role: _o(e),
-    family: l,
+    role: wo(e),
+    family: c,
     element: e.primaryElement,
     level: e.level,
     stats: {
-      maxHp: Math.round(d.maxHp),
-      attack: Math.round(d.attack),
-      defense: Math.round(d.defense),
-      speed: Math.round(d.speed),
-      accuracy: Math.round(d.accuracy),
-      resistance: Math.round(d.resistance),
-      critChance: Math.min(0.95, d.critChance),
-      critDamage: Math.min(5, d.critDamage),
-      breakPower: Math.round(d.breakPower)
+      maxHp: Math.round(l.maxHp),
+      attack: Math.round(l.attack),
+      defense: Math.round(l.defense),
+      speed: Math.round(l.speed),
+      accuracy: Math.round(l.accuracy),
+      resistance: Math.round(l.resistance),
+      critChance: Math.min(0.95, l.critChance),
+      critDamage: Math.min(5, l.critDamage),
+      breakPower: Math.round(l.breakPower)
     },
     skillIds: a,
-    initialUltimate: Math.min(100, e.affinity.rank * 4 + e.awakeningStage * 3 + u)
+    initialUltimate: Math.min(100, e.affinity.rank * 4 + e.awakeningStage * 3 + d)
   };
-}, bi = (e) => {
-  const t = e.flatMap((n) => n.skills).map((n) => Et[n.skillId]).filter((n) => !!n);
+}, Er = (e) => {
+  const t = e.flatMap((n) => n.skills).map((n) => Ze[n.skillId]).filter((n) => !!n);
   return Object.freeze({
-    ...Ws,
-    ...Object.fromEntries(t.map((n) => [n.id, Mi(n)]))
+    ...qs,
+    ...Object.fromEntries(t.map((n) => [n.id, fr(n)]))
   });
-}, qe = 300 * 1e3, Dr = 720 * 60 * 60 * 1e3, Oo = 1, Fn = (e) => {
+}, Re = 300 * 1e3, Ti = 720 * 60 * 60 * 1e3, To = 1, gn = (e) => {
   const t = e.getTime();
   if (!Number.isSafeInteger(t) || t < 0) throw new RangeError("Invalid Endless Mine timestamp");
   return t;
-}, Ti = (e) => {
+}, gr = (e) => {
   const t = new Date(Date.UTC(e.getUTCFullYear(), e.getUTCMonth(), e.getUTCDate())), n = t.getUTCDay() || 7;
   t.setUTCDate(t.getUTCDate() + 4 - n);
-  const r = new Date(Date.UTC(t.getUTCFullYear(), 0, 1)), i = Math.ceil(((t.getTime() - r.getTime()) / 864e5 + 1) / 7);
-  return `weekly:${t.getUTCFullYear()}-${String(i).padStart(2, "0")}`;
-}, Ni = (e = /* @__PURE__ */ new Date(0)) => ({
-  version: Oo,
+  const i = new Date(Date.UTC(t.getUTCFullYear(), 0, 1)), r = Math.ceil(((t.getTime() - i.getTime()) / 864e5 + 1) / 7);
+  return `weekly:${t.getUTCFullYear()}-${String(r).padStart(2, "0")}`;
+}, Ir = (e = /* @__PURE__ */ new Date(0)) => ({
+  version: To,
   status: "READY",
   runId: null,
   run: null,
@@ -1894,167 +1894,167 @@ const tt = (e, t, n) => {
   lastProcessedAt: null,
   nextFloorAt: null,
   highestFloor: 0,
-  weeklySeed: Ti(e),
+  weeklySeed: gr(e),
   weeklyHighestFloor: 0,
   winStreak: 0,
   pendingCredits: 0,
-  equipment: Mo(300),
+  equipment: go(300),
   lootFilter: { minRarity: "RARE", autoSalvage: !0, alwaysKeepSets: ["ABYSSAL"] },
   recentLog: [],
   claimLedger: {}
-}), He = (e, t) => {
+}), Ne = (e, t) => {
   e.recentLog = [...e.recentLog, t].slice(-80);
-}, Oe = (e) => {
+}, ye = (e) => {
   if (!e.run || !e.runId) throw new Error("No Endless Mine run exists");
   return e.run;
-}, Lo = (e, t) => {
-  const n = Oe(e);
-  n.currentFloor = t, n.status = "COMPLETE", e.status = "ENDED", e.nextFloorAt = null, He(e, `最深部 Floor ${t} を踏破。Endless Mine complete。`);
-}, Do = (e, t, n, r, i) => {
+}, bo = (e, t) => {
+  const n = ye(e);
+  n.currentFloor = t, n.status = "COMPLETE", e.status = "ENDED", e.nextFloorAt = null, Ne(e, `最深部 Floor ${t} を踏破。Endless Mine complete。`);
+}, No = (e, t, n, i, r) => {
   if (e.status === "RUNNING" || e.status === "PAUSED") throw new Error("Endless Mine is already active");
   if (e.runId && !e.claimLedger[e.runId]) throw new Error("Claim the previous Endless Mine run before starting another");
   if (n.length < 1 || n.length > 3 || new Set(n).size !== n.length) throw new Error("Endless Mine requires 1-3 unique Stones");
-  const s = n.map((d) => t[d] ?? (() => {
-    throw new Error(`Stone not found: ${d}`);
-  })()), o = Fn(r), a = `endless:${o}:${i}`, l = Ti(r);
-  return e.weeklySeed !== l && (e.weeklyHighestFloor = 0), e.weeklySeed = l, e.runId = a, e.run = go(l, "AUTO"), e.status = "RUNNING", e.partyStoneIds = [...n], e.partySnapshot = s.map((d) => Ri(d)), e.skillBook = bi(s), e.manualMode = !1, e.startedAt = r.toISOString(), e.lastProcessedAt = r.toISOString(), e.nextFloorAt = new Date(o + qe).toISOString(), e.activeFloor = null, e.activeBattle = null, e.winStreak = 0, e.pendingCredits = 0, He(e, "潜行を開始。Party buildを固定しました。"), e;
-}, $o = (e, t) => {
-  const n = Oe(e);
-  e.manualMode = t, n.mode = t ? "ACTIVE" : "AUTO", t && e.status === "RUNNING" && _i(e);
-}, _i = (e) => {
-  const t = Oe(e);
+  const s = n.map((l) => t[l] ?? (() => {
+    throw new Error(`Stone not found: ${l}`);
+  })()), o = gn(i), a = `endless:${o}:${r}`, c = gr(i);
+  return e.weeklySeed !== c && (e.weeklyHighestFloor = 0), e.weeklySeed = c, e.runId = a, e.run = lo(c, "AUTO"), e.status = "RUNNING", e.partyStoneIds = [...n], e.partySnapshot = s.map((l) => hr(l)), e.skillBook = Er(s), e.manualMode = !1, e.startedAt = i.toISOString(), e.lastProcessedAt = i.toISOString(), e.nextFloorAt = new Date(o + Re).toISOString(), e.activeFloor = null, e.activeBattle = null, e.winStreak = 0, e.pendingCredits = 0, Ne(e, "潜行を開始。Party buildを固定しました。"), e;
+}, ko = (e, t) => {
+  const n = ye(e);
+  e.manualMode = t, n.mode = t ? "ACTIVE" : "AUTO", t && e.status === "RUNNING" && Sr(e);
+}, Sr = (e) => {
+  const t = ye(e);
   if (t.status !== "CLIMBING") throw new Error("Endless run is not climbing");
   if (e.activeBattle && !e.activeBattle.outcome) return e.activeBattle;
   for (let n = 0; n < 10 && e.status === "RUNNING"; n += 1) {
-    const r = Ir(t.currentFloor, t.seed);
-    if (!Ii(r)) {
-      const i = Sr(r, yr(e.partySnapshot) * Ut.efficiency.ACTIVE * $n(t.resonanceIntegrity));
-      He(e, `Floor ${r.floor}: ${r.encounter.label} / ${r.encounter.description}`), Bn(e, r, i.outcome, "ACTIVE");
+    const i = ii(t.currentFloor, t.seed);
+    if (!cr(i)) {
+      const r = si(i, ri(e.partySnapshot) * Rt.efficiency.ACTIVE * hn(t.resonanceIntegrity));
+      Ne(e, `Floor ${i.floor}: ${i.encounter.label} / ${i.encounter.description}`), In(e, i, r.outcome, "ACTIVE");
       continue;
     }
-    return e.activeFloor = r, e.activeBattle = mr({ units: [...e.partySnapshot, ...r.enemies], skills: e.skillBook, maxTurns: 80 }), He(e, `Floor ${r.floor}: ${r.encounter.label}出現。`), e.activeBattle;
+    return e.activeFloor = i, e.activeBattle = Jn({ units: [...e.partySnapshot, ...i.enemies], skills: e.skillBook, maxTurns: 80 }), Ne(e, `Floor ${i.floor}: ${i.encounter.label}出現。`), e.activeBattle;
   }
   if (e.status === "RUNNING") throw new Error("Unable to prepare the next Endless battle");
   return null;
-}, Po = (e, t) => {
-  const n = new Re(`${Oe(e).seed}:equipment:${t.floor}`), r = Math.min(1, t.encounter.equipmentChance + (t.encounterType === "BATTLE" ? t.floor * 5e-4 : 0));
-  if (!n.chance(r)) return { added: 0, salvaged: 0 };
-  const i = t.isBossFloor && t.floor >= 100 ? "EPIC" : t.encounterType === "ELITE" && t.floor >= 50 ? "RARE" : void 0, s = Ai({ level: t.floor, rarity: i, source: `endless-${t.floor}` }, n), o = rn(e.equipment, s, e.lootFilter);
-  return He(e, o.accepted ? `${s.rarity} ${s.name}を獲得。` : `${s.name}を容量保護${o.reason === "FILTERED" ? "・Loot Filter" : ""}分解（素材 +${o.materialsGained}）。`), { added: o.accepted ? 1 : 0, salvaged: o.salvagedIds.length };
-}, Bn = (e, t, n, r) => {
-  const i = Oe(e), s = t.floor;
-  i.battles = Xe(i.battles, 1);
-  const o = Eo(i, t, n === "PLAYER");
-  let a = 0, l = 0, d = 0, u = 0;
+}, _o = (e, t) => {
+  const n = new Ee(`${ye(e).seed}:equipment:${t.floor}`), i = Math.min(1, t.encounter.equipmentChance + (t.encounterType === "BATTLE" ? t.floor * 5e-4 : 0));
+  if (!n.chance(i)) return { added: 0, salvaged: 0 };
+  const r = t.isBossFloor && t.floor >= 100 ? "EPIC" : t.encounterType === "ELITE" && t.floor >= 50 ? "RARE" : void 0, s = ur({ level: t.floor, rarity: r, source: `endless-${t.floor}` }, n), o = Pt(e.equipment, s, e.lootFilter);
+  return Ne(e, o.accepted ? `${s.rarity} ${s.name}を獲得。` : `${s.name}を容量保護${o.reason === "FILTERED" ? "・Loot Filter" : ""}分解（素材 +${o.materialsGained}）。`), { added: o.accepted ? 1 : 0, salvaged: o.salvagedIds.length };
+}, In = (e, t, n, i) => {
+  const r = ye(e), s = t.floor;
+  r.battles = Ce(r.battles, 1);
+  const o = co(r, t, n === "PLAYER");
+  let a = 0, c = 0, l = 0, d = 0;
   if (n === "PLAYER") {
-    const h = t.floor > i.highestClearedFloor;
-    if (h && (a = Math.floor(t.baseReward * Ut.efficiency[r]), i.totalReward = Math.min(Rn, Xe(i.totalReward, a)), e.pendingCredits = Xe(e.pendingCredits, a), i.highestClearedFloor = t.floor), e.highestFloor = Math.max(e.highestFloor, t.floor), e.weeklyHighestFloor = Math.max(e.weeklyHighestFloor, t.floor), e.winStreak = Xe(e.winStreak, 1), h && t.isBossFloor && (i.clearedBosses = Xe(i.clearedBosses, 1), u = 1), t.floor % 10 === 0 && (i.checkpointFloor = t.floor), h) {
-      const E = Po(e, t);
-      l = E.added, d = E.salvaged;
+    const f = t.floor > r.highestClearedFloor;
+    if (f && (a = Math.floor(t.baseReward * Rt.efficiency[i]), r.totalReward = Math.min(rn, Ce(r.totalReward, a)), e.pendingCredits = Ce(e.pendingCredits, a), r.highestClearedFloor = t.floor), e.highestFloor = Math.max(e.highestFloor, t.floor), e.weeklyHighestFloor = Math.max(e.weeklyHighestFloor, t.floor), e.winStreak = Ce(e.winStreak, 1), f && t.isBossFloor && (r.clearedBosses = Ce(r.clearedBosses, 1), d = 1), t.floor % 10 === 0 && (r.checkpointFloor = t.floor), f) {
+      const h = _o(e, t);
+      c = h.added, l = h.salvaged;
     }
-    const w = o > 0 ? ` / 共鳴完全性 +${o} (${i.resonanceIntegrity}/100)` : ` / 共鳴完全性 ${i.resonanceIntegrity}/100`;
-    He(e, `Floor ${t.floor} ${t.encounterType} clear / CREDIT +${a.toLocaleString("en-US")}${w}`), t.floor >= Ut.maxFloor ? Lo(e, t.floor) : i.currentFloor = t.floor + 1;
+    const y = o > 0 ? ` / 共鳴完全性 +${o} (${r.resonanceIntegrity}/100)` : ` / 共鳴完全性 ${r.resonanceIntegrity}/100`;
+    Ne(e, `Floor ${t.floor} ${t.encounterType} clear / CREDIT +${a.toLocaleString("en-US")}${y}`), t.floor >= Rt.maxFloor ? bo(e, t.floor) : r.currentFloor = t.floor + 1;
   } else
-    i.status = "DEFEATED", i.lastDefeatFloor = t.floor, e.status = "ENDED", e.nextFloorAt = null, e.winStreak = 0, He(e, `Floor ${t.floor} ${t.encounterType}で共鳴崩壊。Checkpoint ${i.checkpointFloor}へ帰還可能。`);
-  return e.activeBattle = null, e.activeFloor = null, { attemptedFloors: 1, clearedFloors: n === "PLAYER" ? 1 : 0, fromFloor: s, toFloor: i.currentFloor, credits: a, equipmentAdded: l, equipmentSalvaged: d, bossClears: u, defeated: n !== "PLAYER" };
-}, ki = (e) => {
+    r.status = "DEFEATED", r.lastDefeatFloor = t.floor, e.status = "ENDED", e.nextFloorAt = null, e.winStreak = 0, Ne(e, `Floor ${t.floor} ${t.encounterType}で共鳴崩壊。Checkpoint ${r.checkpointFloor}へ帰還可能。`);
+  return e.activeBattle = null, e.activeFloor = null, { attemptedFloors: 1, clearedFloors: n === "PLAYER" ? 1 : 0, fromFloor: s, toFloor: r.currentFloor, credits: a, equipmentAdded: c, equipmentSalvaged: l, bossClears: d, defeated: n !== "PLAYER" };
+}, yr = (e) => {
   const t = e.activeBattle, n = e.activeFloor;
-  return !t?.outcome || !n ? null : Bn(e, n, t.outcome, e.manualMode ? "ACTIVE" : "AUTO");
-}, Fo = (e, t, n) => {
+  return !t?.outcome || !n ? null : In(e, n, t.outcome, e.manualMode ? "ACTIVE" : "AUTO");
+}, Co = (e, t, n) => {
   if (e.status !== "RUNNING" || !e.manualMode) throw new Error("Manual Endless battle is not active");
-  const r = _i(e);
-  if (!r) throw new Error("The Endless encounter resolved without a manual battle");
-  const i = pr(r).find((u) => r.units.find((h) => h.id === u)?.side === "PLAYER");
-  if (!i) throw new Error("No living player actor");
-  if (!Ln(r, i).some((u) => u.id === t)) throw new Error("Selected skill is not usable");
-  const s = { actorId: i, skillId: t, targetIds: n }, o = Gt(e.strategy), a = Gt("AGGRESSIVE"), l = new Re(`${Oe(e).seed}:manual:${Oe(e).currentFloor}:${r.turn}`);
-  Dn(r, {
-    commands: { [i]: s },
-    commandProvider: (u, h, w) => u.units.find((E) => E.id === h)?.side === "PLAYER" ? o(u, h, w) : a(u, h, w)
-  }, l);
-  const d = r.log.slice(-r.units.length).map((u) => `${u.actorId}: ${u.skillId}`);
-  for (const u of d) He(e, u);
-  return ki(e);
-}, Bo = (e) => {
-  const t = Oe(e), n = t.currentFloor, r = e.activeFloor?.floor === n ? e.activeFloor : Ir(n, t.seed);
-  if (!Ii(r)) {
+  const i = Sr(e);
+  if (!i) throw new Error("The Endless encounter resolved without a manual battle");
+  const r = Qn(i).find((d) => i.units.find((f) => f.id === d)?.side === "PLAYER");
+  if (!r) throw new Error("No living player actor");
+  if (!pn(i, r).some((d) => d.id === t)) throw new Error("Selected skill is not usable");
+  const s = { actorId: r, skillId: t, targetIds: n }, o = Mt(e.strategy), a = Mt("AGGRESSIVE"), c = new Ee(`${ye(e).seed}:manual:${ye(e).currentFloor}:${i.turn}`);
+  fn(i, {
+    commands: { [r]: s },
+    commandProvider: (d, f, y) => d.units.find((h) => h.id === f)?.side === "PLAYER" ? o(d, f, y) : a(d, f, y)
+  }, c);
+  const l = i.log.slice(-i.units.length).map((d) => `${d.actorId}: ${d.skillId}`);
+  for (const d of l) Ne(e, d);
+  return yr(e);
+}, xo = (e) => {
+  const t = ye(e), n = t.currentFloor, i = e.activeFloor?.floor === n ? e.activeFloor : ii(n, t.seed);
+  if (!cr(i)) {
     if (e.activeBattle) throw new Error("Non-combat Endless floor cannot retain a battle");
-    const a = Sr(r, yr(e.partySnapshot) * Ut.efficiency.AUTO * $n(t.resonanceIntegrity));
-    return He(e, `Floor ${r.floor}: ${r.encounter.label} / ${r.encounter.description}`), Bn(e, r, a.outcome, "AUTO");
+    const a = si(i, ri(e.partySnapshot) * Rt.efficiency.AUTO * hn(t.resonanceIntegrity));
+    return Ne(e, `Floor ${i.floor}: ${i.encounter.label} / ${i.encounter.description}`), In(e, i, a.outcome, "AUTO");
   }
-  const i = e.activeBattle && e.activeFloor?.floor === n && !e.activeBattle.outcome ? e.activeBattle : mr({ units: [...e.partySnapshot, ...r.enemies], skills: e.skillBook, maxTurns: 80 }), s = Gt(e.strategy), o = Gt(r.isBossFloor ? "BOSS_FOCUS" : "AGGRESSIVE");
-  return fi(i, (a, l, d) => a.units.find((u) => u.id === l)?.side === "PLAYER" ? s(a, l, d) : o(a, l, d), new Re(`${t.seed}:auto:${n}:${i.turn}`)), e.activeFloor = r, e.activeBattle = i, ki(e);
-}, Ci = (e, t = 1, n = /* @__PURE__ */ new Date()) => {
+  const r = e.activeBattle && e.activeFloor?.floor === n && !e.activeBattle.outcome ? e.activeBattle : Jn({ units: [...e.partySnapshot, ...i.enemies], skills: e.skillBook, maxTurns: 80 }), s = Mt(e.strategy), o = Mt(i.isBossFloor ? "BOSS_FOCUS" : "AGGRESSIVE");
+  return rr(r, (a, c, l) => a.units.find((d) => d.id === c)?.side === "PLAYER" ? s(a, c, l) : o(a, c, l), new Ee(`${t.seed}:auto:${n}:${r.turn}`)), e.activeFloor = i, e.activeBattle = r, yr(e);
+}, Ar = (e, t = 1, n = /* @__PURE__ */ new Date()) => {
   if (e.status !== "RUNNING" || e.manualMode) throw new Error("Auto Endless Mine is not running");
   if (!Number.isSafeInteger(t) || t < 0 || t > 1e4) throw new RangeError("Invalid floor batch size");
-  const r = Oe(e).currentFloor, i = { attemptedFloors: 0, clearedFloors: 0, fromFloor: r, toFloor: r, credits: 0, equipmentAdded: 0, equipmentSalvaged: 0, bossClears: 0, defeated: !1 };
-  if (t === 0) return i;
-  const s = Fn(n), o = Date.parse(e.nextFloorAt ?? "");
+  const i = ye(e).currentFloor, r = { attemptedFloors: 0, clearedFloors: 0, fromFloor: i, toFloor: i, credits: 0, equipmentAdded: 0, equipmentSalvaged: 0, bossClears: 0, defeated: !1 };
+  if (t === 0) return r;
+  const s = gn(n), o = Date.parse(e.nextFloorAt ?? "");
   if (!Number.isFinite(o)) throw new Error("Auto Endless Mine has no valid next floor time");
   if (s < o) throw new Error("The next Endless Mine floor is not ready yet");
-  const a = Math.min(1e4, Math.floor((s - o) / qe) + 1), l = Math.min(t, a);
-  for (; i.attemptedFloors < l && e.status === "RUNNING"; ) {
-    const u = Bo(e);
-    i.attemptedFloors += 1, i.clearedFloors += u.clearedFloors, i.credits = Xe(i.credits, u.credits), i.equipmentAdded += u.equipmentAdded, i.equipmentSalvaged += u.equipmentSalvaged, i.bossClears += u.bossClears, i.defeated ||= u.defeated;
+  const a = Math.min(1e4, Math.floor((s - o) / Re) + 1), c = Math.min(t, a);
+  for (; r.attemptedFloors < c && e.status === "RUNNING"; ) {
+    const d = xo(e);
+    r.attemptedFloors += 1, r.clearedFloors += d.clearedFloors, r.credits = Ce(r.credits, d.credits), r.equipmentAdded += d.equipmentAdded, r.equipmentSalvaged += d.equipmentSalvaged, r.bossClears += d.bossClears, r.defeated ||= d.defeated;
   }
-  i.toFloor = Oe(e).currentFloor;
-  const d = o + Math.max(0, i.attemptedFloors - 1) * qe;
-  return e.lastProcessedAt = new Date(d).toISOString(), e.nextFloorAt = e.status === "RUNNING" ? new Date(o + i.attemptedFloors * qe).toISOString() : null, i;
-}, qo = (e, t) => {
-  const n = Oe(e), r = Date.parse(e.lastProcessedAt ?? e.startedAt ?? t.toISOString()), i = Fn(t), s = n.currentFloor, o = { attemptedFloors: 0, clearedFloors: 0, fromFloor: s, toFloor: s, credits: 0, equipmentAdded: 0, equipmentSalvaged: 0, bossClears: 0, defeated: !1 };
-  if (e.status !== "RUNNING" || e.manualMode || !Number.isFinite(r) || i <= r) return o;
-  const a = Date.parse(e.nextFloorAt ?? new Date(r + qe).toISOString());
-  if (!Number.isFinite(a) || i < a) return o;
-  const l = Math.max(a, i - Dr + qe), d = Math.min(
-    Math.floor(Dr / qe),
-    Math.floor((i - l) / qe) + 1
-  ), u = { ...o }, h = yr(e.partySnapshot) * Ut.efficiency.OFFLINE;
-  for (; u.attemptedFloors < d && e.status === "RUNNING"; ) {
-    const E = Ir(n.currentFloor, n.seed), m = Sr(E, h * $n(n.resonanceIntegrity)), A = Bn(e, E, m.outcome, "OFFLINE");
-    u.attemptedFloors += A.attemptedFloors, u.clearedFloors += A.clearedFloors, u.credits = Xe(u.credits, A.credits), u.equipmentAdded += A.equipmentAdded, u.equipmentSalvaged += A.equipmentSalvaged, u.bossClears += A.bossClears, u.defeated ||= A.defeated;
+  r.toFloor = ye(e).currentFloor;
+  const l = o + Math.max(0, r.attemptedFloors - 1) * Re;
+  return e.lastProcessedAt = new Date(l).toISOString(), e.nextFloorAt = e.status === "RUNNING" ? new Date(o + r.attemptedFloors * Re).toISOString() : null, r;
+}, Lo = (e, t) => {
+  const n = ye(e), i = Date.parse(e.lastProcessedAt ?? e.startedAt ?? t.toISOString()), r = gn(t), s = n.currentFloor, o = { attemptedFloors: 0, clearedFloors: 0, fromFloor: s, toFloor: s, credits: 0, equipmentAdded: 0, equipmentSalvaged: 0, bossClears: 0, defeated: !1 };
+  if (e.status !== "RUNNING" || e.manualMode || !Number.isFinite(i) || r <= i) return o;
+  const a = Date.parse(e.nextFloorAt ?? new Date(i + Re).toISOString());
+  if (!Number.isFinite(a) || r < a) return o;
+  const c = Math.max(a, r - Ti + Re), l = Math.min(
+    Math.floor(Ti / Re),
+    Math.floor((r - c) / Re) + 1
+  ), d = { ...o }, f = ri(e.partySnapshot) * Rt.efficiency.OFFLINE;
+  for (; d.attemptedFloors < l && e.status === "RUNNING"; ) {
+    const h = ii(n.currentFloor, n.seed), u = si(h, f * hn(n.resonanceIntegrity)), I = In(e, h, u.outcome, "OFFLINE");
+    d.attemptedFloors += I.attemptedFloors, d.clearedFloors += I.clearedFloors, d.credits = Ce(d.credits, I.credits), d.equipmentAdded += I.equipmentAdded, d.equipmentSalvaged += I.equipmentSalvaged, d.bossClears += I.bossClears, d.defeated ||= I.defeated;
   }
-  u.toFloor = n.currentFloor;
-  const w = l + Math.max(0, u.attemptedFloors - 1) * qe;
-  return e.lastProcessedAt = new Date(w).toISOString(), e.nextFloorAt = e.status === "RUNNING" ? new Date(l + u.attemptedFloors * qe).toISOString() : null, u.clearedFloors && He(e, `OFFLINE: Floor ${s} → ${n.currentFloor} / ${u.clearedFloors} clear。`), u;
-}, Go = (e, t) => {
+  d.toFloor = n.currentFloor;
+  const y = c + Math.max(0, d.attemptedFloors - 1) * Re;
+  return e.lastProcessedAt = new Date(y).toISOString(), e.nextFloorAt = e.status === "RUNNING" ? new Date(c + d.attemptedFloors * Re).toISOString() : null, d.clearedFloors && Ne(e, `OFFLINE: Floor ${s} → ${n.currentFloor} / ${d.clearedFloors} clear。`), d;
+}, Do = (e, t) => {
   if (e.status !== "RUNNING") throw new Error("Endless Mine is not running");
-  e.status = "PAUSED", e.lastProcessedAt = t.toISOString(), e.nextFloorAt = null, He(e, "潜行を一時停止。");
-}, Uo = (e, t) => {
-  const n = Oe(e);
+  e.status = "PAUSED", e.lastProcessedAt = t.toISOString(), e.nextFloorAt = null, Ne(e, "潜行を一時停止。");
+}, Oo = (e, t) => {
+  const n = ye(e);
   if (e.status !== "PAUSED" && !(e.status === "ENDED" && n.status === "DEFEATED")) throw new Error("Endless Mine cannot resume");
-  const r = n.status === "DEFEATED";
-  r && (n.currentFloor = Math.max(1, n.checkpointFloor + 1), n.resonanceIntegrity = Math.max(50, n.resonanceIntegrity), n.status = "CLIMBING", e.activeBattle = null, e.activeFloor = null), e.status = "RUNNING", e.lastProcessedAt = t.toISOString(), e.nextFloorAt = new Date(Fn(t) + qe).toISOString(), He(e, r ? `Checkpoint ${n.checkpointFloor}から潜行再開。` : "中断した戦闘状態から潜行再開。");
-}, Ho = (e, t) => {
-  Oi(t), e.lootFilter = { ...t, allowedSlots: t.allowedSlots ? [...t.allowedSlots] : void 0, alwaysKeepSets: t.alwaysKeepSets ? [...t.alwaysKeepSets] : void 0 };
-}, jo = (e) => {
-  const t = Oe(e), n = e.runId;
+  const i = n.status === "DEFEATED";
+  i && (n.currentFloor = Math.max(1, n.checkpointFloor + 1), n.resonanceIntegrity = Math.max(50, n.resonanceIntegrity), n.status = "CLIMBING", e.activeBattle = null, e.activeFloor = null), e.status = "RUNNING", e.lastProcessedAt = t.toISOString(), e.nextFloorAt = new Date(gn(t) + Re).toISOString(), Ne(e, i ? `Checkpoint ${n.checkpointFloor}から潜行再開。` : "中断した戦闘状態から潜行再開。");
+}, $o = (e, t) => {
+  vr(t), e.lootFilter = { ...t, allowedSlots: t.allowedSlots ? [...t.allowedSlots] : void 0, alwaysKeepSets: t.alwaysKeepSets ? [...t.alwaysKeepSets] : void 0 };
+}, Po = (e) => {
+  const t = ye(e), n = e.runId;
   if (e.claimLedger[n]) throw new Error("Endless Mine reward was already claimed");
   if (e.status === "RUNNING") throw new Error("Pause or retreat before claiming Endless rewards");
-  const r = e.pendingCredits, i = e.equipment.salvageMaterials;
-  return e.claimLedger[n] = !0, e.pendingCredits = 0, e.equipment.salvageMaterials = 0, e.status = "ENDED", e.nextFloorAt = null, e.activeBattle = null, e.activeFloor = null, { runId: n, credits: r, upgradeDust: i, highestFloor: t.highestClearedFloor, equipmentCount: e.equipment.items.length };
-}, ge = (e) => !!e && typeof e == "object" && !Array.isArray(e), We = (e, t = 0) => typeof e == "number" && Number.isSafeInteger(e) && e >= t, Yo = (e, t = !1) => e === null ? t : typeof e == "string" && Number.isFinite(Date.parse(e)), Ht = (e, t = 0, n = 1e12) => typeof e == "number" && Number.isFinite(e) && e >= t && e <= n, xe = (e, t = 256) => typeof e == "string" && e.length > 0 && e.length <= t, Vo = ["maxHp", "attack", "defense", "speed", "accuracy", "resistance", "critChance", "critDamage", "breakPower"], Xo = ["VANGUARD", "TANK", "GUARDIAN", "STRIKER", "BREAKER", "SUPPORT", "CONTROLLER"], Wo = ["SELF", "ALLY_LOWEST", "ALL_ALLIES", "ENEMY", "ALL_ENEMIES", "BOSS"], Ko = ["DAMAGE", "HEAL", "SHIELD", "BUFF", "DEBUFF", "DOT", "CONTROL", "BREAK", "COUNTER", "ULTIMATE_GAIN", "STATUS"], Ar = (e, t = !1) => {
-  if (!ge(e) || !xe(e.id) || !xe(e.name) || !["PLAYER", "ENEMY"].includes(String(e.side)) || !Xo.includes(String(e.role))) throw new Error("Invalid Endless combatant identity");
-  if (!We(e.level, 1) || !ge(e.stats)) throw new Error("Invalid Endless combatant progression");
-  for (const n of Vo) if (!Ht(e.stats[n])) throw new Error(`Invalid Endless combatant ${n}`);
-  if (!Array.isArray(e.skillIds) || e.skillIds.length > 64 || e.skillIds.some((n) => !xe(n)) || new Set(e.skillIds).size !== e.skillIds.length) throw new Error("Invalid Endless combatant skills");
+  const i = e.pendingCredits, r = e.equipment.salvageMaterials;
+  return e.claimLedger[n] = !0, e.pendingCredits = 0, e.equipment.salvageMaterials = 0, e.status = "ENDED", e.nextFloorAt = null, e.activeBattle = null, e.activeFloor = null, { runId: n, credits: i, upgradeDust: r, highestFloor: t.highestClearedFloor, equipmentCount: e.equipment.items.length };
+}, ae = (e) => !!e && typeof e == "object" && !Array.isArray(e), xe = (e, t = 0) => typeof e == "number" && Number.isSafeInteger(e) && e >= t, Fo = (e, t = !1) => e === null ? t : typeof e == "string" && Number.isFinite(Date.parse(e)), Tt = (e, t = 0, n = 1e12) => typeof e == "number" && Number.isFinite(e) && e >= t && e <= n, Se = (e, t = 256) => typeof e == "string" && e.length > 0 && e.length <= t, Bo = ["maxHp", "attack", "defense", "speed", "accuracy", "resistance", "critChance", "critDamage", "breakPower"], Go = ["VANGUARD", "TANK", "GUARDIAN", "STRIKER", "BREAKER", "SUPPORT", "CONTROLLER"], qo = ["SELF", "ALLY_LOWEST", "ALL_ALLIES", "ENEMY", "ALL_ENEMIES", "BOSS"], Uo = ["DAMAGE", "HEAL", "SHIELD", "BUFF", "DEBUFF", "DOT", "CONTROL", "BREAK", "COUNTER", "ULTIMATE_GAIN", "STATUS"], oi = (e, t = !1) => {
+  if (!ae(e) || !Se(e.id) || !Se(e.name) || !["PLAYER", "ENEMY"].includes(String(e.side)) || !Go.includes(String(e.role))) throw new Error("Invalid Endless combatant identity");
+  if (!xe(e.level, 1) || !ae(e.stats)) throw new Error("Invalid Endless combatant progression");
+  for (const n of Bo) if (!Tt(e.stats[n])) throw new Error(`Invalid Endless combatant ${n}`);
+  if (!Array.isArray(e.skillIds) || e.skillIds.length > 64 || e.skillIds.some((n) => !Se(n)) || new Set(e.skillIds).size !== e.skillIds.length) throw new Error("Invalid Endless combatant skills");
   if (t) {
-    for (const n of ["hp", "shield", "ultimate", "breakGauge"]) if (!Ht(e[n])) throw new Error(`Invalid Endless battle unit ${n}`);
-    if (typeof e.alive != "boolean" || !ge(e.cooldowns) || Object.values(e.cooldowns).some((n) => !We(n))) throw new Error("Invalid Endless battle unit state");
+    for (const n of ["hp", "shield", "ultimate", "breakGauge"]) if (!Tt(e[n])) throw new Error(`Invalid Endless battle unit ${n}`);
+    if (typeof e.alive != "boolean" || !ae(e.cooldowns) || Object.values(e.cooldowns).some((n) => !xe(n))) throw new Error("Invalid Endless battle unit state");
     for (const n of ["modifiers", "dots", "controls", "statuses"]) if (!Array.isArray(e[n]) || e[n].length > 256) throw new Error(`Invalid Endless battle unit ${n}`);
-    if (e.counter !== null && !ge(e.counter)) throw new Error("Invalid Endless battle counter");
-    if (e.bossState !== null && !ge(e.bossState)) throw new Error("Invalid Endless battle boss state");
+    if (e.counter !== null && !ae(e.counter)) throw new Error("Invalid Endless battle counter");
+    if (e.bossState !== null && !ae(e.bossState)) throw new Error("Invalid Endless battle boss state");
   }
-}, xi = (e) => {
-  if (!ge(e) || Object.keys(e).length > 256) throw new Error("Invalid Endless Mine skill book");
+}, wr = (e) => {
+  if (!ae(e) || Object.keys(e).length > 256) throw new Error("Invalid Endless Mine skill book");
   for (const [t, n] of Object.entries(e)) {
-    if (!ge(n) || n.id !== t || !xe(n.id) || !xe(n.name) || !Wo.includes(String(n.target)) || !Array.isArray(n.effects) || n.effects.length > 32) throw new Error("Invalid Endless skill definition");
-    for (const r of n.effects) {
-      if (!ge(r) || !Ko.includes(String(r.kind))) throw new Error("Invalid Endless skill effect");
-      for (const i of ["power", "value", "duration", "chance"]) if (r[i] !== void 0 && !Ht(r[i], -1e12)) throw new Error(`Invalid Endless skill effect ${i}`);
+    if (!ae(n) || n.id !== t || !Se(n.id) || !Se(n.name) || !qo.includes(String(n.target)) || !Array.isArray(n.effects) || n.effects.length > 32) throw new Error("Invalid Endless skill definition");
+    for (const i of n.effects) {
+      if (!ae(i) || !Uo.includes(String(i.kind))) throw new Error("Invalid Endless skill effect");
+      for (const r of ["power", "value", "duration", "chance"]) if (i[r] !== void 0 && !Tt(i[r], -1e12)) throw new Error(`Invalid Endless skill effect ${r}`);
     }
   }
-}, zo = (e) => {
-  if (!ge(e) || !We(e.floor, 1) || e.floor > Ze || !["CRYSTAL_CAVERN", "MAGMA_VEIN", "FOSSIL_DEPTHS", "ASTRAL_RIFT"].includes(String(e.biome)) || typeof e.isBossFloor != "boolean" || !Ht(e.difficulty) || !We(e.baseReward)) throw new Error("Invalid Endless active floor");
+}, Ho = (e) => {
+  if (!ae(e) || !xe(e.floor, 1) || e.floor > Fe || !["CRYSTAL_CAVERN", "MAGMA_VEIN", "FOSSIL_DEPTHS", "ASTRAL_RIFT"].includes(String(e.biome)) || typeof e.isBossFloor != "boolean" || !Tt(e.difficulty) || !xe(e.baseReward)) throw new Error("Invalid Endless active floor");
   if (e.encounterType === void 0 && e.encounter === void 0) {
     const n = e.isBossFloor === !0;
     e.encounterType = n ? "BOSS" : "BATTLE", e.encounter = {
@@ -2068,61 +2068,61 @@ const tt = (e, t, n) => {
       outcomeRoll: 0.5
     };
   }
-  if (!so.includes(e.encounterType)) throw new Error("Invalid Endless encounter type");
+  if (!Qs.includes(e.encounterType)) throw new Error("Invalid Endless encounter type");
   if (e.encounterType === "BOSS" !== e.isBossFloor) throw new Error("Invalid Endless boss encounter");
-  if (!ge(e.encounter) || !xe(e.encounter.label) || !xe(e.encounter.description)) throw new Error("Invalid Endless encounter definition");
+  if (!ae(e.encounter) || !Se(e.encounter.label) || !Se(e.encounter.description)) throw new Error("Invalid Endless encounter definition");
   for (const n of ["rewardMultiplier", "powerMultiplier", "equipmentChance", "recoveryRatio", "risk", "outcomeRoll"])
-    if (!Ht(e.encounter[n], 0, n === "rewardMultiplier" || n === "powerMultiplier" ? 10 : 1)) throw new Error(`Invalid Endless encounter ${n}`);
-  if (!Array.isArray(e.rules) || e.rules.length > 8 || e.rules.some((n) => !ge(n) || !xe(n.id) || !xe(n.label))) throw new Error("Invalid Endless floor rules");
+    if (!Tt(e.encounter[n], 0, n === "rewardMultiplier" || n === "powerMultiplier" ? 10 : 1)) throw new Error(`Invalid Endless encounter ${n}`);
+  if (!Array.isArray(e.rules) || e.rules.length > 8 || e.rules.some((n) => !ae(n) || !Se(n.id) || !Se(n.label))) throw new Error("Invalid Endless floor rules");
   const t = e.encounterType === "BATTLE" || e.encounterType === "ELITE" || e.encounterType === "BOSS";
   if (!Array.isArray(e.enemies) || e.enemies.length > 16 || (t ? e.enemies.length < 1 : e.enemies.length !== 0)) throw new Error("Invalid Endless floor enemies");
-  for (const n of e.enemies) Ar(n);
-}, Qo = (e) => {
-  if (!ge(e) || !Array.isArray(e.units) || e.units.length < 1 || e.units.length > 32 || !We(e.turn) || !We(e.maxTurns, 1) || e.maxTurns > 1e4 || ![null, "PLAYER", "ENEMY", "DRAW"].includes(e.outcome) || !Array.isArray(e.log) || e.log.length > 1e5 || !ge(e.synergies)) throw new Error("Invalid Endless active battle");
-  for (const t of e.units) Ar(t, !0);
-  xi(e.skills);
-}, Oi = (e) => {
-  if (!ge(e) || Object.keys(e).some((n) => !["minRarity", "minScore", "allowedSlots", "alwaysKeepSets", "autoSalvage"].includes(n))) throw new Error("Invalid Endless loot filter");
-  if (e.minRarity !== void 0 && !fn.includes(e.minRarity)) throw new Error("Invalid Endless loot rarity");
-  if (e.minScore !== void 0 && !Ht(e.minScore)) throw new Error("Invalid Endless loot score");
+  for (const n of e.enemies) oi(n);
+}, Yo = (e) => {
+  if (!ae(e) || !Array.isArray(e.units) || e.units.length < 1 || e.units.length > 32 || !xe(e.turn) || !xe(e.maxTurns, 1) || e.maxTurns > 1e4 || ![null, "PLAYER", "ENEMY", "DRAW"].includes(e.outcome) || !Array.isArray(e.log) || e.log.length > 1e5 || !ae(e.synergies)) throw new Error("Invalid Endless active battle");
+  for (const t of e.units) oi(t, !0);
+  wr(e.skills);
+}, vr = (e) => {
+  if (!ae(e) || Object.keys(e).some((n) => !["minRarity", "minScore", "allowedSlots", "alwaysKeepSets", "autoSalvage"].includes(n))) throw new Error("Invalid Endless loot filter");
+  if (e.minRarity !== void 0 && !Xt.includes(e.minRarity)) throw new Error("Invalid Endless loot rarity");
+  if (e.minScore !== void 0 && !Tt(e.minScore)) throw new Error("Invalid Endless loot score");
   if (e.autoSalvage !== void 0 && typeof e.autoSalvage != "boolean") throw new Error("Invalid Endless auto salvage");
-  if (e.allowedSlots !== void 0 && (!Array.isArray(e.allowedSlots) || e.allowedSlots.some((n) => !bn.includes(n)) || new Set(e.allowedSlots).size !== e.allowedSlots.length)) throw new Error("Invalid Endless allowed slots");
-  const t = Object.keys(cn);
+  if (e.allowedSlots !== void 0 && (!Array.isArray(e.allowedSlots) || e.allowedSlots.some((n) => !sn.includes(n)) || new Set(e.allowedSlots).size !== e.allowedSlots.length)) throw new Error("Invalid Endless allowed slots");
+  const t = Object.keys(qt);
   if (e.alwaysKeepSets !== void 0 && (!Array.isArray(e.alwaysKeepSets) || e.alwaysKeepSets.some((n) => !t.includes(String(n))) || new Set(e.alwaysKeepSets).size !== e.alwaysKeepSets.length)) throw new Error("Invalid Endless kept sets");
-}, Jo = (e) => {
-  if (!ge(e) || e.version !== 1) throw new Error("Invalid Endless Mine state version");
+}, jo = (e) => {
+  if (!ae(e) || e.version !== 1) throw new Error("Invalid Endless Mine state version");
   if (!["READY", "RUNNING", "PAUSED", "ENDED"].includes(String(e.status))) throw new Error("Invalid Endless Mine status");
-  if (!Array.isArray(e.partyStoneIds) || e.partyStoneIds.length > 3 || e.partyStoneIds.some((i) => typeof i != "string") || new Set(e.partyStoneIds).size !== e.partyStoneIds.length) throw new Error("Invalid Endless Mine party");
+  if (!Array.isArray(e.partyStoneIds) || e.partyStoneIds.length > 3 || e.partyStoneIds.some((r) => typeof r != "string") || new Set(e.partyStoneIds).size !== e.partyStoneIds.length) throw new Error("Invalid Endless Mine party");
   if (!Array.isArray(e.partySnapshot) || e.partySnapshot.length > 3) throw new Error("Invalid Endless Mine snapshot");
-  for (const i of e.partySnapshot) Ar(i);
-  if (xi(e.skillBook), !["BALANCED", "AGGRESSIVE", "DEFENSIVE", "BOSS_FOCUS", "RESOURCE_SAVE"].includes(String(e.strategy))) throw new Error("Invalid Endless Mine strategy");
+  for (const r of e.partySnapshot) oi(r);
+  if (wr(e.skillBook), !["BALANCED", "AGGRESSIVE", "DEFENSIVE", "BOSS_FOCUS", "RESOURCE_SAVE"].includes(String(e.strategy))) throw new Error("Invalid Endless Mine strategy");
   if (![1, 2, 4].includes(Number(e.speed)) || typeof e.manualMode != "boolean") throw new Error("Invalid Endless Mine controls");
-  for (const i of ["startedAt", "lastProcessedAt", "nextFloorAt"]) if (!Yo(e[i], !0)) throw new Error(`Invalid Endless Mine ${i}`);
-  for (const i of ["highestFloor", "weeklyHighestFloor", "winStreak", "pendingCredits"]) if (!We(e[i])) throw new Error(`Invalid Endless Mine ${i}`);
-  if (e.highestFloor > Ze || e.weeklyHighestFloor > Ze || e.pendingCredits > Rn) throw new Error("Invalid Endless campaign bounds");
+  for (const r of ["startedAt", "lastProcessedAt", "nextFloorAt"]) if (!Fo(e[r], !0)) throw new Error(`Invalid Endless Mine ${r}`);
+  for (const r of ["highestFloor", "weeklyHighestFloor", "winStreak", "pendingCredits"]) if (!xe(e[r])) throw new Error(`Invalid Endless Mine ${r}`);
+  if (e.highestFloor > Fe || e.weeklyHighestFloor > Fe || e.pendingCredits > rn) throw new Error("Invalid Endless campaign bounds");
   if (typeof e.weeklySeed != "string" || e.weeklySeed.length > 128) throw new Error("Invalid weekly seed");
-  if (!Array.isArray(e.recentLog) || e.recentLog.length > 80 || e.recentLog.some((i) => typeof i != "string" || i.length > 1e3)) throw new Error("Invalid Endless Mine log");
-  if (!ge(e.claimLedger) || Object.keys(e.claimLedger).length > 1e5 || Object.keys(e.claimLedger).some((i) => !xe(i, 512)) || Object.values(e.claimLedger).some((i) => i !== !0)) throw new Error("Invalid Endless Mine claim ledger");
+  if (!Array.isArray(e.recentLog) || e.recentLog.length > 80 || e.recentLog.some((r) => typeof r != "string" || r.length > 1e3)) throw new Error("Invalid Endless Mine log");
+  if (!ae(e.claimLedger) || Object.keys(e.claimLedger).length > 1e5 || Object.keys(e.claimLedger).some((r) => !Se(r, 512)) || Object.values(e.claimLedger).some((r) => r !== !0)) throw new Error("Invalid Endless Mine claim ledger");
   const t = e.equipment;
-  if (!ge(t) || !We(t.capacity, 1) || t.capacity > 1e4 || !We(t.salvageMaterials) || !Array.isArray(t.items) || t.items.length > t.capacity) throw new Error("Invalid Endless equipment inventory");
+  if (!ae(t) || !xe(t.capacity, 1) || t.capacity > 1e4 || !xe(t.salvageMaterials) || !Array.isArray(t.items) || t.items.length > t.capacity) throw new Error("Invalid Endless equipment inventory");
   const n = /* @__PURE__ */ new Set();
-  for (const i of t.items) {
-    if (!ge(i) || !xe(i.id, 512) || typeof i.locked != "boolean" || !Array.isArray(i.affixes)) throw new Error("Invalid Endless equipment item");
-    if (n.has(i.id)) throw new Error(`Duplicate Endless equipment id ${i.id}`);
-    n.add(i.id), wi(i);
+  for (const r of t.items) {
+    if (!ae(r) || !Se(r.id, 512) || typeof r.locked != "boolean" || !Array.isArray(r.affixes)) throw new Error("Invalid Endless equipment item");
+    if (n.has(r.id)) throw new Error(`Duplicate Endless equipment id ${r.id}`);
+    n.add(r.id), mr(r);
   }
-  if (Oi(e.lootFilter), e.activeFloor === null != (e.activeBattle === null)) throw new Error("Incomplete Endless active battle");
-  if (e.activeFloor !== null && zo(e.activeFloor), e.activeBattle !== null && Qo(e.activeBattle), ge(e.activeFloor) && !["BATTLE", "ELITE", "BOSS"].includes(String(e.activeFloor.encounterType))) throw new Error("Non-combat Endless floor cannot retain a battle");
-  if (e.runId !== null && !xe(e.runId, 512)) throw new Error("Invalid Endless run id");
+  if (vr(e.lootFilter), e.activeFloor === null != (e.activeBattle === null)) throw new Error("Incomplete Endless active battle");
+  if (e.activeFloor !== null && Ho(e.activeFloor), e.activeBattle !== null && Yo(e.activeBattle), ae(e.activeFloor) && !["BATTLE", "ELITE", "BOSS"].includes(String(e.activeFloor.encounterType))) throw new Error("Non-combat Endless floor cannot retain a battle");
+  if (e.runId !== null && !Se(e.runId, 512)) throw new Error("Invalid Endless run id");
   if (e.run !== null) {
-    if (!ge(e.run) || !xe(e.run.seed) || !["ACTIVE", "AUTO", "OFFLINE"].includes(String(e.run.mode)) || !["CLIMBING", "DEFEATED", "COMPLETE"].includes(String(e.run.status))) throw new Error("Invalid Endless run");
-    e.run.resonanceIntegrity === void 0 && (e.run.resonanceIntegrity = Tt);
-    for (const l of ["currentFloor", "highestClearedFloor", "checkpointFloor", "totalReward", "clearedBosses", "battles", "resonanceIntegrity"]) if (!We(e.run[l])) throw new Error(`Invalid Endless run ${l}`);
-    const i = e.run.currentFloor, s = e.run.highestClearedFloor, o = e.run.checkpointFloor, a = e.run.clearedBosses;
-    if (i < 1 || i > Ze || s > Ze || o > s || o % Ut.checkpointInterval !== 0 || a > Math.floor(s / 10) || e.run.totalReward > Rn || e.run.resonanceIntegrity > Tt) throw new Error("Invalid Endless run floor bounds");
-    if (e.run.lastDefeatFloor !== null && (!We(e.run.lastDefeatFloor, 1) || e.run.lastDefeatFloor > Ze)) throw new Error("Invalid Endless defeat floor");
-    if (e.run.status === "DEFEATED" && (e.run.lastDefeatFloor === null || i !== e.run.lastDefeatFloor)) throw new Error("Incoherent defeated Endless run");
-    if (e.run.status === "COMPLETE" && (i !== Ze || s !== Ze)) throw new Error("Incoherent completed Endless run");
+    if (!ae(e.run) || !Se(e.run.seed) || !["ACTIVE", "AUTO", "OFFLINE"].includes(String(e.run.mode)) || !["CLIMBING", "DEFEATED", "COMPLETE"].includes(String(e.run.status))) throw new Error("Invalid Endless run");
+    e.run.resonanceIntegrity === void 0 && (e.run.resonanceIntegrity = dt);
+    for (const c of ["currentFloor", "highestClearedFloor", "checkpointFloor", "totalReward", "clearedBosses", "battles", "resonanceIntegrity"]) if (!xe(e.run[c])) throw new Error(`Invalid Endless run ${c}`);
+    const r = e.run.currentFloor, s = e.run.highestClearedFloor, o = e.run.checkpointFloor, a = e.run.clearedBosses;
+    if (r < 1 || r > Fe || s > Fe || o > s || o % Rt.checkpointInterval !== 0 || a > Math.floor(s / 10) || e.run.totalReward > rn || e.run.resonanceIntegrity > dt) throw new Error("Invalid Endless run floor bounds");
+    if (e.run.lastDefeatFloor !== null && (!xe(e.run.lastDefeatFloor, 1) || e.run.lastDefeatFloor > Fe)) throw new Error("Invalid Endless defeat floor");
+    if (e.run.status === "DEFEATED" && (e.run.lastDefeatFloor === null || r !== e.run.lastDefeatFloor)) throw new Error("Incoherent defeated Endless run");
+    if (e.run.status === "COMPLETE" && (r !== Fe || s !== Fe)) throw new Error("Incoherent completed Endless run");
   }
   if (e.run === null != (e.runId === null)) throw new Error("Incomplete Endless run identity");
   if (e.status === "READY" && (e.run !== null || e.runId !== null || e.partyStoneIds.length || e.partySnapshot.length || e.activeFloor !== null)) throw new Error("Incoherent ready Endless campaign");
@@ -2136,54 +2136,54 @@ const tt = (e, t, n) => {
   if (e.status !== "RUNNING" && e.nextFloorAt !== null) throw new Error("Inactive Endless Mine has a pending timer");
   if (e.run !== null && (!e.startedAt || !e.lastProcessedAt)) throw new Error("Endless run timestamps are missing");
   if (e.run && (e.highestFloor < e.run.highestClearedFloor || e.pendingCredits > e.run.totalReward)) throw new Error("Incoherent Endless campaign progress");
-  if (ge(e.activeFloor) && e.run && e.activeFloor.floor !== e.run.currentFloor) throw new Error("Endless active floor does not match run");
-  const r = [e.partySnapshot, e.skillBook, e.activeFloor, e.activeBattle];
-  for (; r.length; ) {
-    const i = r.pop();
-    if (typeof i == "number" && !Number.isFinite(i)) throw new Error("Endless Mine contains a non-finite number");
-    Array.isArray(i) ? r.push(...i) : ge(i) && r.push(...Object.values(i));
+  if (ae(e.activeFloor) && e.run && e.activeFloor.floor !== e.run.currentFloor) throw new Error("Endless active floor does not match run");
+  const i = [e.partySnapshot, e.skillBook, e.activeFloor, e.activeBattle];
+  for (; i.length; ) {
+    const r = i.pop();
+    if (typeof r == "number" && !Number.isFinite(r)) throw new Error("Endless Mine contains a non-finite number");
+    Array.isArray(r) ? i.push(...r) : ae(r) && i.push(...Object.values(r));
   }
   return e;
-}, Li = () => ({ version: 1, stones: {}, species: {}, totalXp: 0 }), Zo = (e) => Math.max(500, Math.floor(750 * Math.pow(e + 1, 1.24))), ea = (e) => [
+}, Mr = () => ({ version: 1, stones: {}, species: {}, totalXp: 0 }), Vo = (e) => Math.max(500, Math.floor(750 * Math.pow(e + 1, 1.24))), Xo = (e) => [
   ...e >= 2 ? ["lore-entry-1"] : [],
   ...e >= 5 ? ["profile-badge"] : [],
   ...e >= 10 ? ["resonance-aura"] : [],
   ...e >= 20 ? ["minor-passive"] : [],
   ...e >= 40 ? ["mastery-title"] : []
-], $r = (e, t) => {
-  for (e.xp = Xe(e.xp, t); e.level < 1e4; ) {
-    const n = Zo(e.level);
+], bi = (e, t) => {
+  for (e.xp = Ce(e.xp, t); e.level < 1e4; ) {
+    const n = Vo(e.level);
     if (e.xp < n) break;
     e.xp -= n, e.level += 1;
   }
-  e.unlockedRewardIds = ea(e.level);
-}, Pr = (e, t) => e[t] ??= { xp: 0, level: 0, unlockedRewardIds: [] }, ta = (e, t, n, r) => {
-  if (n === e) return Math.max(0, r - t);
-  let i = Math.max(0, qt.stone(e) - t);
-  for (let s = e + 1; s < n; s += 1) i = Xe(i, qt.stone(s));
-  return Xe(i, r);
-}, wr = (e, t, n) => {
+  e.unlockedRewardIds = Xo(e.level);
+}, Ni = (e, t) => e[t] ??= { xp: 0, level: 0, unlockedRewardIds: [] }, Wo = (e, t, n, i) => {
+  if (n === e) return Math.max(0, i - t);
+  let r = Math.max(0, vt.stone(e) - t);
+  for (let s = e + 1; s < n; s += 1) r = Ce(r, vt.stone(s));
+  return Ce(r, i);
+}, ai = (e, t, n) => {
   if (!Number.isFinite(n) || n < 0) throw new RangeError("XP amount must be finite and non-negative");
-  const r = Math.floor(n), i = e.level, s = e.xp, o = e.level >= Cn(e), a = si(e, r), l = o ? 0 : Math.min(r, ta(i, s, e.level, e.xp)), d = Math.max(0, r - l), u = Pr(t.stones, e.instanceId), h = Pr(t.species, e.speciesId);
-  return d > 0 && ($r(u, d), $r(h, Math.max(1, Math.floor(d * 0.35))), t.totalXp = Xe(t.totalXp, d)), { ...a, masteryXpGained: d, stoneMasteryLevel: u.level, speciesMasteryLevel: h.level };
-}, na = (e) => {
+  const i = Math.floor(n), r = e.level, s = e.xp, o = e.level >= dn(e), a = Ki(e, i), c = o ? 0 : Math.min(i, Wo(r, s, e.level, e.xp)), l = Math.max(0, i - c), d = Ni(t.stones, e.instanceId), f = Ni(t.species, e.speciesId);
+  return l > 0 && (bi(d, l), bi(f, Math.max(1, Math.floor(l * 0.35))), t.totalXp = Ce(t.totalXp, l)), { ...a, masteryXpGained: l, stoneMasteryLevel: d.level, speciesMasteryLevel: f.level };
+}, Ko = (e) => {
   if (!e || typeof e != "object" || Array.isArray(e)) throw new Error("Invalid mastery state");
   const t = e;
   if (t.version !== 1 || !Number.isSafeInteger(t.totalXp) || t.totalXp < 0) throw new Error("Invalid mastery state header");
   for (const n of ["stones", "species"]) {
-    const r = t[n];
-    if (!r || typeof r != "object" || Array.isArray(r) || Object.keys(r).length > 1e5) throw new Error(`Invalid mastery ${n}`);
-    for (const [i, s] of Object.entries(r)) {
-      if (!i || !s || typeof s != "object" || Array.isArray(s)) throw new Error(`Invalid mastery entry ${i}`);
+    const i = t[n];
+    if (!i || typeof i != "object" || Array.isArray(i) || Object.keys(i).length > 1e5) throw new Error(`Invalid mastery ${n}`);
+    for (const [r, s] of Object.entries(i)) {
+      if (!r || !s || typeof s != "object" || Array.isArray(s)) throw new Error(`Invalid mastery entry ${r}`);
       const o = s;
-      if (!Number.isSafeInteger(o.xp) || o.xp < 0 || !Number.isSafeInteger(o.level) || o.level < 0 || o.level > 1e4) throw new Error(`Invalid mastery progression ${i}`);
-      if (!Array.isArray(o.unlockedRewardIds) || o.unlockedRewardIds.length > 16 || o.unlockedRewardIds.some((a) => typeof a != "string")) throw new Error(`Invalid mastery rewards ${i}`);
+      if (!Number.isSafeInteger(o.xp) || o.xp < 0 || !Number.isSafeInteger(o.level) || o.level < 0 || o.level > 1e4) throw new Error(`Invalid mastery progression ${r}`);
+      if (!Array.isArray(o.unlockedRewardIds) || o.unlockedRewardIds.length > 16 || o.unlockedRewardIds.some((a) => typeof a != "string")) throw new Error(`Invalid mastery rewards ${r}`);
     }
   }
   return e;
-}, Ge = 5, Jn = (e = {}) => {
-  const t = e.clock ?? de, n = t.now(), r = e.rng ?? new Re(e.seed ?? `${n.toISOString()}:new-game`), i = e.accountId ?? tt("account", r, n.getTime()), s = (e.username?.trim() || "Stonekeeper").slice(0, 24), o = {
-    accountId: i,
+}, Te = 5, Pn = (e = {}) => {
+  const t = e.clock ?? Z, n = t.now(), i = e.rng ?? new Ee(e.seed ?? `${n.toISOString()}:new-game`), r = e.accountId ?? Ge("account", i, n.getTime()), s = (e.username?.trim() || "Stonekeeper").slice(0, 24), o = {
+    accountId: r,
     username: s,
     avatarId: "avatar_founder",
     profileFrameId: "frame_basalt",
@@ -2196,16 +2196,16 @@ const tt = (e, t, n) => {
     raidStats: { lifetimeDamage: 0, bossesDefeated: 0, bestContributionRank: null },
     createdAt: n.toISOString(),
     lastOnlineAt: n.toISOString()
-  }, a = { accountId: i, username: s }, l = e.withStarter === !1 ? [] : [
-    Hn("species_pebblit", a, `${e.seed ?? i}:starter:1`, t),
-    Hn("species_quartzling", a, `${e.seed ?? i}:starter:2`, t),
-    Hn("species_emberite", a, `${e.seed ?? i}:starter:3`, t)
-  ], d = Object.fromEntries(l.map((h) => [h.instanceId, h])), u = Object.fromEntries(cr.map((h) => [
-    h.id,
+  }, a = { accountId: r, username: s }, c = e.withStarter === !1 ? [] : [
+    bn("species_pebblit", a, `${e.seed ?? r}:starter:1`, t),
+    bn("species_quartzling", a, `${e.seed ?? r}:starter:2`, t),
+    bn("species_emberite", a, `${e.seed ?? r}:starter:3`, t)
+  ], l = Object.fromEntries(c.map((f) => [f.instanceId, f])), d = Object.fromEntries(Xn.map((f) => [
+    f.id,
     { value: 0, unlockedAt: null, claimedAt: null }
   ]));
   return {
-    schemaVersion: Ge,
+    schemaVersion: Te,
     revision: 0,
     account: o,
     accountProgress: { level: 1, xp: 0, researchPoints: 0, skillPoints: 0, selectedSkillNodes: [] },
@@ -2227,15 +2227,15 @@ const tt = (e, t, n) => {
     affinityGarden: { assignment: null },
     research: { slot: null, completedProjectIds: [], claimLedger: {} },
     idle: {
-      timeCheckpoint: ai(n.getTime()),
+      timeCheckpoint: Ji(n.getTime()),
       scheduler: { version: 1, jobs: [] },
       lastProcessedAt: n.toISOString(),
       lastActiveAt: n.toISOString(),
       lastWelcomeBack: null
     },
-    endlessMine: Ni(n),
-    mastery: Li(),
-    stones: d,
+    endlessMine: Ir(n),
+    mastery: Mr(),
+    stones: l,
     unappraisedFinds: [],
     inventory: {
       currencies: { credits: 3e3, gachaTickets: 12, researchCores: 0, upgradeDust: 250 },
@@ -2244,52 +2244,52 @@ const tt = (e, t, n) => {
       capacity: 500
     },
     collection: {
-      discoveredSpeciesIds: l.map((h) => h.speciesId),
-      mutationSpecies: Object.fromEntries(l.map((h) => [h.speciesId, [h.mutation]])),
-      variantSpecies: Object.fromEntries(l.map((h) => [h.speciesId, [h.colorVariant]])),
-      origins: l.length ? { EVENT: l.length } : {}
+      discoveredSpeciesIds: c.map((f) => f.speciesId),
+      mutationSpecies: Object.fromEntries(c.map((f) => [f.speciesId, [f.mutation]])),
+      variantSpecies: Object.fromEntries(c.map((f) => [f.speciesId, [f.colorVariant]])),
+      origins: c.length ? { EVENT: c.length } : {}
     },
     fusionHistory: [],
     gacha: { pityByBanner: {}, history: [], rarityCounts: {} },
-    achievements: u,
-    parties: [{ id: "party_primary", name: "Primary Formation", slots: l.map((h, w) => ({ stoneId: h.instanceId, position: w === 0 ? "FRONT" : "BACK" })), defense: !1 }],
+    achievements: d,
+    parties: [{ id: "party_primary", name: "Primary Formation", slots: c.map((f, y) => ({ stoneId: f.instanceId, position: y === 0 ? "FRONT" : "BACK" })), defense: !1 }],
     activePartyId: "party_primary",
     activeBattle: null,
     battleHistory: [],
     dungeonClears: {},
-    profile: { showcaseStoneIds: l.map((h) => h.instanceId), favoriteStoneIds: [], totalAffinity: 0, public: !0 },
+    profile: { showcaseStoneIds: c.map((f) => f.instanceId), favoriteStoneIds: [], totalAffinity: 0, public: !0 },
     statistics: { fusionCount: 0, mutationCount: 0, rareDiscoveryCount: 0, battleWins: 0, battleLosses: 0, highestInfiniteFloor: 0, totalRaidDamage: 0 },
-    online: { connected: !0, sessionId: tt("session", r, n.getTime()), sequence: 0, queue: [], processedReceipts: [], lastSyncedAt: null },
+    online: { connected: !0, sessionId: Ge("session", i, n.getTime()), sequence: 0, queue: [], processedReceipts: [], lastSyncedAt: null },
     settings: { effectQuality: "HIGH", reduceMotion: !1, mute: !1, masterVolume: 0.8, musicVolume: 0.55, effectsVolume: 0.8, textScale: 1, developerMode: !1 },
     createdAt: n.toISOString(),
     updatedAt: n.toISOString()
   };
-}, st = (e) => typeof structuredClone == "function" ? structuredClone(e) : JSON.parse(JSON.stringify(e)), ra = (e, t = de) => {
+}, je = (e) => typeof structuredClone == "function" ? structuredClone(e) : JSON.parse(JSON.stringify(e)), zo = (e, t = Z) => {
   e.revision += 1, e.updatedAt = t.now().toISOString();
-}, Fr = (e) => {
+}, ki = (e) => {
   let t;
-  const n = /* @__PURE__ */ new Set(), r = (d, u) => {
-    const h = typeof d == "function" ? d(t) : d;
-    if (!Object.is(h, t)) {
-      const w = t;
-      t = u ?? (typeof h != "object" || h === null) ? h : Object.assign({}, t, h), n.forEach((E) => E(t, w));
+  const n = /* @__PURE__ */ new Set(), i = (l, d) => {
+    const f = typeof l == "function" ? l(t) : l;
+    if (!Object.is(f, t)) {
+      const y = t;
+      t = d ?? (typeof f != "object" || f === null) ? f : Object.assign({}, t, f), n.forEach((h) => h(t, y));
     }
-  }, i = () => t, a = { setState: r, getState: i, getInitialState: () => l, subscribe: (d) => (n.add(d), () => n.delete(d)) }, l = t = e(r, i, a);
+  }, r = () => t, a = { setState: i, getState: r, getInitialState: () => c, subscribe: (l) => (n.add(l), () => n.delete(l)) }, c = t = e(i, r, a);
   return a;
-}, ia = ((e) => e ? Fr(e) : Fr);
-function sa(e) {
+}, Jo = ((e) => e ? ki(e) : ki);
+function Qo(e) {
   return e && e.__esModule && Object.prototype.hasOwnProperty.call(e, "default") ? e.default : e;
 }
-var yn = { exports: {} }, Q = {};
-var Br;
-function oa() {
-  if (Br) return Q;
-  Br = 1;
-  var e = /* @__PURE__ */ Symbol.for("react.transitional.element"), t = /* @__PURE__ */ Symbol.for("react.portal"), n = /* @__PURE__ */ Symbol.for("react.fragment"), r = /* @__PURE__ */ Symbol.for("react.strict_mode"), i = /* @__PURE__ */ Symbol.for("react.profiler"), s = /* @__PURE__ */ Symbol.for("react.consumer"), o = /* @__PURE__ */ Symbol.for("react.context"), a = /* @__PURE__ */ Symbol.for("react.forward_ref"), l = /* @__PURE__ */ Symbol.for("react.suspense"), d = /* @__PURE__ */ Symbol.for("react.memo"), u = /* @__PURE__ */ Symbol.for("react.lazy"), h = /* @__PURE__ */ Symbol.for("react.activity"), w = Symbol.iterator;
-  function E(I) {
-    return I === null || typeof I != "object" ? null : (I = w && I[w] || I["@@iterator"], typeof I == "function" ? I : null);
+var Nn = { exports: {} }, H = {};
+var _i;
+function Zo() {
+  if (_i) return H;
+  _i = 1;
+  var e = /* @__PURE__ */ Symbol.for("react.transitional.element"), t = /* @__PURE__ */ Symbol.for("react.portal"), n = /* @__PURE__ */ Symbol.for("react.fragment"), i = /* @__PURE__ */ Symbol.for("react.strict_mode"), r = /* @__PURE__ */ Symbol.for("react.profiler"), s = /* @__PURE__ */ Symbol.for("react.consumer"), o = /* @__PURE__ */ Symbol.for("react.context"), a = /* @__PURE__ */ Symbol.for("react.forward_ref"), c = /* @__PURE__ */ Symbol.for("react.suspense"), l = /* @__PURE__ */ Symbol.for("react.memo"), d = /* @__PURE__ */ Symbol.for("react.lazy"), f = /* @__PURE__ */ Symbol.for("react.activity"), y = Symbol.iterator;
+  function h(E) {
+    return E === null || typeof E != "object" ? null : (E = y && E[y] || E["@@iterator"], typeof E == "function" ? E : null);
   }
-  var m = {
+  var u = {
     isMounted: function() {
       return !1;
     },
@@ -2299,1248 +2299,396 @@ function oa() {
     },
     enqueueSetState: function() {
     }
-  }, A = Object.assign, S = {};
-  function k(I, x, X) {
-    this.props = I, this.context = x, this.refs = S, this.updater = X || m;
+  }, I = Object.assign, g = {};
+  function b(E, k, U) {
+    this.props = E, this.context = k, this.refs = g, this.updater = U || u;
   }
-  k.prototype.isReactComponent = {}, k.prototype.setState = function(I, x) {
-    if (typeof I != "object" && typeof I != "function" && I != null)
+  b.prototype.isReactComponent = {}, b.prototype.setState = function(E, k) {
+    if (typeof E != "object" && typeof E != "function" && E != null)
       throw Error(
         "takes an object of state variables to update or a function which returns an object of state variables."
       );
-    this.updater.enqueueSetState(this, I, x, "setState");
-  }, k.prototype.forceUpdate = function(I) {
-    this.updater.enqueueForceUpdate(this, I, "forceUpdate");
+    this.updater.enqueueSetState(this, E, k, "setState");
+  }, b.prototype.forceUpdate = function(E) {
+    this.updater.enqueueForceUpdate(this, E, "forceUpdate");
   };
-  function T() {
+  function R() {
   }
-  T.prototype = k.prototype;
-  function p(I, x, X) {
-    this.props = I, this.context = x, this.refs = S, this.updater = X || m;
+  R.prototype = b.prototype;
+  function m(E, k, U) {
+    this.props = E, this.context = k, this.refs = g, this.updater = U || u;
   }
-  var f = p.prototype = new T();
-  f.constructor = p, A(f, k.prototype), f.isPureReactComponent = !0;
-  var y = Array.isArray;
-  function b() {
+  var p = m.prototype = new R();
+  p.constructor = m, I(p, b.prototype), p.isPureReactComponent = !0;
+  var S = Array.isArray;
+  function M() {
   }
-  var M = { H: null, A: null, T: null, S: null }, N = Object.prototype.hasOwnProperty;
-  function L(I, x, X) {
-    var Y = X.ref;
+  var w = { H: null, A: null, T: null, S: null }, T = Object.prototype.hasOwnProperty;
+  function x(E, k, U) {
+    var G = U.ref;
     return {
       $$typeof: e,
-      type: I,
-      key: x,
-      ref: Y !== void 0 ? Y : null,
-      props: X
+      type: E,
+      key: k,
+      ref: G !== void 0 ? G : null,
+      props: U
     };
   }
-  function G(I, x) {
-    return L(I.type, x, I.props);
+  function $(E, k) {
+    return x(E.type, k, E.props);
   }
-  function H(I) {
-    return typeof I == "object" && I !== null && I.$$typeof === e;
+  function F(E) {
+    return typeof E == "object" && E !== null && E.$$typeof === e;
   }
-  function q(I) {
-    var x = { "=": "=0", ":": "=2" };
-    return "$" + I.replace(/[=:]/g, function(X) {
-      return x[X];
+  function q(E) {
+    var k = { "=": "=0", ":": "=2" };
+    return "$" + E.replace(/[=:]/g, function(U) {
+      return k[U];
     });
   }
-  var K = /\/+/g;
-  function ue(I, x) {
-    return typeof I == "object" && I !== null && I.key != null ? q("" + I.key) : x.toString(36);
+  var Y = /\/+/g;
+  function oe(E, k) {
+    return typeof E == "object" && E !== null && E.key != null ? q("" + E.key) : k.toString(36);
   }
-  function F(I) {
-    switch (I.status) {
+  function O(E) {
+    switch (E.status) {
       case "fulfilled":
-        return I.value;
+        return E.value;
       case "rejected":
-        throw I.reason;
+        throw E.reason;
       default:
-        switch (typeof I.status == "string" ? I.then(b, b) : (I.status = "pending", I.then(
-          function(x) {
-            I.status === "pending" && (I.status = "fulfilled", I.value = x);
+        switch (typeof E.status == "string" ? E.then(M, M) : (E.status = "pending", E.then(
+          function(k) {
+            E.status === "pending" && (E.status = "fulfilled", E.value = k);
           },
-          function(x) {
-            I.status === "pending" && (I.status = "rejected", I.reason = x);
+          function(k) {
+            E.status === "pending" && (E.status = "rejected", E.reason = k);
           }
-        )), I.status) {
+        )), E.status) {
           case "fulfilled":
-            return I.value;
+            return E.value;
           case "rejected":
-            throw I.reason;
+            throw E.reason;
         }
     }
-    throw I;
+    throw E;
   }
-  function z(I, x, X, Y, re) {
-    var oe = typeof I;
-    (oe === "undefined" || oe === "boolean") && (I = null);
-    var le = !1;
-    if (I === null) le = !0;
+  function V(E, k, U, G, K) {
+    var J = typeof E;
+    (J === "undefined" || J === "boolean") && (E = null);
+    var ne = !1;
+    if (E === null) ne = !0;
     else
-      switch (oe) {
+      switch (J) {
         case "bigint":
         case "string":
         case "number":
-          le = !0;
+          ne = !0;
           break;
         case "object":
-          switch (I.$$typeof) {
+          switch (E.$$typeof) {
             case e:
             case t:
-              le = !0;
+              ne = !0;
               break;
-            case u:
-              return le = I._init, z(
-                le(I._payload),
-                x,
-                X,
-                Y,
-                re
+            case d:
+              return ne = E._init, V(
+                ne(E._payload),
+                k,
+                U,
+                G,
+                K
               );
           }
       }
-    if (le)
-      return re = re(I), le = Y === "" ? "." + ue(I, 0) : Y, y(re) ? (X = "", le != null && (X = le.replace(K, "$&/") + "/"), z(re, x, X, "", function(nt) {
-        return nt;
-      })) : re != null && (H(re) && (re = G(
-        re,
-        X + (re.key == null || I && I.key === re.key ? "" : ("" + re.key).replace(
-          K,
+    if (ne)
+      return K = K(E), ne = G === "" ? "." + oe(E, 0) : G, S(K) ? (U = "", ne != null && (U = ne.replace(Y, "$&/") + "/"), V(K, k, U, "", function(wn) {
+        return wn;
+      })) : K != null && (F(K) && (K = $(
+        K,
+        U + (K.key == null || E && E.key === K.key ? "" : ("" + K.key).replace(
+          Y,
           "$&/"
-        ) + "/") + le
-      )), x.push(re)), 1;
-    le = 0;
-    var be = Y === "" ? "." : Y + ":";
-    if (y(I))
-      for (var Ee = 0; Ee < I.length; Ee++)
-        Y = I[Ee], oe = be + ue(Y, Ee), le += z(
-          Y,
-          x,
-          X,
-          oe,
-          re
+        ) + "/") + ne
+      )), k.push(K)), 1;
+    ne = 0;
+    var Ie = G === "" ? "." : G + ":";
+    if (S(E))
+      for (var ue = 0; ue < E.length; ue++)
+        G = E[ue], J = Ie + oe(G, ue), ne += V(
+          G,
+          k,
+          U,
+          J,
+          K
         );
-    else if (Ee = E(I), typeof Ee == "function")
-      for (I = Ee.call(I), Ee = 0; !(Y = I.next()).done; )
-        Y = Y.value, oe = be + ue(Y, Ee++), le += z(
-          Y,
-          x,
-          X,
-          oe,
-          re
+    else if (ue = h(E), typeof ue == "function")
+      for (E = ue.call(E), ue = 0; !(G = E.next()).done; )
+        G = G.value, J = Ie + oe(G, ue++), ne += V(
+          G,
+          k,
+          U,
+          J,
+          K
         );
-    else if (oe === "object") {
-      if (typeof I.then == "function")
-        return z(
-          F(I),
-          x,
-          X,
-          Y,
-          re
+    else if (J === "object") {
+      if (typeof E.then == "function")
+        return V(
+          O(E),
+          k,
+          U,
+          G,
+          K
         );
-      throw x = String(I), Error(
-        "Objects are not valid as a React child (found: " + (x === "[object Object]" ? "object with keys {" + Object.keys(I).join(", ") + "}" : x) + "). If you meant to render a collection of children, use an array instead."
+      throw k = String(E), Error(
+        "Objects are not valid as a React child (found: " + (k === "[object Object]" ? "object with keys {" + Object.keys(E).join(", ") + "}" : k) + "). If you meant to render a collection of children, use an array instead."
       );
     }
-    return le;
+    return ne;
   }
-  function se(I, x, X) {
-    if (I == null) return I;
-    var Y = [], re = 0;
-    return z(I, Y, "", "", function(oe) {
-      return x.call(X, oe, re++);
-    }), Y;
+  function Q(E, k, U) {
+    if (E == null) return E;
+    var G = [], K = 0;
+    return V(E, G, "", "", function(J) {
+      return k.call(U, J, K++);
+    }), G;
   }
-  function _e(I) {
-    if (I._status === -1) {
-      var x = I._result;
-      x = x(), x.then(
-        function(X) {
-          (I._status === 0 || I._status === -1) && (I._status = 1, I._result = X);
+  function qe(E) {
+    if (E._status === -1) {
+      var k = E._result;
+      k = k(), k.then(
+        function(U) {
+          (E._status === 0 || E._status === -1) && (E._status = 1, E._result = U);
         },
-        function(X) {
-          (I._status === 0 || I._status === -1) && (I._status = 2, I._result = X);
+        function(U) {
+          (E._status === 0 || E._status === -1) && (E._status = 2, E._result = U);
         }
-      ), I._status === -1 && (I._status = 0, I._result = x);
+      ), E._status === -1 && (E._status = 0, E._result = k);
     }
-    if (I._status === 1) return I._result.default;
-    throw I._result;
+    if (E._status === 1) return E._result.default;
+    throw E._result;
   }
-  var Ne = typeof reportError == "function" ? reportError : function(I) {
+  var Oe = typeof reportError == "function" ? reportError : function(E) {
     if (typeof window == "object" && typeof window.ErrorEvent == "function") {
-      var x = new window.ErrorEvent("error", {
+      var k = new window.ErrorEvent("error", {
         bubbles: !0,
         cancelable: !0,
-        message: typeof I == "object" && I !== null && typeof I.message == "string" ? String(I.message) : String(I),
-        error: I
+        message: typeof E == "object" && E !== null && typeof E.message == "string" ? String(E.message) : String(E),
+        error: E
       });
-      if (!window.dispatchEvent(x)) return;
+      if (!window.dispatchEvent(k)) return;
     } else if (typeof process == "object" && typeof process.emit == "function") {
-      process.emit("uncaughtException", I);
+      process.emit("uncaughtException", E);
       return;
     }
-    console.error(I);
-  }, Le = {
-    map: se,
-    forEach: function(I, x, X) {
-      se(
-        I,
+    console.error(E);
+  }, Ue = {
+    map: Q,
+    forEach: function(E, k, U) {
+      Q(
+        E,
         function() {
-          x.apply(this, arguments);
+          k.apply(this, arguments);
         },
-        X
+        U
       );
     },
-    count: function(I) {
-      var x = 0;
-      return se(I, function() {
-        x++;
-      }), x;
+    count: function(E) {
+      var k = 0;
+      return Q(E, function() {
+        k++;
+      }), k;
     },
-    toArray: function(I) {
-      return se(I, function(x) {
-        return x;
+    toArray: function(E) {
+      return Q(E, function(k) {
+        return k;
       }) || [];
     },
-    only: function(I) {
-      if (!H(I))
+    only: function(E) {
+      if (!F(E))
         throw Error(
           "React.Children.only expected to receive a single React element child."
         );
-      return I;
+      return E;
     }
   };
-  return Q.Activity = h, Q.Children = Le, Q.Component = k, Q.Fragment = n, Q.Profiler = i, Q.PureComponent = p, Q.StrictMode = r, Q.Suspense = l, Q.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE = M, Q.__COMPILER_RUNTIME = {
+  return H.Activity = f, H.Children = Ue, H.Component = b, H.Fragment = n, H.Profiler = r, H.PureComponent = m, H.StrictMode = i, H.Suspense = c, H.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE = w, H.__COMPILER_RUNTIME = {
     __proto__: null,
-    c: function(I) {
-      return M.H.useMemoCache(I);
+    c: function(E) {
+      return w.H.useMemoCache(E);
     }
-  }, Q.cache = function(I) {
+  }, H.cache = function(E) {
     return function() {
-      return I.apply(null, arguments);
+      return E.apply(null, arguments);
     };
-  }, Q.cacheSignal = function() {
+  }, H.cacheSignal = function() {
     return null;
-  }, Q.cloneElement = function(I, x, X) {
-    if (I == null)
+  }, H.cloneElement = function(E, k, U) {
+    if (E == null)
       throw Error(
-        "The argument must be a React element, but you passed " + I + "."
+        "The argument must be a React element, but you passed " + E + "."
       );
-    var Y = A({}, I.props), re = I.key;
-    if (x != null)
-      for (oe in x.key !== void 0 && (re = "" + x.key), x)
-        !N.call(x, oe) || oe === "key" || oe === "__self" || oe === "__source" || oe === "ref" && x.ref === void 0 || (Y[oe] = x[oe]);
-    var oe = arguments.length - 2;
-    if (oe === 1) Y.children = X;
-    else if (1 < oe) {
-      for (var le = Array(oe), be = 0; be < oe; be++)
-        le[be] = arguments[be + 2];
-      Y.children = le;
+    var G = I({}, E.props), K = E.key;
+    if (k != null)
+      for (J in k.key !== void 0 && (K = "" + k.key), k)
+        !T.call(k, J) || J === "key" || J === "__self" || J === "__source" || J === "ref" && k.ref === void 0 || (G[J] = k[J]);
+    var J = arguments.length - 2;
+    if (J === 1) G.children = U;
+    else if (1 < J) {
+      for (var ne = Array(J), Ie = 0; Ie < J; Ie++)
+        ne[Ie] = arguments[Ie + 2];
+      G.children = ne;
     }
-    return L(I.type, re, Y);
-  }, Q.createContext = function(I) {
-    return I = {
+    return x(E.type, K, G);
+  }, H.createContext = function(E) {
+    return E = {
       $$typeof: o,
-      _currentValue: I,
-      _currentValue2: I,
+      _currentValue: E,
+      _currentValue2: E,
       _threadCount: 0,
       Provider: null,
       Consumer: null
-    }, I.Provider = I, I.Consumer = {
+    }, E.Provider = E, E.Consumer = {
       $$typeof: s,
-      _context: I
-    }, I;
-  }, Q.createElement = function(I, x, X) {
-    var Y, re = {}, oe = null;
-    if (x != null)
-      for (Y in x.key !== void 0 && (oe = "" + x.key), x)
-        N.call(x, Y) && Y !== "key" && Y !== "__self" && Y !== "__source" && (re[Y] = x[Y]);
-    var le = arguments.length - 2;
-    if (le === 1) re.children = X;
-    else if (1 < le) {
-      for (var be = Array(le), Ee = 0; Ee < le; Ee++)
-        be[Ee] = arguments[Ee + 2];
-      re.children = be;
+      _context: E
+    }, E;
+  }, H.createElement = function(E, k, U) {
+    var G, K = {}, J = null;
+    if (k != null)
+      for (G in k.key !== void 0 && (J = "" + k.key), k)
+        T.call(k, G) && G !== "key" && G !== "__self" && G !== "__source" && (K[G] = k[G]);
+    var ne = arguments.length - 2;
+    if (ne === 1) K.children = U;
+    else if (1 < ne) {
+      for (var Ie = Array(ne), ue = 0; ue < ne; ue++)
+        Ie[ue] = arguments[ue + 2];
+      K.children = Ie;
     }
-    if (I && I.defaultProps)
-      for (Y in le = I.defaultProps, le)
-        re[Y] === void 0 && (re[Y] = le[Y]);
-    return L(I, oe, re);
-  }, Q.createRef = function() {
+    if (E && E.defaultProps)
+      for (G in ne = E.defaultProps, ne)
+        K[G] === void 0 && (K[G] = ne[G]);
+    return x(E, J, K);
+  }, H.createRef = function() {
     return { current: null };
-  }, Q.forwardRef = function(I) {
-    return { $$typeof: a, render: I };
-  }, Q.isValidElement = H, Q.lazy = function(I) {
-    return {
-      $$typeof: u,
-      _payload: { _status: -1, _result: I },
-      _init: _e
-    };
-  }, Q.memo = function(I, x) {
+  }, H.forwardRef = function(E) {
+    return { $$typeof: a, render: E };
+  }, H.isValidElement = F, H.lazy = function(E) {
     return {
       $$typeof: d,
-      type: I,
-      compare: x === void 0 ? null : x
+      _payload: { _status: -1, _result: E },
+      _init: qe
     };
-  }, Q.startTransition = function(I) {
-    var x = M.T, X = {};
-    M.T = X;
+  }, H.memo = function(E, k) {
+    return {
+      $$typeof: l,
+      type: E,
+      compare: k === void 0 ? null : k
+    };
+  }, H.startTransition = function(E) {
+    var k = w.T, U = {};
+    w.T = U;
     try {
-      var Y = I(), re = M.S;
-      re !== null && re(X, Y), typeof Y == "object" && Y !== null && typeof Y.then == "function" && Y.then(b, Ne);
-    } catch (oe) {
-      Ne(oe);
+      var G = E(), K = w.S;
+      K !== null && K(U, G), typeof G == "object" && G !== null && typeof G.then == "function" && G.then(M, Oe);
+    } catch (J) {
+      Oe(J);
     } finally {
-      x !== null && X.types !== null && (x.types = X.types), M.T = x;
+      k !== null && U.types !== null && (k.types = U.types), w.T = k;
     }
-  }, Q.unstable_useCacheRefresh = function() {
-    return M.H.useCacheRefresh();
-  }, Q.use = function(I) {
-    return M.H.use(I);
-  }, Q.useActionState = function(I, x, X) {
-    return M.H.useActionState(I, x, X);
-  }, Q.useCallback = function(I, x) {
-    return M.H.useCallback(I, x);
-  }, Q.useContext = function(I) {
-    return M.H.useContext(I);
-  }, Q.useDebugValue = function() {
-  }, Q.useDeferredValue = function(I, x) {
-    return M.H.useDeferredValue(I, x);
-  }, Q.useEffect = function(I, x) {
-    return M.H.useEffect(I, x);
-  }, Q.useEffectEvent = function(I) {
-    return M.H.useEffectEvent(I);
-  }, Q.useId = function() {
-    return M.H.useId();
-  }, Q.useImperativeHandle = function(I, x, X) {
-    return M.H.useImperativeHandle(I, x, X);
-  }, Q.useInsertionEffect = function(I, x) {
-    return M.H.useInsertionEffect(I, x);
-  }, Q.useLayoutEffect = function(I, x) {
-    return M.H.useLayoutEffect(I, x);
-  }, Q.useMemo = function(I, x) {
-    return M.H.useMemo(I, x);
-  }, Q.useOptimistic = function(I, x) {
-    return M.H.useOptimistic(I, x);
-  }, Q.useReducer = function(I, x, X) {
-    return M.H.useReducer(I, x, X);
-  }, Q.useRef = function(I) {
-    return M.H.useRef(I);
-  }, Q.useState = function(I) {
-    return M.H.useState(I);
-  }, Q.useSyncExternalStore = function(I, x, X) {
-    return M.H.useSyncExternalStore(
-      I,
-      x,
-      X
+  }, H.unstable_useCacheRefresh = function() {
+    return w.H.useCacheRefresh();
+  }, H.use = function(E) {
+    return w.H.use(E);
+  }, H.useActionState = function(E, k, U) {
+    return w.H.useActionState(E, k, U);
+  }, H.useCallback = function(E, k) {
+    return w.H.useCallback(E, k);
+  }, H.useContext = function(E) {
+    return w.H.useContext(E);
+  }, H.useDebugValue = function() {
+  }, H.useDeferredValue = function(E, k) {
+    return w.H.useDeferredValue(E, k);
+  }, H.useEffect = function(E, k) {
+    return w.H.useEffect(E, k);
+  }, H.useEffectEvent = function(E) {
+    return w.H.useEffectEvent(E);
+  }, H.useId = function() {
+    return w.H.useId();
+  }, H.useImperativeHandle = function(E, k, U) {
+    return w.H.useImperativeHandle(E, k, U);
+  }, H.useInsertionEffect = function(E, k) {
+    return w.H.useInsertionEffect(E, k);
+  }, H.useLayoutEffect = function(E, k) {
+    return w.H.useLayoutEffect(E, k);
+  }, H.useMemo = function(E, k) {
+    return w.H.useMemo(E, k);
+  }, H.useOptimistic = function(E, k) {
+    return w.H.useOptimistic(E, k);
+  }, H.useReducer = function(E, k, U) {
+    return w.H.useReducer(E, k, U);
+  }, H.useRef = function(E) {
+    return w.H.useRef(E);
+  }, H.useState = function(E) {
+    return w.H.useState(E);
+  }, H.useSyncExternalStore = function(E, k, U) {
+    return w.H.useSyncExternalStore(
+      E,
+      k,
+      U
     );
-  }, Q.useTransition = function() {
-    return M.H.useTransition();
-  }, Q.version = "19.2.0", Q;
+  }, H.useTransition = function() {
+    return w.H.useTransition();
+  }, H.version = "19.2.0", H;
 }
-var Zt = { exports: {} };
-Zt.exports;
-var qr;
-function aa() {
-  return qr || (qr = 1, (function(e, t) {
-    process.env.NODE_ENV !== "production" && (function() {
-      function n(c, g) {
-        Object.defineProperty(s.prototype, c, {
-          get: function() {
-            console.warn(
-              "%s(...) is deprecated in plain JavaScript React classes. %s",
-              g[0],
-              g[1]
-            );
-          }
-        });
-      }
-      function r(c) {
-        return c === null || typeof c != "object" ? null : (c = En && c[En] || c["@@iterator"], typeof c == "function" ? c : null);
-      }
-      function i(c, g) {
-        c = (c = c.constructor) && (c.displayName || c.name) || "ReactClass";
-        var _ = c + "." + g;
-        It[_] || (console.error(
-          "Can't call %s on a component that is not yet mounted. This is a no-op, but it might indicate a bug in your application. Instead, assign to `this.state` directly or define a `state = {};` class property with the desired state in the %s component.",
-          g,
-          c
-        ), It[_] = !0);
-      }
-      function s(c, g, _) {
-        this.props = c, this.context = g, this.refs = Kt, this.updater = _ || gn;
-      }
-      function o() {
-      }
-      function a(c, g, _) {
-        this.props = c, this.context = g, this.refs = Kt, this.updater = _ || gn;
-      }
-      function l() {
-      }
-      function d(c) {
-        return "" + c;
-      }
-      function u(c) {
-        try {
-          d(c);
-          var g = !1;
-        } catch {
-          g = !0;
-        }
-        if (g) {
-          g = console;
-          var _ = g.error, P = typeof Symbol == "function" && Symbol.toStringTag && c[Symbol.toStringTag] || c.constructor.name || "Object";
-          return _.call(
-            g,
-            "The provided key is an unsupported type %s. This value must be coerced to a string before using it here.",
-            P
-          ), d(c);
-        }
-      }
-      function h(c) {
-        if (c == null) return null;
-        if (typeof c == "function")
-          return c.$$typeof === Qe ? null : c.displayName || c.name || null;
-        if (typeof c == "string") return c;
-        switch (c) {
-          case I:
-            return "Fragment";
-          case X:
-            return "Profiler";
-          case x:
-            return "StrictMode";
-          case le:
-            return "Suspense";
-          case be:
-            return "SuspenseList";
-          case Wt:
-            return "Activity";
-        }
-        if (typeof c == "object")
-          switch (typeof c.tag == "number" && console.error(
-            "Received an unexpected object in getComponentNameFromType(). This is likely a bug in React. Please file an issue."
-          ), c.$$typeof) {
-            case Le:
-              return "Portal";
-            case re:
-              return c.displayName || "Context";
-            case Y:
-              return (c._context.displayName || "Context") + ".Consumer";
-            case oe:
-              var g = c.render;
-              return c = c.displayName, c || (c = g.displayName || g.name || "", c = c !== "" ? "ForwardRef(" + c + ")" : "ForwardRef"), c;
-            case Ee:
-              return g = c.displayName || null, g !== null ? g : h(c.type) || "Memo";
-            case nt:
-              g = c._payload, c = c._init;
-              try {
-                return h(c(g));
-              } catch {
-              }
-          }
-        return null;
-      }
-      function w(c) {
-        if (c === I) return "<>";
-        if (typeof c == "object" && c !== null && c.$$typeof === nt)
-          return "<...>";
-        try {
-          var g = h(c);
-          return g ? "<" + g + ">" : "<...>";
-        } catch {
-          return "<...>";
-        }
-      }
-      function E() {
-        var c = Z.A;
-        return c === null ? null : c.getOwner();
-      }
-      function m() {
-        return Error("react-stack-top-frame");
-      }
-      function A(c) {
-        if (R.call(c, "key")) {
-          var g = Object.getOwnPropertyDescriptor(c, "key").get;
-          if (g && g.isReactWarning) return !1;
-        }
-        return c.key !== void 0;
-      }
-      function S(c, g) {
-        function _() {
-          v || (v = !0, console.error(
-            "%s: `key` is not a prop. Trying to access it will result in `undefined` being returned. If you need to access the same value within the child component, you should pass it as a different prop. (https://react.dev/link/special-props)",
-            g
-          ));
-        }
-        _.isReactWarning = !0, Object.defineProperty(c, "key", {
-          get: _,
-          configurable: !0
-        });
-      }
-      function k() {
-        var c = h(this.type);
-        return Ie[c] || (Ie[c] = !0, console.error(
-          "Accessing element.ref was removed in React 19. ref is now a regular prop. It will be removed from the JSX Element type in a future release."
-        )), c = this.props.ref, c !== void 0 ? c : null;
-      }
-      function T(c, g, _, P, j, ee) {
-        var W = _.ref;
-        return c = {
-          $$typeof: Ne,
-          type: c,
-          key: g,
-          props: _,
-          _owner: P
-        }, (W !== void 0 ? W : null) !== null ? Object.defineProperty(c, "ref", {
-          enumerable: !1,
-          get: k
-        }) : Object.defineProperty(c, "ref", { enumerable: !1, value: null }), c._store = {}, Object.defineProperty(c._store, "validated", {
-          configurable: !1,
-          enumerable: !1,
-          writable: !0,
-          value: 0
-        }), Object.defineProperty(c, "_debugInfo", {
-          configurable: !1,
-          enumerable: !1,
-          writable: !0,
-          value: null
-        }), Object.defineProperty(c, "_debugStack", {
-          configurable: !1,
-          enumerable: !1,
-          writable: !0,
-          value: j
-        }), Object.defineProperty(c, "_debugTask", {
-          configurable: !1,
-          enumerable: !1,
-          writable: !0,
-          value: ee
-        }), Object.freeze && (Object.freeze(c.props), Object.freeze(c)), c;
-      }
-      function p(c, g) {
-        return g = T(
-          c.type,
-          g,
-          c.props,
-          c._owner,
-          c._debugStack,
-          c._debugTask
-        ), c._store && (g._store.validated = c._store.validated), g;
-      }
-      function f(c) {
-        y(c) ? c._store && (c._store.validated = 1) : typeof c == "object" && c !== null && c.$$typeof === nt && (c._payload.status === "fulfilled" ? y(c._payload.value) && c._payload.value._store && (c._payload.value._store.validated = 1) : c._store && (c._store.validated = 1));
-      }
-      function y(c) {
-        return typeof c == "object" && c !== null && c.$$typeof === Ne;
-      }
-      function b(c) {
-        var g = { "=": "=0", ":": "=2" };
-        return "$" + c.replace(/[=:]/g, function(_) {
-          return g[_];
-        });
-      }
-      function M(c, g) {
-        return typeof c == "object" && c !== null && c.key != null ? (u(c.key), b("" + c.key)) : g.toString(36);
-      }
-      function N(c) {
-        switch (c.status) {
-          case "fulfilled":
-            return c.value;
-          case "rejected":
-            throw c.reason;
-          default:
-            switch (typeof c.status == "string" ? c.then(l, l) : (c.status = "pending", c.then(
-              function(g) {
-                c.status === "pending" && (c.status = "fulfilled", c.value = g);
-              },
-              function(g) {
-                c.status === "pending" && (c.status = "rejected", c.reason = g);
-              }
-            )), c.status) {
-              case "fulfilled":
-                return c.value;
-              case "rejected":
-                throw c.reason;
-            }
-        }
-        throw c;
-      }
-      function L(c, g, _, P, j) {
-        var ee = typeof c;
-        (ee === "undefined" || ee === "boolean") && (c = null);
-        var W = !1;
-        if (c === null) W = !0;
-        else
-          switch (ee) {
-            case "bigint":
-            case "string":
-            case "number":
-              W = !0;
-              break;
-            case "object":
-              switch (c.$$typeof) {
-                case Ne:
-                case Le:
-                  W = !0;
-                  break;
-                case nt:
-                  return W = c._init, L(
-                    W(c._payload),
-                    g,
-                    _,
-                    P,
-                    j
-                  );
-              }
-          }
-        if (W) {
-          W = c, j = j(W);
-          var ae = P === "" ? "." + M(W, 0) : P;
-          return zt(j) ? (_ = "", ae != null && (_ = ae.replace(ye, "$&/") + "/"), L(j, g, _, "", function(dt) {
-            return dt;
-          })) : j != null && (y(j) && (j.key != null && (W && W.key === j.key || u(j.key)), _ = p(
-            j,
-            _ + (j.key == null || W && W.key === j.key ? "" : ("" + j.key).replace(
-              ye,
-              "$&/"
-            ) + "/") + ae
-          ), P !== "" && W != null && y(W) && W.key == null && W._store && !W._store.validated && (_._store.validated = 2), j = _), g.push(j)), 1;
-        }
-        if (W = 0, ae = P === "" ? "." : P + ":", zt(c))
-          for (var ne = 0; ne < c.length; ne++)
-            P = c[ne], ee = ae + M(P, ne), W += L(
-              P,
-              g,
-              _,
-              ee,
-              j
-            );
-        else if (ne = r(c), typeof ne == "function")
-          for (ne === c.entries && (De || console.warn(
-            "Using Maps as children is not supported. Use an array of keyed ReactElements instead."
-          ), De = !0), c = ne.call(c), ne = 0; !(P = c.next()).done; )
-            P = P.value, ee = ae + M(P, ne++), W += L(
-              P,
-              g,
-              _,
-              ee,
-              j
-            );
-        else if (ee === "object") {
-          if (typeof c.then == "function")
-            return L(
-              N(c),
-              g,
-              _,
-              P,
-              j
-            );
-          throw g = String(c), Error(
-            "Objects are not valid as a React child (found: " + (g === "[object Object]" ? "object with keys {" + Object.keys(c).join(", ") + "}" : g) + "). If you meant to render a collection of children, use an array instead."
-          );
-        }
-        return W;
-      }
-      function G(c, g, _) {
-        if (c == null) return c;
-        var P = [], j = 0;
-        return L(c, P, "", "", function(ee) {
-          return g.call(_, ee, j++);
-        }), P;
-      }
-      function H(c) {
-        if (c._status === -1) {
-          var g = c._ioInfo;
-          g != null && (g.start = g.end = performance.now()), g = c._result;
-          var _ = g();
-          if (_.then(
-            function(j) {
-              if (c._status === 0 || c._status === -1) {
-                c._status = 1, c._result = j;
-                var ee = c._ioInfo;
-                ee != null && (ee.end = performance.now()), _.status === void 0 && (_.status = "fulfilled", _.value = j);
-              }
-            },
-            function(j) {
-              if (c._status === 0 || c._status === -1) {
-                c._status = 2, c._result = j;
-                var ee = c._ioInfo;
-                ee != null && (ee.end = performance.now()), _.status === void 0 && (_.status = "rejected", _.reason = j);
-              }
-            }
-          ), g = c._ioInfo, g != null) {
-            g.value = _;
-            var P = _.displayName;
-            typeof P == "string" && (g.name = P);
-          }
-          c._status === -1 && (c._status = 0, c._result = _);
-        }
-        if (c._status === 1)
-          return g = c._result, g === void 0 && console.error(
-            `lazy: Expected the result of a dynamic import() call. Instead received: %s
-
-Your code should look like: 
-  const MyComponent = lazy(() => import('./MyComponent'))
-
-Did you accidentally put curly braces around the import?`,
-            g
-          ), "default" in g || console.error(
-            `lazy: Expected the result of a dynamic import() call. Instead received: %s
-
-Your code should look like: 
-  const MyComponent = lazy(() => import('./MyComponent'))`,
-            g
-          ), g.default;
-        throw c._result;
-      }
-      function q() {
-        var c = Z.H;
-        return c === null && console.error(
-          `Invalid hook call. Hooks can only be called inside of the body of a function component. This could happen for one of the following reasons:
-1. You might have mismatching versions of React and the renderer (such as React DOM)
-2. You might be breaking the Rules of Hooks
-3. You might have more than one copy of React in the same app
-See https://react.dev/link/invalid-hook-call for tips about how to debug and fix this problem.`
-        ), c;
-      }
-      function K() {
-        Z.asyncTransitions--;
-      }
-      function ue(c) {
-        if (yt === null)
-          try {
-            var g = ("require" + Math.random()).slice(0, 7);
-            yt = (e && e[g]).call(
-              e,
-              "timers"
-            ).setImmediate;
-          } catch {
-            yt = function(P) {
-              Qt === !1 && (Qt = !0, typeof MessageChannel > "u" && console.error(
-                "This browser does not have a MessageChannel implementation, so enqueuing tasks via await act(async () => ...) will fail. Please file an issue at https://github.com/facebook/react/issues if you encounter this warning."
-              ));
-              var j = new MessageChannel();
-              j.port1.onmessage = P, j.port2.postMessage(void 0);
-            };
-          }
-        return yt(c);
-      }
-      function F(c) {
-        return 1 < c.length && typeof AggregateError == "function" ? new AggregateError(c) : c[0];
-      }
-      function z(c, g) {
-        g !== at - 1 && console.error(
-          "You seem to have overlapping act() calls, this is not supported. Be sure to await previous act() calls before making a new one. "
-        ), at = g;
-      }
-      function se(c, g, _) {
-        var P = Z.actQueue;
-        if (P !== null)
-          if (P.length !== 0)
-            try {
-              _e(P), ue(function() {
-                return se(c, g, _);
-              });
-              return;
-            } catch (j) {
-              Z.thrownErrors.push(j);
-            }
-          else Z.actQueue = null;
-        0 < Z.thrownErrors.length ? (P = F(Z.thrownErrors), Z.thrownErrors.length = 0, _(P)) : g(c);
-      }
-      function _e(c) {
-        if (!Ot) {
-          Ot = !0;
-          var g = 0;
-          try {
-            for (; g < c.length; g++) {
-              var _ = c[g];
-              do {
-                Z.didUsePromise = !1;
-                var P = _(!1);
-                if (P !== null) {
-                  if (Z.didUsePromise) {
-                    c[g] = _, c.splice(0, g);
-                    return;
-                  }
-                  _ = P;
-                } else break;
-              } while (!0);
-            }
-            c.length = 0;
-          } catch (j) {
-            c.splice(0, g + 1), Z.thrownErrors.push(j);
-          } finally {
-            Ot = !1;
-          }
-        }
-      }
-      typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ < "u" && typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart == "function" && __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart(Error());
-      var Ne = /* @__PURE__ */ Symbol.for("react.transitional.element"), Le = /* @__PURE__ */ Symbol.for("react.portal"), I = /* @__PURE__ */ Symbol.for("react.fragment"), x = /* @__PURE__ */ Symbol.for("react.strict_mode"), X = /* @__PURE__ */ Symbol.for("react.profiler"), Y = /* @__PURE__ */ Symbol.for("react.consumer"), re = /* @__PURE__ */ Symbol.for("react.context"), oe = /* @__PURE__ */ Symbol.for("react.forward_ref"), le = /* @__PURE__ */ Symbol.for("react.suspense"), be = /* @__PURE__ */ Symbol.for("react.suspense_list"), Ee = /* @__PURE__ */ Symbol.for("react.memo"), nt = /* @__PURE__ */ Symbol.for("react.lazy"), Wt = /* @__PURE__ */ Symbol.for("react.activity"), En = Symbol.iterator, It = {}, gn = {
-        isMounted: function() {
-          return !1;
-        },
-        enqueueForceUpdate: function(c) {
-          i(c, "forceUpdate");
-        },
-        enqueueReplaceState: function(c) {
-          i(c, "replaceState");
-        },
-        enqueueSetState: function(c) {
-          i(c, "setState");
-        }
-      }, rt = Object.assign, Kt = {};
-      Object.freeze(Kt), s.prototype.isReactComponent = {}, s.prototype.setState = function(c, g) {
-        if (typeof c != "object" && typeof c != "function" && c != null)
-          throw Error(
-            "takes an object of state variables to update or a function which returns an object of state variables."
-          );
-        this.updater.enqueueSetState(this, c, g, "setState");
-      }, s.prototype.forceUpdate = function(c) {
-        this.updater.enqueueForceUpdate(this, c, "forceUpdate");
-      };
-      var Me = {
-        isMounted: [
-          "isMounted",
-          "Instead, make sure to clean up subscriptions and pending requests in componentWillUnmount to prevent memory leaks."
-        ],
-        replaceState: [
-          "replaceState",
-          "Refactor your code to use setState instead (see https://github.com/facebook/react/issues/3236)."
-        ]
-      };
-      for (Ce in Me)
-        Me.hasOwnProperty(Ce) && n(Ce, Me[Ce]);
-      o.prototype = s.prototype, Me = a.prototype = new o(), Me.constructor = a, rt(Me, s.prototype), Me.isPureReactComponent = !0;
-      var zt = Array.isArray, Qe = /* @__PURE__ */ Symbol.for("react.client.reference"), Z = {
-        H: null,
-        A: null,
-        T: null,
-        S: null,
-        actQueue: null,
-        asyncTransitions: 0,
-        isBatchingLegacy: !1,
-        didScheduleLegacyUpdate: !1,
-        didUsePromise: !1,
-        thrownErrors: [],
-        getCurrentStack: null,
-        recentlyCreatedOwnerStacks: 0
-      }, R = Object.prototype.hasOwnProperty, U = console.createTask ? console.createTask : function() {
-        return null;
-      };
-      Me = {
-        react_stack_bottom_frame: function(c) {
-          return c();
-        }
-      };
-      var v, D, Ie = {}, Ye = Me.react_stack_bottom_frame.bind(
-        Me,
-        m
-      )(), it = U(w(m)), De = !1, ye = /\/+/g, ke = typeof reportError == "function" ? reportError : function(c) {
-        if (typeof window == "object" && typeof window.ErrorEvent == "function") {
-          var g = new window.ErrorEvent("error", {
-            bubbles: !0,
-            cancelable: !0,
-            message: typeof c == "object" && c !== null && typeof c.message == "string" ? String(c.message) : String(c),
-            error: c
-          });
-          if (!window.dispatchEvent(g)) return;
-        } else if (typeof process == "object" && typeof process.emit == "function") {
-          process.emit("uncaughtException", c);
-          return;
-        }
-        console.error(c);
-      }, Qt = !1, yt = null, at = 0, ct = !1, Ot = !1, lt = typeof queueMicrotask == "function" ? function(c) {
-        queueMicrotask(function() {
-          return queueMicrotask(c);
-        });
-      } : ue;
-      Me = Object.freeze({
-        __proto__: null,
-        c: function(c) {
-          return q().useMemoCache(c);
-        }
-      });
-      var Ce = {
-        map: G,
-        forEach: function(c, g, _) {
-          G(
-            c,
-            function() {
-              g.apply(this, arguments);
-            },
-            _
-          );
-        },
-        count: function(c) {
-          var g = 0;
-          return G(c, function() {
-            g++;
-          }), g;
-        },
-        toArray: function(c) {
-          return G(c, function(g) {
-            return g;
-          }) || [];
-        },
-        only: function(c) {
-          if (!y(c))
-            throw Error(
-              "React.Children.only expected to receive a single React element child."
-            );
-          return c;
-        }
-      };
-      t.Activity = Wt, t.Children = Ce, t.Component = s, t.Fragment = I, t.Profiler = X, t.PureComponent = a, t.StrictMode = x, t.Suspense = le, t.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE = Z, t.__COMPILER_RUNTIME = Me, t.act = function(c) {
-        var g = Z.actQueue, _ = at;
-        at++;
-        var P = Z.actQueue = g !== null ? g : [], j = !1;
-        try {
-          var ee = c();
-        } catch (ne) {
-          Z.thrownErrors.push(ne);
-        }
-        if (0 < Z.thrownErrors.length)
-          throw z(g, _), c = F(Z.thrownErrors), Z.thrownErrors.length = 0, c;
-        if (ee !== null && typeof ee == "object" && typeof ee.then == "function") {
-          var W = ee;
-          return lt(function() {
-            j || ct || (ct = !0, console.error(
-              "You called act(async () => ...) without await. This could lead to unexpected testing behaviour, interleaving multiple act calls and mixing their scopes. You should - await act(async () => ...);"
-            ));
-          }), {
-            then: function(ne, dt) {
-              j = !0, W.then(
-                function(Lt) {
-                  if (z(g, _), _ === 0) {
-                    try {
-                      _e(P), ue(function() {
-                        return se(
-                          Lt,
-                          ne,
-                          dt
-                        );
-                      });
-                    } catch (ls) {
-                      Z.thrownErrors.push(ls);
-                    }
-                    if (0 < Z.thrownErrors.length) {
-                      var cs = F(
-                        Z.thrownErrors
-                      );
-                      Z.thrownErrors.length = 0, dt(cs);
-                    }
-                  } else ne(Lt);
-                },
-                function(Lt) {
-                  z(g, _), 0 < Z.thrownErrors.length && (Lt = F(
-                    Z.thrownErrors
-                  ), Z.thrownErrors.length = 0), dt(Lt);
-                }
-              );
-            }
-          };
-        }
-        var ae = ee;
-        if (z(g, _), _ === 0 && (_e(P), P.length !== 0 && lt(function() {
-          j || ct || (ct = !0, console.error(
-            "A component suspended inside an `act` scope, but the `act` call was not awaited. When testing React components that depend on asynchronous data, you must await the result:\n\nawait act(() => ...)"
-          ));
-        }), Z.actQueue = null), 0 < Z.thrownErrors.length)
-          throw c = F(Z.thrownErrors), Z.thrownErrors.length = 0, c;
-        return {
-          then: function(ne, dt) {
-            j = !0, _ === 0 ? (Z.actQueue = P, ue(function() {
-              return se(
-                ae,
-                ne,
-                dt
-              );
-            })) : ne(ae);
-          }
-        };
-      }, t.cache = function(c) {
-        return function() {
-          return c.apply(null, arguments);
-        };
-      }, t.cacheSignal = function() {
-        return null;
-      }, t.captureOwnerStack = function() {
-        var c = Z.getCurrentStack;
-        return c === null ? null : c();
-      }, t.cloneElement = function(c, g, _) {
-        if (c == null)
-          throw Error(
-            "The argument must be a React element, but you passed " + c + "."
-          );
-        var P = rt({}, c.props), j = c.key, ee = c._owner;
-        if (g != null) {
-          var W;
-          e: {
-            if (R.call(g, "ref") && (W = Object.getOwnPropertyDescriptor(
-              g,
-              "ref"
-            ).get) && W.isReactWarning) {
-              W = !1;
-              break e;
-            }
-            W = g.ref !== void 0;
-          }
-          W && (ee = E()), A(g) && (u(g.key), j = "" + g.key);
-          for (ae in g)
-            !R.call(g, ae) || ae === "key" || ae === "__self" || ae === "__source" || ae === "ref" && g.ref === void 0 || (P[ae] = g[ae]);
-        }
-        var ae = arguments.length - 2;
-        if (ae === 1) P.children = _;
-        else if (1 < ae) {
-          W = Array(ae);
-          for (var ne = 0; ne < ae; ne++)
-            W[ne] = arguments[ne + 2];
-          P.children = W;
-        }
-        for (P = T(
-          c.type,
-          j,
-          P,
-          ee,
-          c._debugStack,
-          c._debugTask
-        ), j = 2; j < arguments.length; j++)
-          f(arguments[j]);
-        return P;
-      }, t.createContext = function(c) {
-        return c = {
-          $$typeof: re,
-          _currentValue: c,
-          _currentValue2: c,
-          _threadCount: 0,
-          Provider: null,
-          Consumer: null
-        }, c.Provider = c, c.Consumer = {
-          $$typeof: Y,
-          _context: c
-        }, c._currentRenderer = null, c._currentRenderer2 = null, c;
-      }, t.createElement = function(c, g, _) {
-        for (var P = 2; P < arguments.length; P++)
-          f(arguments[P]);
-        P = {};
-        var j = null;
-        if (g != null)
-          for (ne in D || !("__self" in g) || "key" in g || (D = !0, console.warn(
-            "Your app (or one of its dependencies) is using an outdated JSX transform. Update to the modern JSX transform for faster performance: https://react.dev/link/new-jsx-transform"
-          )), A(g) && (u(g.key), j = "" + g.key), g)
-            R.call(g, ne) && ne !== "key" && ne !== "__self" && ne !== "__source" && (P[ne] = g[ne]);
-        var ee = arguments.length - 2;
-        if (ee === 1) P.children = _;
-        else if (1 < ee) {
-          for (var W = Array(ee), ae = 0; ae < ee; ae++)
-            W[ae] = arguments[ae + 2];
-          Object.freeze && Object.freeze(W), P.children = W;
-        }
-        if (c && c.defaultProps)
-          for (ne in ee = c.defaultProps, ee)
-            P[ne] === void 0 && (P[ne] = ee[ne]);
-        j && S(
-          P,
-          typeof c == "function" ? c.displayName || c.name || "Unknown" : c
-        );
-        var ne = 1e4 > Z.recentlyCreatedOwnerStacks++;
-        return T(
-          c,
-          j,
-          P,
-          E(),
-          ne ? Error("react-stack-top-frame") : Ye,
-          ne ? U(w(c)) : it
-        );
-      }, t.createRef = function() {
-        var c = { current: null };
-        return Object.seal(c), c;
-      }, t.forwardRef = function(c) {
-        c != null && c.$$typeof === Ee ? console.error(
-          "forwardRef requires a render function but received a `memo` component. Instead of forwardRef(memo(...)), use memo(forwardRef(...))."
-        ) : typeof c != "function" ? console.error(
-          "forwardRef requires a render function but was given %s.",
-          c === null ? "null" : typeof c
-        ) : c.length !== 0 && c.length !== 2 && console.error(
-          "forwardRef render functions accept exactly two parameters: props and ref. %s",
-          c.length === 1 ? "Did you forget to use the ref parameter?" : "Any additional parameter will be undefined."
-        ), c != null && c.defaultProps != null && console.error(
-          "forwardRef render functions do not support defaultProps. Did you accidentally pass a React component?"
-        );
-        var g = { $$typeof: oe, render: c }, _;
-        return Object.defineProperty(g, "displayName", {
-          enumerable: !1,
-          configurable: !0,
-          get: function() {
-            return _;
-          },
-          set: function(P) {
-            _ = P, c.name || c.displayName || (Object.defineProperty(c, "name", { value: P }), c.displayName = P);
-          }
-        }), g;
-      }, t.isValidElement = y, t.lazy = function(c) {
-        c = { _status: -1, _result: c };
-        var g = {
-          $$typeof: nt,
-          _payload: c,
-          _init: H
-        }, _ = {
-          name: "lazy",
-          start: -1,
-          end: -1,
-          value: null,
-          owner: null,
-          debugStack: Error("react-stack-top-frame"),
-          debugTask: console.createTask ? console.createTask("lazy()") : null
-        };
-        return c._ioInfo = _, g._debugInfo = [{ awaited: _ }], g;
-      }, t.memo = function(c, g) {
-        c == null && console.error(
-          "memo: The first argument must be a component. Instead received: %s",
-          c === null ? "null" : typeof c
-        ), g = {
-          $$typeof: Ee,
-          type: c,
-          compare: g === void 0 ? null : g
-        };
-        var _;
-        return Object.defineProperty(g, "displayName", {
-          enumerable: !1,
-          configurable: !0,
-          get: function() {
-            return _;
-          },
-          set: function(P) {
-            _ = P, c.name || c.displayName || (Object.defineProperty(c, "name", { value: P }), c.displayName = P);
-          }
-        }), g;
-      }, t.startTransition = function(c) {
-        var g = Z.T, _ = {};
-        _._updatedFibers = /* @__PURE__ */ new Set(), Z.T = _;
-        try {
-          var P = c(), j = Z.S;
-          j !== null && j(_, P), typeof P == "object" && P !== null && typeof P.then == "function" && (Z.asyncTransitions++, P.then(K, K), P.then(l, ke));
-        } catch (ee) {
-          ke(ee);
-        } finally {
-          g === null && _._updatedFibers && (c = _._updatedFibers.size, _._updatedFibers.clear(), 10 < c && console.warn(
-            "Detected a large number of updates inside startTransition. If this is due to a subscription please re-write it to use React provided hooks. Otherwise concurrent mode guarantees are off the table."
-          )), g !== null && _.types !== null && (g.types !== null && g.types !== _.types && console.error(
-            "We expected inner Transitions to have transferred the outer types set and that you cannot add to the outer Transition while inside the inner.This is a bug in React."
-          ), g.types = _.types), Z.T = g;
-        }
-      }, t.unstable_useCacheRefresh = function() {
-        return q().useCacheRefresh();
-      }, t.use = function(c) {
-        return q().use(c);
-      }, t.useActionState = function(c, g, _) {
-        return q().useActionState(
-          c,
-          g,
-          _
-        );
-      }, t.useCallback = function(c, g) {
-        return q().useCallback(c, g);
-      }, t.useContext = function(c) {
-        var g = q();
-        return c.$$typeof === Y && console.error(
-          "Calling useContext(Context.Consumer) is not supported and will cause bugs. Did you mean to call useContext(Context) instead?"
-        ), g.useContext(c);
-      }, t.useDebugValue = function(c, g) {
-        return q().useDebugValue(c, g);
-      }, t.useDeferredValue = function(c, g) {
-        return q().useDeferredValue(c, g);
-      }, t.useEffect = function(c, g) {
-        return c == null && console.warn(
-          "React Hook useEffect requires an effect callback. Did you forget to pass a callback to the hook?"
-        ), q().useEffect(c, g);
-      }, t.useEffectEvent = function(c) {
-        return q().useEffectEvent(c);
-      }, t.useId = function() {
-        return q().useId();
-      }, t.useImperativeHandle = function(c, g, _) {
-        return q().useImperativeHandle(c, g, _);
-      }, t.useInsertionEffect = function(c, g) {
-        return c == null && console.warn(
-          "React Hook useInsertionEffect requires an effect callback. Did you forget to pass a callback to the hook?"
-        ), q().useInsertionEffect(c, g);
-      }, t.useLayoutEffect = function(c, g) {
-        return c == null && console.warn(
-          "React Hook useLayoutEffect requires an effect callback. Did you forget to pass a callback to the hook?"
-        ), q().useLayoutEffect(c, g);
-      }, t.useMemo = function(c, g) {
-        return q().useMemo(c, g);
-      }, t.useOptimistic = function(c, g) {
-        return q().useOptimistic(c, g);
-      }, t.useReducer = function(c, g, _) {
-        return q().useReducer(c, g, _);
-      }, t.useRef = function(c) {
-        return q().useRef(c);
-      }, t.useState = function(c) {
-        return q().useState(c);
-      }, t.useSyncExternalStore = function(c, g, _) {
-        return q().useSyncExternalStore(
-          c,
-          g,
-          _
-        );
-      }, t.useTransition = function() {
-        return q().useTransition();
-      }, t.version = "19.2.0", typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ < "u" && typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStop == "function" && __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStop(Error());
-    })();
-  })(Zt, Zt.exports)), Zt.exports;
+var Ci;
+function ea() {
+  return Ci || (Ci = 1, Nn.exports = Zo()), Nn.exports;
 }
-var Gr;
-function ca() {
-  return Gr || (Gr = 1, process.env.NODE_ENV === "production" ? yn.exports = oa() : yn.exports = aa()), yn.exports;
-}
-var la = ca();
-const Sn = /* @__PURE__ */ sa(la), da = (e) => e;
-function ua(e, t = da) {
-  const n = Sn.useSyncExternalStore(
+var ta = ea();
+const Qt = /* @__PURE__ */ Qo(ta), na = (e) => e;
+function ia(e, t = na) {
+  const n = Qt.useSyncExternalStore(
     e.subscribe,
-    Sn.useCallback(() => t(e.getState()), [e, t]),
-    Sn.useCallback(() => t(e.getInitialState()), [e, t])
+    Qt.useCallback(() => t(e.getState()), [e, t]),
+    Qt.useCallback(() => t(e.getInitialState()), [e, t])
   );
-  return Sn.useDebugValue(n), n;
+  return Qt.useDebugValue(n), n;
 }
-const Ur = (e) => {
-  const t = ia(e), n = (r) => ua(t, r);
+const xi = (e) => {
+  const t = Jo(e), n = (i) => ia(t, i);
   return Object.assign(n, t), n;
-}, ma = ((e) => e ? Ur(e) : Ur), pa = (e, t) => {
-  for (const [n, r] of Object.entries(t.currencies ?? {}))
-    if ((e.inventory.currencies[n] ?? 0) < (r ?? 0)) return !1;
-  for (const [n, r] of Object.entries(t.items ?? {}))
-    if ((e.inventory.items[n] ?? 0) < r) return !1;
+}, ra = ((e) => e ? xi(e) : xi), sa = (e, t) => {
+  for (const [n, i] of Object.entries(t.currencies ?? {}))
+    if ((e.inventory.currencies[n] ?? 0) < (i ?? 0)) return !1;
+  for (const [n, i] of Object.entries(t.items ?? {}))
+    if ((e.inventory.items[n] ?? 0) < i) return !1;
   return !0;
-}, jt = (e, t) => {
-  if (!pa(e, t)) throw new Error("Insufficient resources");
-  for (const [n, r] of Object.entries(t.currencies ?? {})) {
-    const i = n;
-    e.inventory.currencies[i] -= r ?? 0;
+}, bt = (e, t) => {
+  if (!sa(e, t)) throw new Error("Insufficient resources");
+  for (const [n, i] of Object.entries(t.currencies ?? {})) {
+    const r = n;
+    e.inventory.currencies[r] -= i ?? 0;
   }
-  for (const [n, r] of Object.entries(t.items ?? {}))
-    e.inventory.items[n] = Math.max(0, (e.inventory.items[n] ?? 0) - r);
-}, Vt = (e, t) => {
+  for (const [n, i] of Object.entries(t.items ?? {}))
+    e.inventory.items[n] = Math.max(0, (e.inventory.items[n] ?? 0) - i);
+}, kt = (e, t) => {
   if (!Number.isFinite(t) || t < 0) throw new RangeError("Account XP must be non-negative");
   const n = e.accountProgress.level;
   for (e.accountProgress.xp += Math.floor(t); e.accountProgress.level < 100; ) {
-    const r = qt.account(e.accountProgress.level);
-    if (e.accountProgress.xp < r) break;
-    e.accountProgress.xp -= r, e.accountProgress.level += 1, e.accountProgress.skillPoints += e.accountProgress.level % 3 === 0 ? 1 : 0;
+    const i = vt.account(e.accountProgress.level);
+    if (e.accountProgress.xp < i) break;
+    e.accountProgress.xp -= i, e.accountProgress.level += 1, e.accountProgress.skillPoints += e.accountProgress.level % 3 === 0 ? 1 : 0;
   }
   return e.accountProgress.level - n;
-}, Di = (e, t) => {
-  for (const [n, r] of Object.entries(t.currencies ?? {})) {
-    const i = n;
-    e.inventory.currencies[i] += r ?? 0;
+}, Rr = (e, t) => {
+  for (const [n, i] of Object.entries(t.currencies ?? {})) {
+    const r = n;
+    e.inventory.currencies[r] += i ?? 0;
   }
-  for (const [n, r] of Object.entries(t.items ?? {}))
-    e.inventory.items[n] = (e.inventory.items[n] ?? 0) + r;
-  t.accountXp && Vt(e, t.accountXp), t.miningXp && (e.mining.xp += t.miningXp);
-}, fa = (e, t) => {
+  for (const [n, i] of Object.entries(t.items ?? {}))
+    e.inventory.items[n] = (e.inventory.items[n] ?? 0) + i;
+  t.accountXp && kt(e, t.accountXp), t.miningXp && (e.mining.xp += t.miningXp);
+}, oa = (e, t) => {
   switch (t) {
     case "MINED":
       return e.mining.totalMined;
@@ -3551,29 +2699,29 @@ const Ur = (e) => {
     case "BATTLE_WINS":
       return e.statistics.battleWins;
     case "GACHA_PULLS":
-      return Object.values(e.gacha.pityByBanner).reduce((n, r) => n + r.lifetimePulls, 0);
+      return Object.values(e.gacha.pityByBanner).reduce((n, i) => n + i.lifetimePulls, 0);
     case "MAX_AFFINITY":
       return Math.max(0, ...Object.values(e.stones).map((n) => n.affinity.rank));
     case "MUTATIONS":
       return e.statistics.mutationCount;
     case "PERFECT_IV":
-      return Object.values(e.stones).filter((n) => On(n.individualValues)).length;
+      return Object.values(e.stones).filter((n) => mn(n.individualValues)).length;
     case "ACCOUNT_LEVEL":
       return e.accountProgress.level;
   }
-}, Xt = (e, t = de) => {
+}, _t = (e, t = Z) => {
   const n = [];
-  for (const r of cr) {
-    const i = e.achievements[r.id] ?? { value: 0, unlockedAt: null, claimedAt: null };
-    i.value = fa(e, r.metric), i.unlockedAt === null && i.value >= r.threshold && (i.unlockedAt = t.now().toISOString(), n.push(r)), e.achievements[r.id] = i;
+  for (const i of Xn) {
+    const r = e.achievements[i.id] ?? { value: 0, unlockedAt: null, claimedAt: null };
+    r.value = oa(e, i.metric), r.unlockedAt === null && r.value >= i.threshold && (r.unlockedAt = t.now().toISOString(), n.push(i)), e.achievements[i.id] = r;
   }
   return n;
-}, ha = (e, t, n = de) => {
-  const r = cr.find((s) => s.id === t), i = e.achievements[t];
-  if (!r || !i?.unlockedAt) throw new Error("Achievement is not unlocked");
-  if (i.claimedAt) throw new Error("Achievement reward already claimed");
-  Di(e, r.reward), r.reward.titleId && !e.account.ownedTitleIds.includes(r.reward.titleId) && e.account.ownedTitleIds.push(r.reward.titleId), r.reward.frameId && !e.account.ownedFrameIds.includes(r.reward.frameId) && e.account.ownedFrameIds.push(r.reward.frameId), i.claimedAt = n.now().toISOString();
-}, Ea = 5 * 6e4, ga = 720 * 60 * 6e4, Ia = 16384, ya = (e) => {
+}, aa = (e, t, n = Z) => {
+  const i = Xn.find((s) => s.id === t), r = e.achievements[t];
+  if (!i || !r?.unlockedAt) throw new Error("Achievement is not unlocked");
+  if (r.claimedAt) throw new Error("Achievement reward already claimed");
+  Rr(e, i.reward), i.reward.titleId && !e.account.ownedTitleIds.includes(i.reward.titleId) && e.account.ownedTitleIds.push(i.reward.titleId), i.reward.frameId && !e.account.ownedFrameIds.includes(i.reward.frameId) && e.account.ownedFrameIds.push(i.reward.frameId), r.claimedAt = n.now().toISOString();
+}, ca = 5 * 6e4, la = 720 * 60 * 6e4, da = 16384, ua = (e) => {
   if (e === void 0) return;
   if (!e || typeof e != "object" || Array.isArray(e)) throw new Error("Mining metadata must be an object");
   let t;
@@ -3582,24 +2730,24 @@ const Ur = (e) => {
   } catch {
     throw new Error("Mining metadata must be JSON serializable");
   }
-  if ((typeof TextEncoder == "function" ? new TextEncoder().encode(t).byteLength : Sa(t)) > Ia) throw new Error("Mining metadata exceeds the 16 KB limit");
-  const r = JSON.parse(t);
-  if (!r || typeof r != "object" || Array.isArray(r)) throw new Error("Mining metadata must be a JSON object");
-  return r;
-}, Sa = (e) => {
+  if ((typeof TextEncoder == "function" ? new TextEncoder().encode(t).byteLength : ma(t)) > da) throw new Error("Mining metadata exceeds the 16 KB limit");
+  const i = JSON.parse(t);
+  if (!i || typeof i != "object" || Array.isArray(i)) throw new Error("Mining metadata must be a JSON object");
+  return i;
+}, ma = (e) => {
   let t = 0;
   for (let n = 0; n < e.length; n += 1) {
-    const r = e.codePointAt(n);
-    r > 65535 && (n += 1), t += r <= 127 ? 1 : r <= 2047 ? 2 : r <= 65535 ? 3 : 4;
+    const i = e.codePointAt(n);
+    i > 65535 && (n += 1), t += i <= 127 ? 1 : i <= 2047 ? 2 : i <= 65535 ? 3 : 4;
   }
   return t;
-}, Zn = (e, t, n = de, r = {}) => {
-  if (r.farmSessionActive === !1) return { valid: !1, reason: "Farm session is not active" };
+}, Fn = (e, t, n = Z, i = {}) => {
+  if (i.farmSessionActive === !1) return { valid: !1, reason: "Farm session is not active" };
   if (typeof t.eventId != "string" || !t.eventId.trim() || t.eventId.length > 128) return { valid: !1, reason: "Mining eventId must be 1-128 characters" };
   if (t.sessionId !== void 0 && (typeof t.sessionId != "string" || t.sessionId !== e.online.sessionId)) return { valid: !1, reason: "Mining sessionId does not match the active session" };
   if (t.amount !== void 0 && (typeof t.amount != "number" || !Number.isSafeInteger(t.amount))) return { valid: !1, reason: "Mining amount must be an integer" };
-  const i = t.amount ?? 1;
-  if (i < 1 || i > 100) return { valid: !1, reason: "Mining amount is outside the accepted range" };
+  const r = t.amount ?? 1;
+  if (r < 1 || r > 100) return { valid: !1, reason: "Mining amount is outside the accepted range" };
   if (t.quality !== void 0 && (typeof t.quality != "number" || !Number.isFinite(t.quality))) return { valid: !1, reason: "Mining quality must be finite" };
   const s = t.quality ?? 0.5;
   if (s < 0 || s > 1) return { valid: !1, reason: "Mining quality must be between 0 and 1" };
@@ -3608,90 +2756,90 @@ const Ur = (e) => {
   if (t.timestamp !== void 0) {
     if (typeof t.timestamp != "string") return { valid: !1, reason: "Mining timestamp must be a string" };
     if (a = Date.parse(t.timestamp), !Number.isFinite(a)) return { valid: !1, reason: "Mining timestamp is invalid" };
-    if (a - o > Ea) return { valid: !1, reason: "Mining timestamp is too far in the future" };
-    if (o - a > ga) return { valid: !1, reason: "Mining timestamp is too old" };
+    if (a - o > ca) return { valid: !1, reason: "Mining timestamp is too far in the future" };
+    if (o - a > la) return { valid: !1, reason: "Mining timestamp is too old" };
   }
   try {
-    return { valid: !0, amount: i, quality: s, sourceTimestamp: new Date(a).toISOString(), metadata: ya(t.metadata) };
-  } catch (l) {
-    return { valid: !1, reason: l instanceof Error ? l.message : String(l) };
+    return { valid: !0, amount: r, quality: s, sourceTimestamp: new Date(a).toISOString(), metadata: ua(t.metadata) };
+  } catch (c) {
+    return { valid: !1, reason: c instanceof Error ? c.message : String(c) };
   }
-}, Aa = (e) => {
-  for (const t of Kn)
+}, pa = (e) => {
+  for (const t of Dn)
     if (e.mining.level >= t.unlockLevel && !e.mining.unlockedAreas.includes(t.id) && e.mining.unlockedAreas.push(t.id), e.mining.level >= t.unlockLevel)
       for (const n of t.veins) e.mining.unlockedVeins.includes(n) || e.mining.unlockedVeins.push(n);
-}, wa = (e, t) => {
+}, fa = (e, t) => {
   const n = e.mining.level;
   for (e.mining.xp += Math.max(0, Math.floor(t)); e.mining.level < 100; ) {
-    const r = qt.mining(e.mining.level);
-    if (e.mining.xp < r) break;
-    e.mining.xp -= r, e.mining.level += 1;
+    const i = vt.mining(e.mining.level);
+    if (e.mining.xp < i) break;
+    e.mining.xp -= i, e.mining.level += 1;
   }
-  return Aa(e), e.mining.level - n;
-}, va = (e, t, n) => {
+  return pa(e), e.mining.level - n;
+}, ha = (e, t, n) => {
   Object.defineProperty(e.mining.processedFarmEventIds, t.eventId, {
     value: !0,
     enumerable: !0,
     configurable: !0,
     writable: !0
   });
-}, Ma = (e, t, n, r = de, i = {}) => {
-  const s = Zn(e, t, r, i);
+}, Ea = (e, t, n, i = Z, r = {}) => {
+  const s = Fn(e, t, i, r);
   if (!s.valid)
     return { accepted: !1, duplicate: !1, xpGranted: 0, creditsGranted: 0, discoveries: [], miningLevelsGained: 0 };
   if (Object.prototype.hasOwnProperty.call(e.mining.processedFarmEventIds, t.eventId))
     return { accepted: !1, duplicate: !0, xpGranted: 0, creditsGranted: 0, discoveries: [], miningLevelsGained: 0 };
-  const o = s.amount, a = s.quality, l = Kn.find((S) => S.id === t.areaId), d = l && e.mining.unlockedAreas.includes(l.id) ? l : Kn[0];
-  if (!d) throw new Error("Mining area configuration is missing");
-  const u = [], h = Math.min(0.6, d.discoveryRate + a * 0.08 + e.mining.level * 7e-4), w = r.now();
-  for (let S = 0; S < o; S += 1) {
-    if (!n.chance(h)) continue;
-    const k = n.fork(`${t.eventId}:${S}`), T = k.next() / (d.rarityBias + a * 0.25), p = T < 8e-5 ? "LEGENDARY" : T < 18e-4 ? "UR" : T < 0.013 ? "SSR" : T < 0.09 ? "SR" : T < 0.35 ? "RARE" : "NORMAL";
-    u.push({
-      discoveryId: tt("discovery", k, w.getTime() + S),
-      seed: `${t.eventId}:${e.account.accountId}:${S}:${Math.floor(k.next() * 1e12)}`,
-      veinId: t.veinId && e.mining.unlockedVeins.includes(t.veinId) ? t.veinId : d.veins[0],
-      areaId: d.id,
-      discoveredAt: w.toISOString(),
-      hintedRarity: p,
+  const o = s.amount, a = s.quality, c = Dn.find((g) => g.id === t.areaId), l = c && e.mining.unlockedAreas.includes(c.id) ? c : Dn[0];
+  if (!l) throw new Error("Mining area configuration is missing");
+  const d = [], f = Math.min(0.6, l.discoveryRate + a * 0.08 + e.mining.level * 7e-4), y = i.now();
+  for (let g = 0; g < o; g += 1) {
+    if (!n.chance(f)) continue;
+    const b = n.fork(`${t.eventId}:${g}`), R = b.next() / (l.rarityBias + a * 0.25), m = R < 8e-5 ? "LEGENDARY" : R < 18e-4 ? "UR" : R < 0.013 ? "SSR" : R < 0.09 ? "SR" : R < 0.35 ? "RARE" : "NORMAL";
+    d.push({
+      discoveryId: Ge("discovery", b, y.getTime() + g),
+      seed: `${t.eventId}:${e.account.accountId}:${g}:${Math.floor(b.next() * 1e12)}`,
+      veinId: t.veinId && e.mining.unlockedVeins.includes(t.veinId) ? t.veinId : l.veins[0],
+      areaId: l.id,
+      discoveredAt: y.toISOString(),
+      hintedRarity: m,
       sourceEventId: t.eventId
     });
   }
-  const E = o * (10 + Math.round(a * 8)), m = o * (8 + Math.round(a * 7));
-  e.mining.totalMined += o, e.mining.dailyMined += o, e.mining.weeklyMined += o, e.mining.monthlyMined += o, e.mining.lastMinedAt = w.toISOString(), e.unappraisedFinds.push(...u), e.inventory.currencies.credits += m;
-  const A = wa(e, E);
-  return Vt(e, Math.ceil(E * 0.35)), va(e, t), Xt(e, r), { accepted: !0, duplicate: !1, xpGranted: E, creditsGranted: m, discoveries: u, miningLevelsGained: A };
-}, Ra = (e, t, n) => {
-  const r = ot[t.hintedRarity];
-  let i = Bt.filter((s) => s.naturalWeight > 0 && s.minMiningLevel <= e.mining.level);
+  const h = o * (10 + Math.round(a * 8)), u = o * (8 + Math.round(a * 7));
+  e.mining.totalMined += o, e.mining.dailyMined += o, e.mining.weeklyMined += o, e.mining.monthlyMined += o, e.mining.lastMinedAt = y.toISOString(), e.unappraisedFinds.push(...d), e.inventory.currencies.credits += u;
+  const I = fa(e, h);
+  return kt(e, Math.ceil(h * 0.35)), ha(e, t), _t(e, i), { accepted: !0, duplicate: !1, xpGranted: h, creditsGranted: u, discoveries: d, miningLevelsGained: I };
+}, ga = (e, t, n) => {
+  const i = Ve[t.hintedRarity];
+  let r = wt.filter((s) => s.naturalWeight > 0 && s.minMiningLevel <= e.mining.level);
   if (t.hintedRarity === "LEGENDARY") {
-    const s = i.filter((o) => o.rarity === "LEGENDARY");
-    s.length > 0 && (i = s);
+    const s = r.filter((o) => o.rarity === "LEGENDARY");
+    s.length > 0 && (r = s);
   } else {
-    const s = i.filter((o) => ot[o.rarity] <= r + 1);
-    s.length > 0 && (i = s);
+    const s = r.filter((o) => Ve[o.rarity] <= i + 1);
+    s.length > 0 && (r = s);
   }
-  return i.length === 0 && (i = Bt.filter((s) => s.naturalWeight > 0 && s.minMiningLevel <= 1)), n.weighted(i, (s) => {
-    const o = Math.abs(ot[s.rarity] - r);
+  return r.length === 0 && (r = wt.filter((s) => s.naturalWeight > 0 && s.minMiningLevel <= 1)), n.weighted(r, (s) => {
+    const o = Math.abs(Ve[s.rarity] - i);
     return s.naturalWeight / (1 + o * o * 3);
   });
-}, hn = (e, t) => {
+}, Wt = (e, t) => {
   const n = !e.collection.discoveredSpeciesIds.includes(t.speciesId);
   n && e.collection.discoveredSpeciesIds.push(t.speciesId);
-  const r = e.collection.mutationSpecies[t.speciesId] ?? [];
-  r.includes(t.mutation) || r.push(t.mutation), e.collection.mutationSpecies[t.speciesId] = r;
-  const i = e.collection.variantSpecies[t.speciesId] ?? [];
-  return i.includes(t.colorVariant) || i.push(t.colorVariant), e.collection.variantSpecies[t.speciesId] = i, e.collection.origins[t.origin] = (e.collection.origins[t.origin] ?? 0) + 1, n;
-}, ba = (e, t, n = de) => {
-  const r = e.unappraisedFinds.findIndex((h) => h.discoveryId === t);
-  if (r < 0) throw new Error("Discovery not found or already appraised");
+  const i = e.collection.mutationSpecies[t.speciesId] ?? [];
+  i.includes(t.mutation) || i.push(t.mutation), e.collection.mutationSpecies[t.speciesId] = i;
+  const r = e.collection.variantSpecies[t.speciesId] ?? [];
+  return r.includes(t.colorVariant) || r.push(t.colorVariant), e.collection.variantSpecies[t.speciesId] = r, e.collection.origins[t.origin] = (e.collection.origins[t.origin] ?? 0) + 1, n;
+}, Ia = (e, t, n = Z) => {
+  const i = e.unappraisedFinds.findIndex((f) => f.discoveryId === t);
+  if (i < 0) throw new Error("Discovery not found or already appraised");
   if (Object.keys(e.stones).length >= e.inventory.capacity) throw new Error("Stone capacity is full");
-  const i = e.unappraisedFinds[r], s = new Re(i.seed), o = Ra(e, i, s), a = { accountId: e.account.accountId, username: e.account.username }, l = Ct({ species: o, origin: "NATURAL", owner: a, rng: s, clock: n, appraised: !0 });
-  if (e.unappraisedFinds.splice(r, 1), e.stones[l.instanceId]) throw new Error("Stone ID collision");
-  e.stones[l.instanceId] = l;
-  const d = hn(e, l), u = l.rarity === "LEGENDARY";
-  return ot[l.rarity] >= ot.SSR && (e.statistics.rareDiscoveryCount += 1), l.mutation !== "NONE" && (e.statistics.mutationCount += 1), On(l.individualValues) && (e.statistics.mutationCount += l.mutation === "PERFECT" ? 0 : 1), Xt(e, n), { stone: l, isNewSpecies: d, isNaturalLegendary: u };
-}, et = ["NORMAL", "RARE", "SR", "SSR", "UR", "LEGENDARY"], Ta = [
+  const r = e.unappraisedFinds[i], s = new Ee(r.seed), o = ga(e, r, s), a = { accountId: e.account.accountId, username: e.account.username }, c = ft({ species: o, origin: "NATURAL", owner: a, rng: s, clock: n, appraised: !0 });
+  if (e.unappraisedFinds.splice(i, 1), e.stones[c.instanceId]) throw new Error("Stone ID collision");
+  e.stones[c.instanceId] = c;
+  const l = Wt(e, c), d = c.rarity === "LEGENDARY";
+  return Ve[c.rarity] >= Ve.SSR && (e.statistics.rareDiscoveryCount += 1), c.mutation !== "NONE" && (e.statistics.mutationCount += 1), mn(c.individualValues) && (e.statistics.mutationCount += c.mutation === "PERFECT" ? 0 : 1), _t(e, n), { stone: c, isNewSpecies: l, isNaturalLegendary: d };
+}, Be = ["NORMAL", "RARE", "SR", "SSR", "UR", "LEGENDARY"], Sa = [
   "NATURAL",
   "GACHA",
   "FUSION",
@@ -3700,7 +2848,7 @@ const Ur = (e) => {
   "DUNGEON",
   "EXPEDITION",
   "EVENT"
-], dn = [
+], Ht = [
   "NEUTRAL",
   "FIRE",
   "WATER",
@@ -3711,201 +2859,201 @@ const Ur = (e) => {
   "CRYSTAL",
   "METAL",
   "ANCIENT"
-], $i = ["BALANCED", "COMBAT", "MINING", "DISCOVERY", "SAFE", "HIGH_RISK", "EXPERIENCE", "MATERIALS"], Na = (e, t) => ({
-  currencies: Object.fromEntries(Object.entries(e.currencies ?? {}).map(([n, r]) => [n, (r ?? 0) * t])),
-  items: Object.fromEntries(Object.entries(e.items ?? {}).map(([n, r]) => [n, r * t]))
-}), Tn = (e, t) => ot[e] >= ot[t], _a = (e, t) => {
-  const n = { ...e.rates }, r = t.pullsSinceSsr + 1;
-  if (r >= e.pity.hard) {
-    const i = n.SSR + n.UR + n.LEGENDARY;
-    return n.NORMAL = 0, n.RARE = 0, n.SR = 0, n.SSR /= i, n.UR /= i, n.LEGENDARY /= i, n;
+], Tr = ["BALANCED", "COMBAT", "MINING", "DISCOVERY", "SAFE", "HIGH_RISK", "EXPERIENCE", "MATERIALS"], ya = (e, t) => ({
+  currencies: Object.fromEntries(Object.entries(e.currencies ?? {}).map(([n, i]) => [n, (i ?? 0) * t])),
+  items: Object.fromEntries(Object.entries(e.items ?? {}).map(([n, i]) => [n, i * t]))
+}), on = (e, t) => Ve[e] >= Ve[t], Aa = (e, t) => {
+  const n = { ...e.rates }, i = t.pullsSinceSsr + 1;
+  if (i >= e.pity.hard) {
+    const r = n.SSR + n.UR + n.LEGENDARY;
+    return n.NORMAL = 0, n.RARE = 0, n.SR = 0, n.SSR /= r, n.UR /= r, n.LEGENDARY /= r, n;
   }
-  if (r > e.pity.softStart) {
-    const i = r - e.pity.softStart, s = Math.min(0.75, i * 0.055), o = n.SSR + n.UR + n.LEGENDARY, a = Math.min(0.92, o + s), l = a / o, d = (1 - a) / (1 - o);
-    n.SSR *= l, n.UR *= l, n.LEGENDARY *= l, n.NORMAL *= d, n.RARE *= d, n.SR *= d;
+  if (i > e.pity.softStart) {
+    const r = i - e.pity.softStart, s = Math.min(0.75, r * 0.055), o = n.SSR + n.UR + n.LEGENDARY, a = Math.min(0.92, o + s), c = a / o, l = (1 - a) / (1 - o);
+    n.SSR *= c, n.UR *= c, n.LEGENDARY *= c, n.NORMAL *= l, n.RARE *= l, n.SR *= l;
   }
   return n;
-}, ka = (e, t, n) => {
-  const r = et.filter((i) => !n || Tn(i, n));
-  return t.weighted(r, (i) => e[i]);
-}, Ca = (e, t, n, r) => {
-  const i = e.pool.filter((u) => fe[u.speciesId]?.rarity === t), s = i.length > 0 ? i : e.pool.filter((u) => Tn(fe[u.speciesId]?.rarity ?? "NORMAL", t));
+}, wa = (e, t, n) => {
+  const i = Be.filter((r) => !n || on(r, n));
+  return t.weighted(i, (r) => e[r]);
+}, va = (e, t, n, i) => {
+  const r = e.pool.filter((d) => re[d.speciesId]?.rarity === t), s = r.length > 0 ? r : e.pool.filter((d) => on(re[d.speciesId]?.rarity ?? "NORMAL", t));
   if (s.length === 0) throw new Error(`Banner ${e.id} has no species for ${t}`);
-  const o = s.filter((u) => u.pickup), a = n && o.length > 0 ? o : s, l = r.weighted(a, (u) => u.weight * (u.pickup ? 1.5 : 1)), d = fe[l.speciesId];
-  if (!d) throw new Error(`Unknown gacha species ${l.speciesId}`);
-  return { species: d, featured: !!l.pickup };
-}, xa = (e, t, n, r, i = de) => {
-  const s = hs[t];
+  const o = s.filter((d) => d.pickup), a = n && o.length > 0 ? o : s, c = i.weighted(a, (d) => d.weight * (d.pickup ? 1.5 : 1)), l = re[c.speciesId];
+  if (!l) throw new Error(`Unknown gacha species ${c.speciesId}`);
+  return { species: l, featured: !!c.pickup };
+}, Ma = (e, t, n, i, r = Z) => {
+  const s = cs[t];
   if (!s) throw new Error(`Unknown gacha banner: ${t}`);
   if (n !== 1 && n !== 10) throw new Error("Gacha supports only one or ten pulls");
   if (Object.keys(e.stones).length + n > e.inventory.capacity)
     throw new Error("Stone capacity is full");
-  jt(e, Na(s.singleCost, n));
+  bt(e, ya(s.singleCost, n));
   const o = e.gacha.pityByBanner[t] ?? {
     pullsSinceSsr: 0,
     lifetimePulls: 0,
     featuredGuaranteed: !1
-  }, a = [], l = [];
-  let d = !1;
-  for (let h = 0; h < n; h += 1) {
-    const w = o.pullsSinceSsr, E = o.pullsSinceSsr + 1 >= s.pity.hard, m = n === 10 && h === 9 && !d, A = _a(s, o), S = ka(A, r, m ? s.tenPullGuarantee : void 0);
-    Tn(S, s.tenPullGuarantee) && (d = !0);
-    const k = Tn(S, "SSR"), T = Ca(s, S, k && o.featuredGuaranteed, r), p = { accountId: e.account.accountId, username: e.account.username }, f = Ct({ species: T.species, rarity: S, origin: "GACHA", owner: p, rng: r, clock: i });
-    if (e.stones[f.instanceId]) throw new Error("Stone ID collision");
-    e.stones[f.instanceId] = f, hn(e, f), o.lifetimePulls += 1, k ? (o.pullsSinceSsr = 0, s.pity.featuredGuaranteeAfterLoss && (o.featuredGuaranteed = !T.featured)) : o.pullsSinceSsr += 1;
-    const y = i.now(), b = {
-      id: tt("pull", r, y.getTime() + h),
+  }, a = [], c = [];
+  let l = !1;
+  for (let f = 0; f < n; f += 1) {
+    const y = o.pullsSinceSsr, h = o.pullsSinceSsr + 1 >= s.pity.hard, u = n === 10 && f === 9 && !l, I = Aa(s, o), g = wa(I, i, u ? s.tenPullGuarantee : void 0);
+    on(g, s.tenPullGuarantee) && (l = !0);
+    const b = on(g, "SSR"), R = va(s, g, b && o.featuredGuaranteed, i), m = { accountId: e.account.accountId, username: e.account.username }, p = ft({ species: R.species, rarity: g, origin: "GACHA", owner: m, rng: i, clock: r });
+    if (e.stones[p.instanceId]) throw new Error("Stone ID collision");
+    e.stones[p.instanceId] = p, Wt(e, p), o.lifetimePulls += 1, b ? (o.pullsSinceSsr = 0, s.pity.featuredGuaranteeAfterLoss && (o.featuredGuaranteed = !R.featured)) : o.pullsSinceSsr += 1;
+    const S = r.now(), M = {
+      id: Ge("pull", i, S.getTime() + f),
       bannerId: t,
-      stoneId: f.instanceId,
-      rarity: S,
+      stoneId: p.instanceId,
+      rarity: g,
       pullNumber: o.lifetimePulls,
-      pityBefore: w,
-      guaranteed: E || m,
-      createdAt: y.toISOString()
+      pityBefore: y,
+      guaranteed: h || u,
+      createdAt: S.toISOString()
     };
-    a.push(f), l.push(b), e.gacha.rarityCounts[S] = (e.gacha.rarityCounts[S] ?? 0) + 1;
+    a.push(p), c.push(M), e.gacha.rarityCounts[g] = (e.gacha.rarityCounts[g] ?? 0) + 1;
   }
-  e.gacha.pityByBanner[t] = o, e.gacha.history.unshift(...[...l].reverse()), e.gacha.history.length > 1e3 && (e.gacha.history.length = 1e3), Vt(e, 8 * n), Xt(e, i);
-  const u = a.reduce((h, w) => ot[w.rarity] > ot[h] ? w.rarity : h, "NORMAL");
-  return { stones: a, history: l, highestRarity: u, pityAfter: { ...o } };
-}, jn = (e, t) => {
+  e.gacha.pityByBanner[t] = o, e.gacha.history.unshift(...[...c].reverse()), e.gacha.history.length > 1e3 && (e.gacha.history.length = 1e3), kt(e, 8 * n), _t(e, r);
+  const d = a.reduce((f, y) => Ve[y.rarity] > Ve[f] ? y.rarity : f, "NORMAL");
+  return { stones: a, history: c, highestRarity: d, pityAfter: { ...o } };
+}, kn = (e, t) => {
   const n = /* @__PURE__ */ new Map();
-  for (const r of e) n.set(r, (n.get(r) ?? 0) + 1);
-  for (const r of t) {
-    const i = n.get(r) ?? 0;
-    if (i <= 0) return !1;
-    n.set(r, i - 1);
+  for (const i of e) n.set(i, (n.get(i) ?? 0) + 1);
+  for (const i of t) {
+    const r = n.get(i) ?? 0;
+    if (r <= 0) return !1;
+    n.set(i, r - 1);
   }
   return !0;
-}, Oa = (e, t, n = []) => {
-  if (t.length !== e.parentCount || (e.type === "FIXED" || (e.requiredSpecies?.length ?? 0) > 0) && !jn(t.map((r) => r.speciesId), e.requiredSpecies ?? []))
+}, Ra = (e, t, n = []) => {
+  if (t.length !== e.parentCount || (e.type === "FIXED" || (e.requiredSpecies?.length ?? 0) > 0) && !kn(t.map((i) => i.speciesId), e.requiredSpecies ?? []))
     return !1;
   if (e.requiredFamilies?.length) {
-    const r = t.map((i) => fe[i.speciesId]?.family ?? "unknown");
-    if (!jn(r, e.requiredFamilies)) return !1;
+    const i = t.map((r) => re[r.speciesId]?.family ?? "unknown");
+    if (!kn(i, e.requiredFamilies)) return !1;
   }
   if (e.requiredElements?.length) {
-    const r = t.flatMap((i) => [i.primaryElement, ...i.secondaryElement ? [i.secondaryElement] : []]);
-    if (!jn(r, e.requiredElements)) return !1;
+    const i = t.flatMap((r) => [r.primaryElement, ...r.secondaryElement ? [r.secondaryElement] : []]);
+    if (!kn(i, e.requiredElements)) return !1;
   }
-  return e.hidden && ar.some((i) => i.unlockRecipeId === e.id) ? n.some((i) => ei[i]?.unlockRecipeId === e.id) : !0;
-}, La = (e, t, n = []) => ds.filter((r) => r.minimumLabLevel <= t && Oa(r, e, n)).sort((r, i) => {
+  return e.hidden && Vn.some((r) => r.unlockRecipeId === e.id) ? n.some((r) => Yi[r]?.unlockRecipeId === e.id) : !0;
+}, Ta = (e, t, n = []) => is.filter((i) => i.minimumLabLevel <= t && Ra(i, e, n)).sort((i, r) => {
   const s = { SPECIAL: 5, HIDDEN: 4, FIXED: 3, ELEMENT: 2, FAMILY: 1 };
-  return s[i.type] - s[r.type];
-}), Da = (e, t) => t.map((n) => {
-  const r = ei[n];
-  if (!r) throw new Error(`Unknown catalyst: ${n}`);
-  if (e.facilities.fusionLab < r.requiredLabLevel) throw new Error(`Fusion lab level ${r.requiredLabLevel} required`);
+  return s[r.type] - s[i.type];
+}), ba = (e, t) => t.map((n) => {
+  const i = Yi[n];
+  if (!i) throw new Error(`Unknown catalyst: ${n}`);
+  if (e.facilities.fusionLab < i.requiredLabLevel) throw new Error(`Fusion lab level ${i.requiredLabLevel} required`);
   if ((e.inventory.items[n] ?? 0) < 1) throw new Error(`Missing catalyst: ${n}`);
-  return r;
-}), $a = (e, t, n, r) => {
-  const s = (t?.resultSpeciesIds ?? [...new Set(e.map((a) => a.speciesId))]).map((a) => fe[a]).filter((a) => !!a);
+  return i;
+}), Na = (e, t, n, i) => {
+  const s = (t?.resultSpeciesIds ?? [...new Set(e.map((a) => a.speciesId))]).map((a) => re[a]).filter((a) => !!a);
   if (s.length === 0) throw new Error("Fusion has no valid result species");
   const o = n.find((a) => a.elementBias)?.elementBias;
-  return r.weighted(s, (a) => {
-    const l = Math.max(0.01, t?.weight ?? a.gachaWeight ?? 1);
-    return o && (a.primaryElement === o || a.possibleSecondaryElements.includes(o)) ? l * 4 : l;
+  return i.weighted(s, (a) => {
+    const c = Math.max(0.01, t?.weight ?? a.gachaWeight ?? 1);
+    return o && (a.primaryElement === o || a.possibleSecondaryElements.includes(o)) ? c * 4 : c;
   });
-}, Pa = (e, t, n) => Object.fromEntries(je.map((r) => {
-  const i = e.map((l) => l.individualValues[r]);
-  if (t.includes(r)) return [r, Math.max(...i)];
-  const s = n.chance(0.72) ? n.pick(i) : n.int(0, 31), o = n.chance(0.08) ? -n.int(1, 3) : 0, a = n.chance(0.1) ? n.int(1, 2) : 0;
-  return [r, Math.max(0, Math.min(31, s + o + a))];
-})), Fa = (e, t, n, r, i) => {
-  const s = [...new Set(e.flatMap((d) => d.traitIds))], o = [...new Set(e.flatMap((d) => d.parents).flatMap((d) => [
-    ...d.traitIds ?? [],
-    ...d.mutation === "ANCIENT" ? ["trait_ancient_oath"] : [],
-    ...d.mutation === "PRISMATIC" ? ["trait_prism_reflex"] : []
-  ]))], a = [...new Set(n.filter((d) => s.includes(d)))];
-  for (const d of r.shuffle(s)) {
-    if (a.length >= i) break;
-    !a.includes(d) && r.chance(0.52) && a.push(d);
+}, ka = (e, t, n) => Object.fromEntries(ke.map((i) => {
+  const r = e.map((c) => c.individualValues[i]);
+  if (t.includes(i)) return [i, Math.max(...r)];
+  const s = n.chance(0.72) ? n.pick(r) : n.int(0, 31), o = n.chance(0.08) ? -n.int(1, 3) : 0, a = n.chance(0.1) ? n.int(1, 2) : 0;
+  return [i, Math.max(0, Math.min(31, s + o + a))];
+})), _a = (e, t, n, i, r) => {
+  const s = [...new Set(e.flatMap((l) => l.traitIds))], o = [...new Set(e.flatMap((l) => l.parents).flatMap((l) => [
+    ...l.traitIds ?? [],
+    ...l.mutation === "ANCIENT" ? ["trait_ancient_oath"] : [],
+    ...l.mutation === "PRISMATIC" ? ["trait_prism_reflex"] : []
+  ]))], a = [...new Set(n.filter((l) => s.includes(l)))];
+  for (const l of i.shuffle(s)) {
+    if (a.length >= r) break;
+    !a.includes(l) && i.chance(0.52) && a.push(l);
   }
-  let l = !1;
-  if (a.length < i && o.length > 0 && r.chance(0.09)) {
-    const d = r.pick(o);
-    a.includes(d) || (a.push(d), l = !0);
+  let c = !1;
+  if (a.length < r && o.length > 0 && i.chance(0.09)) {
+    const l = i.pick(o);
+    a.includes(l) || (a.push(l), c = !0);
   }
-  if (a.length < i && r.chance(0.22)) {
-    const d = t.traitPool.filter((u) => !a.includes(u));
-    d.length > 0 && a.push(r.pick(d));
+  if (a.length < r && i.chance(0.22)) {
+    const l = t.traitPool.filter((d) => !a.includes(d));
+    l.length > 0 && a.push(i.pick(l));
   }
-  return a.length < i && !a.includes("trait_gene_weaver") && r.chance(0.05) && a.push("trait_gene_weaver"), { traits: a.filter((d) => !!Yt[d]).slice(0, i), grandparentInherited: l };
-}, Ba = (e, t, n) => {
-  const r = /* @__PURE__ */ new Set([...t.skillPool.map((o) => o.skillId), ...e.flatMap((o) => o.skills.map((a) => a.skillId))]), i = n.shuffle(e.flatMap((o) => o.skills.map((a) => a.skillId))).filter((o, a, l) => l.indexOf(o) === a && r.has(o) && n.chance(0.38)).slice(0, 3), s = t.skillPool[0]?.skillId;
-  return s && !i.includes(s) && i.unshift(s), i.slice(0, 6);
-}, qa = (e, t, n) => {
-  const r = t.reduce((s, o) => s * (o.mutationMultiplier ?? 1), 1), i = e.some((s) => s.mutation !== "NONE") ? 1.7 : 1;
-  return n.chance(Math.min(0.25, 0.012 * r * i)) ? n.weighted(["PRISMATIC", "ANCIENT", "CORRUPTED", "PERFECT"], (s) => ({
+  return a.length < r && !a.includes("trait_gene_weaver") && i.chance(0.05) && a.push("trait_gene_weaver"), { traits: a.filter((l) => !!Nt[l]).slice(0, r), grandparentInherited: c };
+}, Ca = (e, t, n) => {
+  const i = /* @__PURE__ */ new Set([...t.skillPool.map((o) => o.skillId), ...e.flatMap((o) => o.skills.map((a) => a.skillId))]), r = n.shuffle(e.flatMap((o) => o.skills.map((a) => a.skillId))).filter((o, a, c) => c.indexOf(o) === a && i.has(o) && n.chance(0.38)).slice(0, 3), s = t.skillPool[0]?.skillId;
+  return s && !r.includes(s) && r.unshift(s), r.slice(0, 6);
+}, xa = (e, t, n) => {
+  const i = t.reduce((s, o) => s * (o.mutationMultiplier ?? 1), 1), r = e.some((s) => s.mutation !== "NONE") ? 1.7 : 1;
+  return n.chance(Math.min(0.25, 0.012 * i * r)) ? n.weighted(["PRISMATIC", "ANCIENT", "CORRUPTED", "PERFECT"], (s) => ({
     NONE: 0,
     PRISMATIC: 55,
     ANCIENT: 27,
     CORRUPTED: 15,
     PERFECT: 3
   })[s]) : "NONE";
-}, Ga = (e, t, n, r, i = de) => {
+}, La = (e, t, n, i, r = Z) => {
   if (t.length < 2 || t.length > 4 || new Set(t).size !== t.length) throw new Error("Fusion requires 2-4 distinct parents");
-  const s = t.map((F) => e.stones[F]).filter((F) => !!F);
+  const s = t.map((O) => e.stones[O]).filter((O) => !!O);
   if (s.length !== t.length) throw new Error("One or more parent stones do not exist");
   const o = n.consumeParents ?? !1;
-  if (o && s.some((F) => F.locked || F.favorite)) throw new Error("Locked or favorite stones cannot be consumed");
-  const a = o ? s.flatMap((F) => Object.values(F.equipment).filter((z) => !!z)) : [], l = /* @__PURE__ */ new Set();
-  for (const F of a) {
-    if (l.has(F.instanceId) || e.inventory.equipment[F.instanceId] || e.endlessMine.equipment.items.some((z) => z.id === F.instanceId))
+  if (o && s.some((O) => O.locked || O.favorite)) throw new Error("Locked or favorite stones cannot be consumed");
+  const a = o ? s.flatMap((O) => Object.values(O.equipment).filter((V) => !!V)) : [], c = /* @__PURE__ */ new Set();
+  for (const O of a) {
+    if (c.has(O.instanceId) || e.inventory.equipment[O.instanceId] || e.endlessMine.equipment.items.some((V) => V.id === O.instanceId))
       throw new Error("Parent equipment cannot be returned safely because its inventory ID already exists");
-    l.add(F.instanceId);
+    c.add(O.instanceId);
   }
   if (e.endlessMine.equipment.items.length + a.length > e.endlessMine.equipment.capacity)
     throw new Error("Make room in Equipment Storage before consuming an equipped parent");
   if (Object.keys(e.stones).length + 1 - (o ? s.length : 0) > e.inventory.capacity) throw new Error("Stone capacity is full");
-  const u = [...new Set(n.catalystIds ?? [])], h = Da(e, u), E = La(s, e.facilities.fusionLab, u)[0] ?? null;
-  if (s.length > 2 && !E) throw new Error("A valid recipe is required for multi-stone fusion");
-  const m = $a(s, E, h, r), A = h.reduce((F, z) => F + (z.traitLockSlots ?? 0), 0), S = Math.min(Math.max(0, e.facilities.fusionLab >= 3 ? 1 + A : A), 3), k = [...new Set(n.lockedTraitIds ?? [])];
-  if (k.length > S) throw new Error("Too many locked traits for the current laboratory");
-  const T = new Set(s.flatMap((F) => F.traitIds));
-  if (k.some((F) => !T.has(F))) throw new Error("A locked trait is not present on a parent");
-  const p = h.flatMap((F) => F.ivLockStats ?? []), f = e.facilities.fusionLab >= 4 ? 2 : 0, y = [.../* @__PURE__ */ new Set([...n.lockedIvStats ?? [], ...p])].slice(0, f);
-  if ((n.lockedIvStats?.length ?? 0) > f) throw new Error("IV locking is not unlocked");
-  E ? jt(e, E.cost) : jt(e, { currencies: { credits: 750, upgradeDust: 60 } });
-  for (const F of u) e.inventory.items[F] = Math.max(0, (e.inventory.items[F] ?? 0) - 1);
-  const b = Pa(s, y, r), M = Fa(s, m, k, r, Math.min(4, 1 + Math.floor(e.facilities.fusionLab / 2))), N = Ba(s, m, r), L = qa(s, h, r), G = { accountId: e.account.accountId, username: e.account.username }, H = Ct({
-    species: m,
+  const d = [...new Set(n.catalystIds ?? [])], f = ba(e, d), h = Ta(s, e.facilities.fusionLab, d)[0] ?? null;
+  if (s.length > 2 && !h) throw new Error("A valid recipe is required for multi-stone fusion");
+  const u = Na(s, h, f, i), I = f.reduce((O, V) => O + (V.traitLockSlots ?? 0), 0), g = Math.min(Math.max(0, e.facilities.fusionLab >= 3 ? 1 + I : I), 3), b = [...new Set(n.lockedTraitIds ?? [])];
+  if (b.length > g) throw new Error("Too many locked traits for the current laboratory");
+  const R = new Set(s.flatMap((O) => O.traitIds));
+  if (b.some((O) => !R.has(O))) throw new Error("A locked trait is not present on a parent");
+  const m = f.flatMap((O) => O.ivLockStats ?? []), p = e.facilities.fusionLab >= 4 ? 2 : 0, S = [.../* @__PURE__ */ new Set([...n.lockedIvStats ?? [], ...m])].slice(0, p);
+  if ((n.lockedIvStats?.length ?? 0) > p) throw new Error("IV locking is not unlocked");
+  h ? bt(e, h.cost) : bt(e, { currencies: { credits: 750, upgradeDust: 60 } });
+  for (const O of d) e.inventory.items[O] = Math.max(0, (e.inventory.items[O] ?? 0) - 1);
+  const M = ka(s, S, i), w = _a(s, u, b, i, Math.min(4, 1 + Math.floor(e.facilities.fusionLab / 2))), T = Ca(s, u, i), x = xa(s, f, i), $ = { accountId: e.account.accountId, username: e.account.username }, F = ft({
+    species: u,
     origin: "FUSION",
-    owner: G,
-    rng: r,
-    clock: i,
-    mutation: L,
-    forcedIvs: b,
-    forcedTraits: M.traits,
-    forcedSkills: N,
-    personalityId: r.chance(0.78) ? r.pick(s).personalityId : void 0,
-    parents: s.map(ys),
-    grandparents: s.flatMap((F) => F.parents).slice(0, 8),
-    generation: Math.max(...s.map((F) => F.generation)) + 1
-  }), q = h.reduce((F, z) => F * (z.shinyMultiplier ?? 1), 1);
-  if (H.colorVariant === "STANDARD" && r.chance(Math.min(0.15, 0.012 * q)) && (H.colorVariant = "SHINY"), H.stats = Ke(H), e.stones[H.instanceId]) throw new Error("Stone ID collision");
-  if (e.stones[H.instanceId] = H, o) {
-    const F = new Set(s.map((z) => z.instanceId));
-    for (const z of a)
-      if (!rn(e.endlessMine.equipment, Qn(z), { autoSalvage: !1 }).accepted) throw new Error("Parent equipment could not be returned to Equipment Storage");
-    for (const z of s) delete e.stones[z.instanceId];
-    for (const z of e.parties) z.slots = z.slots.filter((se) => !F.has(se.stoneId));
-    e.profile.showcaseStoneIds = e.profile.showcaseStoneIds.filter((z) => !F.has(z)), e.profile.favoriteStoneIds = e.profile.favoriteStoneIds.filter((z) => !F.has(z)), e.profile.totalAffinity = Object.values(e.stones).reduce((z, se) => Math.min(Number.MAX_SAFE_INTEGER, z + se.affinity.points), 0);
+    owner: $,
+    rng: i,
+    clock: r,
+    mutation: x,
+    forcedIvs: M,
+    forcedTraits: w.traits,
+    forcedSkills: T,
+    personalityId: i.chance(0.78) ? i.pick(s).personalityId : void 0,
+    parents: s.map(ms),
+    grandparents: s.flatMap((O) => O.parents).slice(0, 8),
+    generation: Math.max(...s.map((O) => O.generation)) + 1
+  }), q = f.reduce((O, V) => O * (V.shinyMultiplier ?? 1), 1);
+  if (F.colorVariant === "STANDARD" && i.chance(Math.min(0.15, 0.012 * q)) && (F.colorVariant = "SHINY"), F.stats = Le(F), e.stones[F.instanceId]) throw new Error("Stone ID collision");
+  if (e.stones[F.instanceId] = F, o) {
+    const O = new Set(s.map((V) => V.instanceId));
+    for (const V of a)
+      if (!Pt(e.endlessMine.equipment, $n(V), { autoSalvage: !1 }).accepted) throw new Error("Parent equipment could not be returned to Equipment Storage");
+    for (const V of s) delete e.stones[V.instanceId];
+    for (const V of e.parties) V.slots = V.slots.filter((Q) => !O.has(Q.stoneId));
+    e.profile.showcaseStoneIds = e.profile.showcaseStoneIds.filter((V) => !O.has(V)), e.profile.favoriteStoneIds = e.profile.favoriteStoneIds.filter((V) => !O.has(V)), e.profile.totalAffinity = Object.values(e.stones).reduce((V, Q) => Math.min(Number.MAX_SAFE_INTEGER, V + Q.affinity.points), 0);
   }
-  const K = i.now(), ue = {
-    id: tt("fusion", r, K.getTime()),
+  const Y = r.now(), oe = {
+    id: Ge("fusion", i, Y.getTime()),
     parentIds: [...t],
-    childId: H.instanceId,
-    recipeId: E?.id ?? null,
-    catalystIds: u,
-    inheritedTraits: [...M.traits],
-    inheritedSkills: [...N],
-    mutation: L,
+    childId: F.instanceId,
+    recipeId: h?.id ?? null,
+    catalystIds: d,
+    inheritedTraits: [...w.traits],
+    inheritedSkills: [...T],
+    mutation: x,
     consumeParents: o,
-    createdAt: K.toISOString()
+    createdAt: Y.toISOString()
   };
-  return e.fusionHistory.unshift(ue), e.statistics.fusionCount += 1, L !== "NONE" && (e.statistics.mutationCount += 1), hn(e, H), Vt(e, 90 + H.generation * 10), Xt(e, i), { child: H, history: ue, recipe: E, inheritedTraitIds: M.traits, inheritedSkillIds: N, grandparentInherited: M.grandparentInherited };
-}, Hr = {
+  return e.fusionHistory.unshift(oe), e.statistics.fusionCount += 1, x !== "NONE" && (e.statistics.mutationCount += 1), Wt(e, F), kt(e, 90 + F.generation * 10), _t(e, r), { child: F, history: oe, recipe: h, inheritedTraitIds: w.traits, inheritedSkillIds: T, grandparentInherited: w.grandparentInherited };
+}, Li = {
   FIRE: ["EARTH"],
   EARTH: ["WIND"],
   WIND: ["WATER"],
@@ -3915,20 +3063,20 @@ const Ur = (e) => {
   METAL: ["CRYSTAL"],
   CRYSTAL: ["ANCIENT"],
   ANCIENT: ["METAL"]
-}, Ua = (e, t) => e === "NEUTRAL" || t === "NEUTRAL" ? 1 : Hr[e]?.includes(t) ? 1.25 : Hr[t]?.includes(e) ? 0.8 : 1, Ha = (e, t) => ({
+}, Da = (e, t) => e === "NEUTRAL" || t === "NEUTRAL" ? 1 : Li[e]?.includes(t) ? 1.25 : Li[t]?.includes(e) ? 0.8 : 1, Oa = (e, t) => ({
   currencies: Object.fromEntries([.../* @__PURE__ */ new Set([...Object.keys(e.currencies ?? {}), ...Object.keys(t.currencies ?? {})])].map((n) => [n, (e.currencies?.[n] ?? 0) + (t.currencies?.[n] ?? 0)])),
   items: Object.fromEntries([.../* @__PURE__ */ new Set([...Object.keys(e.items ?? {}), ...Object.keys(t.items ?? {})])].map((n) => [n, (e.items?.[n] ?? 0) + (t.items?.[n] ?? 0)])),
   accountXp: (e.accountXp ?? 0) + (t.accountXp ?? 0),
   miningXp: (e.miningXp ?? 0) + (t.miningXp ?? 0),
   stoneXp: (e.stoneXp ?? 0) + (t.stoneXp ?? 0)
-}), ja = (e, t) => ({
+}), $a = (e, t) => ({
   unitId: `${t.toLowerCase()}_${e.instanceId}`,
   stoneId: e.instanceId,
   team: t,
   speciesId: e.speciesId,
   name: e.nickname || e.name,
   element: e.primaryElement,
-  role: fe[e.speciesId]?.role ?? "ATTACK",
+  role: re[e.speciesId]?.role ?? "ATTACK",
   level: e.level,
   stats: { ...e.stats },
   currentHp: e.stats.maxHp,
@@ -3940,14 +3088,14 @@ const Ur = (e) => {
   skillIds: e.skills.map((n) => n.skillId),
   traitIds: [...e.traitIds],
   alive: !0
-}), Ya = (e, t, n) => {
-  const r = e.enemies[t];
-  if (!r) throw new Error("Enemy definition missing");
-  const i = fe[r.speciesId];
-  if (!i) throw new Error(`Unknown enemy species ${r.speciesId}`);
+}), Pa = (e, t, n) => {
+  const i = e.enemies[t];
+  if (!i) throw new Error("Enemy definition missing");
+  const r = re[i.speciesId];
+  if (!r) throw new Error(`Unknown enemy species ${i.speciesId}`);
   const s = {
-    speciesId: i.id,
-    level: r.level,
+    speciesId: r.id,
+    level: i.level,
     individualValues: { hardness: 15, purity: 15, power: 15, defense: 15, speed: 15, resonance: 15 },
     personalityId: "personality_stalwart",
     potential: 45,
@@ -3955,18 +3103,18 @@ const Ur = (e) => {
     reincarnationCount: 0,
     limitBreak: 0,
     mutation: "NONE",
-    traitIds: r.traitIds,
+    traitIds: i.traitIds,
     learnedSkillNodes: []
-  }, o = Ke(s), a = Object.fromEntries(Object.entries(o).map(([l, d]) => [l, Math.max(1, Math.round(d * r.statMultiplier))]));
+  }, o = Le(s), a = Object.fromEntries(Object.entries(o).map(([c, l]) => [c, Math.max(1, Math.round(l * i.statMultiplier))]));
   return {
-    unitId: `enemy_${r.id}_${n.int(1e3, 9999)}`,
-    stoneId: r.id,
+    unitId: `enemy_${i.id}_${n.int(1e3, 9999)}`,
+    stoneId: i.id,
     team: "ENEMY",
-    speciesId: i.id,
-    name: i.name,
-    element: i.primaryElement,
-    role: i.role,
-    level: r.level,
+    speciesId: r.id,
+    name: r.name,
+    element: r.primaryElement,
+    role: r.role,
+    level: i.level,
     stats: a,
     currentHp: a.maxHp,
     shield: 0,
@@ -3974,60 +3122,60 @@ const Ur = (e) => {
     cooldowns: {},
     statuses: [],
     modifiers: [],
-    skillIds: r.skillIds,
-    traitIds: r.traitIds,
+    skillIds: i.skillIds,
+    traitIds: i.traitIds,
     alive: !0
   };
-}, ht = (e, t) => {
-  let n = e.modifiers.filter((r) => r.stat === t).reduce((r, i) => r * i.multiplier, 1);
-  return t === "defense" && e.statuses.some((r) => r.id === "FRACTURE") && (n *= 1 - Math.max(...e.statuses.filter((r) => r.id === "FRACTURE").map((r) => r.potency))), t === "defense" && e.currentHp / e.stats.maxHp <= 0.3 && e.traitIds.includes("trait_last_bastion") && (n *= 1.35), Math.max(1, e.stats[t] * n);
-}, Va = (e) => {
+}, Qe = (e, t) => {
+  let n = e.modifiers.filter((i) => i.stat === t).reduce((i, r) => i * r.multiplier, 1);
+  return t === "defense" && e.statuses.some((i) => i.id === "FRACTURE") && (n *= 1 - Math.max(...e.statuses.filter((i) => i.id === "FRACTURE").map((i) => i.potency))), t === "defense" && e.currentHp / e.stats.maxHp <= 0.3 && e.traitIds.includes("trait_last_bastion") && (n *= 1.35), Math.max(1, e.stats[t] * n);
+}, Fa = (e) => {
   for (const t of e.traitIds)
-    for (const n of Yt[t]?.effects ?? [])
+    for (const n of Nt[t]?.effects ?? [])
       n.trigger !== "BATTLE_START" || !n.stat || n.value === void 0 || e.modifiers.push({ stat: n.stat, multiplier: 1 + n.value, turns: 1, sourceId: t });
-}, Xa = (e, t, n, r, i = de) => {
+}, Ba = (e, t, n, i, r = Z) => {
   if (e.activeBattle && e.activeBattle.winner === null) throw new Error("A battle is already active");
-  const s = fs[t];
+  const s = as[t];
   if (!s) throw new Error(`Unknown dungeon ${t}`);
   if (e.accountProgress.level < s.minAccountLevel) throw new Error("Account level is too low for this dungeon");
-  const o = s.stages.find((T) => T.id === n);
+  const o = s.stages.find((R) => R.id === n);
   if (!o) throw new Error(`Unknown dungeon stage ${n}`);
-  const l = (e.parties.find((T) => T.id === e.activePartyId)?.slots ?? []).map((T) => e.stones[T.stoneId]).filter((T) => !!T).slice(0, 3);
-  if (l.length === 0) throw new Error("The active party is empty");
-  if (new Set(l.map((T) => T.instanceId)).size !== l.length) throw new Error("Party contains duplicate stones");
-  const d = l.map((T) => ja(T, "PLAYER")), u = o.enemies.map((T, p) => Ya(o, p, r));
-  for (const T of [...d, ...u]) Va(T);
-  const w = !e.dungeonClears[`${t}:${n}`] ? Ha(o.reward, o.firstClearReward) : { ...o.reward }, E = i.now(), m = Object.freeze({
-    ...bi(l),
-    ...Object.fromEntries(o.enemies.flatMap((T) => T.skillIds).map((T) => Et[T]).filter((T) => !!T).map((T) => [T.id, Mi(T)]))
-  }), A = l.map((T, p) => ({
-    ...Ri(T),
-    id: d[p].unitId
-  })), S = u.map((T, p) => ({
-    id: T.unitId,
-    name: T.name,
+  const c = (e.parties.find((R) => R.id === e.activePartyId)?.slots ?? []).map((R) => e.stones[R.stoneId]).filter((R) => !!R).slice(0, 3);
+  if (c.length === 0) throw new Error("The active party is empty");
+  if (new Set(c.map((R) => R.instanceId)).size !== c.length) throw new Error("Party contains duplicate stones");
+  const l = c.map((R) => $a(R, "PLAYER")), d = o.enemies.map((R, m) => Pa(o, m, i));
+  for (const R of [...l, ...d]) Fa(R);
+  const y = !e.dungeonClears[`${t}:${n}`] ? Oa(o.reward, o.firstClearReward) : { ...o.reward }, h = r.now(), u = Object.freeze({
+    ...Er(c),
+    ...Object.fromEntries(o.enemies.flatMap((R) => R.skillIds).map((R) => Ze[R]).filter((R) => !!R).map((R) => [R.id, fr(R)]))
+  }), I = c.map((R, m) => ({
+    ...hr(R),
+    id: l[m].unitId
+  })), g = d.map((R, m) => ({
+    id: R.unitId,
+    name: R.name,
     side: "ENEMY",
-    role: T.role === "TANK" ? "GUARDIAN" : T.role === "CONTROL" ? "CONTROLLER" : T.role === "SUPPORT" ? "SUPPORT" : "STRIKER",
-    family: fe[T.speciesId]?.family,
-    element: T.element,
-    level: T.level,
+    role: R.role === "TANK" ? "GUARDIAN" : R.role === "CONTROL" ? "CONTROLLER" : R.role === "SUPPORT" ? "SUPPORT" : "STRIKER",
+    family: re[R.speciesId]?.family,
+    element: R.element,
+    level: R.level,
     stats: {
-      maxHp: T.stats.maxHp,
-      attack: T.stats.power,
-      defense: T.stats.defense + T.stats.hardness * 0.2,
-      speed: T.stats.speed,
-      accuracy: 92 + T.stats.purity * 0.1,
-      resistance: 82 + T.stats.hardness * 0.12,
-      critChance: Math.min(0.5, 0.05 + T.stats.purity / 1200),
+      maxHp: R.stats.maxHp,
+      attack: R.stats.power,
+      defense: R.stats.defense + R.stats.hardness * 0.2,
+      speed: R.stats.speed,
+      accuracy: 92 + R.stats.purity * 0.1,
+      resistance: 82 + R.stats.hardness * 0.12,
+      critChance: Math.min(0.5, 0.05 + R.stats.purity / 1200),
       critDamage: 1.5,
-      breakPower: 15 + T.stats.resonance * 0.2
+      breakPower: 15 + R.stats.resonance * 0.2
     },
-    skillIds: T.skillIds,
+    skillIds: R.skillIds,
     initialUltimate: o.enemies.length === 1 ? 35 : 0,
-    boss: o.enemies.length === 1 && p === 0 ? {
+    boss: o.enemies.length === 1 && m === 0 ? {
       weakPoint: s.element,
       weakPointMultiplier: 1.6,
-      breakThreshold: 120 + T.level * 2,
+      breakThreshold: 120 + R.level * 2,
       enrageTurn: 14,
       enrageMultiplier: 1.5,
       phases: [
@@ -4035,127 +3183,127 @@ const Ur = (e) => {
         { id: "last-stand", hpRatio: 0.28, defenseMultiplier: 1.18, speedMultiplier: 1.1, ultimateGain: 45 }
       ]
     } : void 0
-  })), k = {
-    battleId: tt("battle", r, E.getTime()),
+  })), b = {
+    battleId: Ge("battle", i, h.getTime()),
     mode: "DUNGEON",
     dungeonId: t,
     stageId: n,
     turn: 0,
-    units: [...d, ...u],
+    units: [...l, ...d],
     actionLog: [],
     winner: null,
-    reward: w,
-    startedAt: E.toISOString(),
+    reward: y,
+    startedAt: h.toISOString(),
     finishedAt: null,
-    advanced: mr({ units: [...A, ...S], skills: m, maxTurns: 100 }),
+    advanced: Jn({ units: [...I, ...g], skills: u, maxTurns: 100 }),
     controlMode: "MANUAL",
     speed: 1
   };
-  return qn(k), k;
-}, Pi = (e, t) => e.units.filter((n) => n.team === t.team && n.alive), Wa = (e, t) => e.units.filter((n) => n.team !== t.team && n.alive), Ka = (e, t, n, r) => {
-  const i = Pi(e, t), s = Wa(e, t);
+  return Sn(b), b;
+}, br = (e, t) => e.units.filter((n) => n.team === t.team && n.alive), Ga = (e, t) => e.units.filter((n) => n.team !== t.team && n.alive), qa = (e, t, n, i) => {
+  const r = br(e, t), s = Ga(e, t);
   switch (n.target) {
     case "SELF":
       return [t];
     case "ALLY":
-      return [i.reduce((o, a) => a.currentHp / a.stats.maxHp < o.currentHp / o.stats.maxHp ? a : o, t)];
+      return [r.reduce((o, a) => a.currentHp / a.stats.maxHp < o.currentHp / o.stats.maxHp ? a : o, t)];
     case "ALL_ALLIES":
-      return i;
+      return r;
     case "ALL_ENEMIES":
       return s;
     case "ENEMY": {
-      const o = s.filter((a) => a.statuses.some((l) => l.id === "TAUNT"));
-      return [r.pick(o.length > 0 ? o : s)];
+      const o = s.filter((a) => a.statuses.some((c) => c.id === "TAUNT"));
+      return [i.pick(o.length > 0 ? o : s)];
     }
   }
-}, za = (e, t, n) => {
-  const i = t.skillIds.map((o) => Et[o]).filter((o) => !!o).filter((o) => (t.cooldowns[o.id] ?? 0) <= 0 && (o.ultimateCost <= 0 || t.ultimate >= o.ultimateCost));
-  if (i.length === 0) return Et.skill_stone_strike;
-  const s = Pi(e, t);
-  return n.weighted(i, (o) => {
-    const l = s.some((h) => h.currentHp / h.stats.maxHp < 0.55) && o.effects.some((h) => h.type === "HEAL" || h.type === "SHIELD") ? 8 : 1, d = o.ultimateCost > 0 ? 12 : 1, u = t.role === "SUPPORT" && o.tags.includes("support") || t.role === "TANK" && o.tags.includes("tank") ? 2 : 1;
-    return Math.max(0.1, (o.priority + 1) * l * d * u);
+}, Ua = (e, t, n) => {
+  const r = t.skillIds.map((o) => Ze[o]).filter((o) => !!o).filter((o) => (t.cooldowns[o.id] ?? 0) <= 0 && (o.ultimateCost <= 0 || t.ultimate >= o.ultimateCost));
+  if (r.length === 0) return Ze.skill_stone_strike;
+  const s = br(e, t);
+  return n.weighted(r, (o) => {
+    const c = s.some((f) => f.currentHp / f.stats.maxHp < 0.55) && o.effects.some((f) => f.type === "HEAL" || f.type === "SHIELD") ? 8 : 1, l = o.ultimateCost > 0 ? 12 : 1, d = t.role === "SUPPORT" && o.tags.includes("support") || t.role === "TANK" && o.tags.includes("tank") ? 2 : 1;
+    return Math.max(0.1, (o.priority + 1) * c * l * d);
   });
-}, Qa = (e, t, n, r, i) => {
-  const s = ht(e, "power"), o = ht(t, "defense"), a = ht(e, "resonance"), l = ht(e, "purity"), d = Math.min(0.42, 0.04 + l / (l + 260) * 0.28 + a / (a + 500) * 0.08), u = i.chance(d), h = 0.92 + i.next() * 0.16, w = Ua(n.element, t.element), E = Math.max(1, s * r * (1.25 + e.level * 6e-3) - o * 0.34);
-  let m = Math.max(1, Math.round(E * w * h * (u ? 1.55 : 1)));
+}, Ha = (e, t, n, i, r) => {
+  const s = Qe(e, "power"), o = Qe(t, "defense"), a = Qe(e, "resonance"), c = Qe(e, "purity"), l = Math.min(0.42, 0.04 + c / (c + 260) * 0.28 + a / (a + 500) * 0.08), d = r.chance(l), f = 0.92 + r.next() * 0.16, y = Da(n.element, t.element), h = Math.max(1, s * i * (1.25 + e.level * 6e-3) - o * 0.34);
+  let u = Math.max(1, Math.round(h * y * f * (d ? 1.55 : 1)));
   if (t.shield > 0) {
-    const A = Math.min(t.shield, m);
-    t.shield -= A, m -= A;
+    const I = Math.min(t.shield, u);
+    t.shield -= I, u -= I;
   }
-  return t.currentHp = Math.max(0, t.currentHp - m), t.ultimate = Math.min(100, t.ultimate + Math.max(6, Math.round(m / Math.max(1, t.stats.maxHp) * 28))), t.currentHp <= 0 && (t.alive = !1), { damage: m, critical: u, defeated: !t.alive };
-}, Ja = (e, t, n, r, i, s, o) => {
+  return t.currentHp = Math.max(0, t.currentHp - u), t.ultimate = Math.min(100, t.ultimate + Math.max(6, Math.round(u / Math.max(1, t.stats.maxHp) * 28))), t.currentHp <= 0 && (t.alive = !1), { damage: u, critical: d, defeated: !t.alive };
+}, Ya = (e, t, n, i, r, s, o) => {
   for (const a of n)
-    if (!(!a.alive && i.type !== "DAMAGE"))
-      switch (i.type) {
+    if (!(!a.alive && r.type !== "DAMAGE"))
+      switch (r.type) {
         case "DAMAGE": {
-          const l = Qa(t, a, r, i.power ?? 1, s);
-          o.damage += l.damage, o.damageByTarget && (o.damageByTarget[a.unitId] = (o.damageByTarget[a.unitId] ?? 0) + l.damage), o.critical ||= l.critical, l.defeated && o.defeatedIds.push(a.unitId);
+          const c = Ha(t, a, i, r.power ?? 1, s);
+          o.damage += c.damage, o.damageByTarget && (o.damageByTarget[a.unitId] = (o.damageByTarget[a.unitId] ?? 0) + c.damage), o.critical ||= c.critical, c.defeated && o.defeatedIds.push(a.unitId);
           break;
         }
         case "HEAL": {
-          const l = Math.min(a.stats.maxHp - a.currentHp, Math.max(1, Math.round(ht(t, "resonance") * (i.power ?? 1) + t.level * 1.5)));
-          a.currentHp += l, o.healing += l, o.healingByTarget && (o.healingByTarget[a.unitId] = (o.healingByTarget[a.unitId] ?? 0) + l);
+          const c = Math.min(a.stats.maxHp - a.currentHp, Math.max(1, Math.round(Qe(t, "resonance") * (r.power ?? 1) + t.level * 1.5)));
+          a.currentHp += c, o.healing += c, o.healingByTarget && (o.healingByTarget[a.unitId] = (o.healingByTarget[a.unitId] ?? 0) + c);
           break;
         }
         case "SHIELD":
-          a.shield += Math.max(1, Math.round(ht(t, "resonance") * (i.power ?? 1)));
+          a.shield += Math.max(1, Math.round(Qe(t, "resonance") * (r.power ?? 1)));
           break;
         case "BUFF":
         case "DEBUFF": {
-          if (!i.stat || i.value === void 0) break;
-          a.modifiers.push({ stat: i.stat, multiplier: Math.max(0.1, 1 + i.value), turns: i.duration ?? 1, sourceId: r.id });
+          if (!r.stat || r.value === void 0) break;
+          a.modifiers.push({ stat: r.stat, multiplier: Math.max(0.1, 1 + r.value), turns: r.duration ?? 1, sourceId: i.id });
           break;
         }
         case "STATUS": {
-          if (!i.statusId || !s.chance(i.chance ?? 1)) break;
-          a.statuses = a.statuses.filter((l) => l.id !== i.statusId), a.statuses.push({ id: i.statusId, turns: i.duration ?? 1, potency: i.value ?? 0, sourceId: t.unitId }), o.statusesApplied.push(i.statusId);
+          if (!r.statusId || !s.chance(r.chance ?? 1)) break;
+          a.statuses = a.statuses.filter((c) => c.id !== r.statusId), a.statuses.push({ id: r.statusId, turns: r.duration ?? 1, potency: r.value ?? 0, sourceId: t.unitId }), o.statusesApplied.push(r.statusId);
           break;
         }
         case "ULTIMATE_GAIN":
-          a.ultimate = Math.min(100, a.ultimate + (i.value ?? 0));
+          a.ultimate = Math.min(100, a.ultimate + (r.value ?? 0));
           break;
       }
-}, Za = (e) => {
+}, ja = (e) => {
   for (const t of e.statuses)
     (t.id === "BURN" || t.id === "POISON") && (e.currentHp = Math.max(0, e.currentHp - Math.max(1, Math.round(e.stats.maxHp * t.potency))), e.currentHp === 0 && (e.alive = !1)), t.id === "REGEN" && (e.currentHp = Math.min(e.stats.maxHp, e.currentHp + Math.max(1, Math.round(e.stats.maxHp * t.potency))));
   return e.statuses.some((t) => t.id === "STUN");
-}, ec = (e) => {
+}, Va = (e) => {
   e.statuses = e.statuses.map((t) => ({ ...t, turns: t.turns - 1 })).filter((t) => t.turns > 0), e.modifiers = e.modifiers.map((t) => ({ ...t, turns: t.turns - 1 })).filter((t) => t.turns > 0);
-}, Yn = (e) => {
-  const t = e.units.some((r) => r.team === "PLAYER" && r.alive), n = e.units.some((r) => r.team === "ENEMY" && r.alive);
+}, _n = (e) => {
+  const t = e.units.some((i) => i.team === "PLAYER" && i.alive), n = e.units.some((i) => i.team === "ENEMY" && i.alive);
   return !t && !n ? "DRAW" : t ? n ? e.turn >= 100 ? "DRAW" : null : "PLAYER" : "ENEMY";
-}, Fi = (e, t, n = de) => {
+}, Nr = (e, t, n = Z) => {
   if (e.winner) return [];
   e.turn += 1;
-  const r = [], i = e.units.filter((s) => s.alive).sort((s, o) => {
-    const a = ht(o, "speed") - ht(s, "speed");
+  const i = [], r = e.units.filter((s) => s.alive).sort((s, o) => {
+    const a = Qe(o, "speed") - Qe(s, "speed");
     return Math.abs(a) > 1e-3 ? a : t.next() - 0.5;
   });
-  for (const s of i) {
+  for (const s of r) {
     if (!s.alive || e.winner) continue;
     for (const a of Object.keys(s.cooldowns)) s.cooldowns[a] = Math.max(0, (s.cooldowns[a] ?? 0) - 1);
-    const o = Za(s);
+    const o = ja(s);
     if (!s.alive) {
-      e.winner = Yn(e);
+      e.winner = _n(e);
       continue;
     }
     if (!o) {
-      const a = za(e, s, t), l = Ka(e, s, a, t).filter(Boolean), d = { turn: e.turn, actorId: s.unitId, skillId: a.id, targetIds: l.map((u) => u.unitId), damage: 0, healing: 0, damageByTarget: {}, healingByTarget: {}, critical: !1, statusesApplied: [], defeatedIds: [] };
+      const a = Ua(e, s, t), c = qa(e, s, a, t).filter(Boolean), l = { turn: e.turn, actorId: s.unitId, skillId: a.id, targetIds: c.map((d) => d.unitId), damage: 0, healing: 0, damageByTarget: {}, healingByTarget: {}, critical: !1, statusesApplied: [], defeatedIds: [] };
       a.ultimateCost > 0 ? s.ultimate = Math.max(0, s.ultimate - a.ultimateCost) : s.ultimate = Math.min(100, s.ultimate + 15), a.cooldown > 0 && (s.cooldowns[a.id] = a.cooldown + 1);
-      for (const u of a.effects) Ja(e, s, l, a, u, t, d);
-      r.push(d), e.actionLog.push(d);
+      for (const d of a.effects) Ya(e, s, c, a, d, t, l);
+      i.push(l), e.actionLog.push(l);
     }
-    ec(s), e.winner = Yn(e);
+    Va(s), e.winner = _n(e);
   }
-  return e.winner = Yn(e), e.winner && (e.finishedAt = n.now().toISOString()), r;
-}, er = (e) => {
+  return e.winner = _n(e), e.winner && (e.finishedAt = n.now().toISOString()), i;
+}, Bn = (e) => {
   if (e === "BURN") return "BURN";
   if (e === "STUN") return "STUN";
   if (e === "CRACK" || e === "VULNERABLE") return "FRACTURE";
   if (e === "REGENERATION") return "REGEN";
   if (e === "TAUNT") return "TAUNT";
-}, jr = (e) => ({
+}, Di = (e) => ({
   maxHp: e.stats.maxHp,
   power: e.stats.attack,
   defense: e.stats.defense,
@@ -4163,17 +3311,17 @@ const Ur = (e) => {
   hardness: e.stats.resistance,
   purity: e.stats.accuracy,
   resonance: e.stats.breakPower
-}), tc = (e, t) => {
-  const n = e.units.find((o) => o.unitId === t.id), r = t.side === "PLAYER" ? t.id.replace(/^player_/, "") : t.id, i = n ?? {
+}), Xa = (e, t) => {
+  const n = e.units.find((o) => o.unitId === t.id), i = t.side === "PLAYER" ? t.id.replace(/^player_/, "") : t.id, r = n ?? {
     unitId: t.id,
-    stoneId: r,
+    stoneId: i,
     team: t.side,
-    speciesId: r,
+    speciesId: i,
     name: t.name,
     element: t.element ?? "NEUTRAL",
     role: t.role === "GUARDIAN" || t.role === "VANGUARD" || t.role === "TANK" ? "TANK" : t.role === "SUPPORT" ? "SUPPORT" : t.role === "CONTROLLER" || t.role === "BREAKER" ? "CONTROL" : "ATTACK",
     level: t.level,
-    stats: jr(t),
+    stats: Di(t),
     currentHp: t.hp,
     shield: t.shield,
     ultimate: t.ultimate,
@@ -4184,21 +3332,21 @@ const Ur = (e) => {
     traitIds: [],
     alive: t.alive
   };
-  i.stats = jr(t), i.currentHp = t.hp, i.shield = t.shield, i.ultimate = t.ultimate, i.cooldowns = { ...t.cooldowns }, i.alive = t.alive, i.skillIds = [...t.skillIds];
+  r.stats = Di(t), r.currentHp = t.hp, r.shield = t.shield, r.ultimate = t.ultimate, r.cooldowns = { ...t.cooldowns }, r.alive = t.alive, r.skillIds = [...t.skillIds];
   const s = [
-    ...t.statuses.map((o) => ({ id: er(o.kind), turns: o.turns, potency: o.power, sourceId: o.sourceId })),
-    ...t.controls.map((o) => ({ id: er(o.kind), turns: o.turns, potency: 1, sourceId: o.sourceId })),
+    ...t.statuses.map((o) => ({ id: Bn(o.kind), turns: o.turns, potency: o.power, sourceId: o.sourceId })),
+    ...t.controls.map((o) => ({ id: Bn(o.kind), turns: o.turns, potency: 1, sourceId: o.sourceId })),
     ...t.dots.map((o) => ({ id: "BURN", turns: o.turns, potency: o.power, sourceId: o.sourceId }))
   ].filter((o) => !!o.id);
-  return i.statuses = s.map((o) => ({ ...o, turns: Math.max(1, Math.min(100, o.turns)) })), i.modifiers = t.modifiers.flatMap((o) => {
+  return r.statuses = s.map((o) => ({ ...o, turns: Math.max(1, Math.min(100, o.turns)) })), r.modifiers = t.modifiers.flatMap((o) => {
     const a = o.stat === "attack" ? "power" : o.stat === "resistance" ? "hardness" : o.stat === "accuracy" ? "purity" : o.stat === "breakPower" ? "resonance" : o.stat === "critChance" || o.stat === "critDamage" ? null : o.stat;
     return a ? [{ stat: a, multiplier: Math.max(0.01, 1 + o.value), turns: Math.max(1, Math.min(100, o.turns)), sourceId: o.sourceId }] : [];
-  }), i;
-}, nc = (e, t) => {
-  const n = [...new Set(t.resolutions.map((o) => o.targetId))], r = {}, i = {}, s = /* @__PURE__ */ new Set();
+  }), r;
+}, Wa = (e, t) => {
+  const n = [...new Set(t.resolutions.map((o) => o.targetId))], i = {}, r = {}, s = /* @__PURE__ */ new Set();
   for (const o of t.resolutions) {
-    (o.kind === "DAMAGE" || o.kind === "DOT") && (r[o.targetId] = (r[o.targetId] ?? 0) + o.amount), o.kind === "HEAL" && (i[o.targetId] = (i[o.targetId] ?? 0) + o.amount);
-    const a = er(o.status ?? "");
+    (o.kind === "DAMAGE" || o.kind === "DOT") && (i[o.targetId] = (i[o.targetId] ?? 0) + o.amount), o.kind === "HEAL" && (r[o.targetId] = (r[o.targetId] ?? 0) + o.amount);
+    const a = Bn(o.status ?? "");
     a && s.add(a);
   }
   return {
@@ -4206,23 +3354,23 @@ const Ur = (e) => {
     actorId: t.actorId,
     skillId: t.skillId,
     targetIds: n,
-    damage: Object.values(r).reduce((o, a) => o + a, 0),
-    healing: Object.values(i).reduce((o, a) => o + a, 0),
-    damageByTarget: r,
-    healingByTarget: i,
+    damage: Object.values(i).reduce((o, a) => o + a, 0),
+    healing: Object.values(r).reduce((o, a) => o + a, 0),
+    damageByTarget: i,
+    healingByTarget: r,
     critical: t.resolutions.some((o) => o.critical),
     statusesApplied: [...s],
     defeatedIds: []
   };
-}, qn = (e, t = [], n = de, r) => {
+}, Sn = (e, t = [], n = Z, i) => {
   if (!e.advanced) return;
-  const i = e.actionLog.length;
+  const r = e.actionLog.length;
   for (const s of e.advanced.units) {
-    const o = tc(e, s), a = e.units.findIndex((l) => l.unitId === o.unitId);
+    const o = Xa(e, s), a = e.units.findIndex((c) => c.unitId === o.unitId);
     a >= 0 ? e.units[a] = o : e.units.push(o);
   }
   for (const s of t)
-    e.actionLog.push(nc(e, s)), s.counter && e.actionLog.push({
+    e.actionLog.push(Wa(e, s)), s.counter && e.actionLog.push({
       turn: s.turn,
       actorId: s.counter.actorId,
       skillId: "counter",
@@ -4235,64 +3383,64 @@ const Ur = (e) => {
       statusesApplied: [],
       defeatedIds: []
     });
-  for (const s of e.advanced.units.filter((o) => o.alive === !1 && r?.has(o.id))) {
+  for (const s of e.advanced.units.filter((o) => o.alive === !1 && i?.has(o.id))) {
     let o;
-    for (let a = e.actionLog.length - 1; a >= i; a -= 1) {
-      const l = e.actionLog[a];
-      if ((l?.damageByTarget?.[s.id] ?? 0) > 0) {
-        o = l;
+    for (let a = e.actionLog.length - 1; a >= r; a -= 1) {
+      const c = e.actionLog[a];
+      if ((c?.damageByTarget?.[s.id] ?? 0) > 0) {
+        o = c;
         break;
       }
     }
     o && !o.defeatedIds.includes(s.id) && o.defeatedIds.push(s.id);
   }
   e.turn = e.advanced.turn, e.winner = e.advanced.outcome, e.winner && !e.finishedAt && (e.finishedAt = n.now().toISOString());
-}, vr = (e = "BALANCED") => {
-  const t = Gt(e), n = Gt("AGGRESSIVE");
-  return (r, i, s) => r.units.find((o) => o.id === i)?.side === "PLAYER" ? t(r, i, s) : n(r, i, s);
-}, rc = (e, t, n = de) => {
-  if (!e.advanced) return Fi(e, t, n);
-  const r = e.actionLog.length, i = e.advanced.log.length, s = new Set(e.advanced.units.filter((o) => o.alive).map((o) => o.id));
-  return Dn(e.advanced, { commandProvider: vr() }, t), qn(e, e.advanced.log.slice(i), n, s), e.actionLog.slice(r);
-}, ic = (e, t, n, r, i = de) => {
+}, ci = (e = "BALANCED") => {
+  const t = Mt(e), n = Mt("AGGRESSIVE");
+  return (i, r, s) => i.units.find((o) => o.id === r)?.side === "PLAYER" ? t(i, r, s) : n(i, r, s);
+}, Ka = (e, t, n = Z) => {
+  if (!e.advanced) return Nr(e, t, n);
+  const i = e.actionLog.length, r = e.advanced.log.length, s = new Set(e.advanced.units.filter((o) => o.alive).map((o) => o.id));
+  return fn(e.advanced, { commandProvider: ci() }, t), Sn(e, e.advanced.log.slice(r), n, s), e.actionLog.slice(i);
+}, za = (e, t, n, i, r = Z) => {
   if (!e.advanced || e.winner) throw new Error("No active advanced dungeon battle");
-  const s = pr(e.advanced).find((d) => e.advanced.units.find((u) => u.id === d)?.side === "PLAYER");
+  const s = Qn(e.advanced).find((l) => e.advanced.units.find((d) => d.id === l)?.side === "PLAYER");
   if (!s) throw new Error("No living player actor");
-  if (!Ln(e.advanced, s).some((d) => d.id === t)) throw new Error("Selected skill is not usable");
-  const o = e.actionLog.length, a = e.advanced.log.length, l = new Set(e.advanced.units.filter((d) => d.alive).map((d) => d.id));
-  return Dn(e.advanced, {
+  if (!pn(e.advanced, s).some((l) => l.id === t)) throw new Error("Selected skill is not usable");
+  const o = e.actionLog.length, a = e.advanced.log.length, c = new Set(e.advanced.units.filter((l) => l.alive).map((l) => l.id));
+  return fn(e.advanced, {
     commands: { [s]: { actorId: s, skillId: t, targetIds: n } },
-    commandProvider: vr()
-  }, r), qn(e, e.advanced.log.slice(a), i, l), e.actionLog.slice(o);
-}, sc = (e, t, n = de) => {
+    commandProvider: ci()
+  }, i), Sn(e, e.advanced.log.slice(a), r, c), e.actionLog.slice(o);
+}, Ja = (e, t, n = Z) => {
   if (e.advanced) {
-    const r = e.advanced.log.length, i = new Set(e.advanced.units.filter((s) => s.alive).map((s) => s.id));
-    fi(e.advanced, vr(), t), qn(e, e.advanced.log.slice(r), n, i);
-  } else for (; !e.winner; ) Fi(e, t, n);
+    const i = e.advanced.log.length, r = new Set(e.advanced.units.filter((s) => s.alive).map((s) => s.id));
+    rr(e.advanced, ci(), t), Sn(e, e.advanced.log.slice(i), n, r);
+  } else for (; !e.winner; ) Nr(e, t, n);
   return e;
-}, oc = (e, t, n = de) => {
+}, Qa = (e, t, n = Z) => {
   if (!t.winner || !t.finishedAt) throw new Error("Battle has not finished");
   if (e.battleHistory.some((o) => o.battleId === t.battleId)) return;
-  const r = t.winner === "PLAYER", i = t.winner === "ENEMY";
-  r ? e.statistics.battleWins += 1 : i && (e.statistics.battleLosses += 1);
+  const i = t.winner === "PLAYER", r = t.winner === "ENEMY";
+  i ? e.statistics.battleWins += 1 : r && (e.statistics.battleLosses += 1);
   const s = t.units.filter((o) => o.team === "PLAYER");
   for (const o of s) {
     const a = e.stones[o.stoneId];
     if (!a) continue;
-    const l = t.actionLog.filter((u) => u.actorId === o.unitId), d = t.actionLog.filter((u) => u.targetIds.includes(o.unitId)).reduce((u, h) => h.damageByTarget ? u + (h.damageByTarget[o.unitId] ?? 0) : u + h.damage / Math.max(1, h.targetIds.length), 0);
-    a.battleStatistics.battles += 1, r ? a.battleStatistics.wins += 1 : i && (a.battleStatistics.losses += 1), a.battleStatistics.damageDealt += l.reduce((u, h) => u + h.damage, 0), a.battleStatistics.damageTaken += d, a.battleStatistics.healingDone += l.reduce((u, h) => u + h.healing, 0), a.battleStatistics.criticalHits += l.filter((u) => u.critical).length, a.battleStatistics.enemiesDefeated += l.reduce((u, h) => u + h.defeatedIds.length, 0), a.battleStatistics.ultimatesUsed += l.filter((u) => (Et[u.skillId]?.ultimateCost ?? 0) > 0).length, si(a, r ? t.reward?.stoneXp ?? 45 : Math.round((t.reward?.stoneXp ?? 30) * 0.35)), xn(a, r ? 18 : 6);
+    const c = t.actionLog.filter((d) => d.actorId === o.unitId), l = t.actionLog.filter((d) => d.targetIds.includes(o.unitId)).reduce((d, f) => f.damageByTarget ? d + (f.damageByTarget[o.unitId] ?? 0) : d + f.damage / Math.max(1, f.targetIds.length), 0);
+    a.battleStatistics.battles += 1, i ? a.battleStatistics.wins += 1 : r && (a.battleStatistics.losses += 1), a.battleStatistics.damageDealt += c.reduce((d, f) => d + f.damage, 0), a.battleStatistics.damageTaken += l, a.battleStatistics.healingDone += c.reduce((d, f) => d + f.healing, 0), a.battleStatistics.criticalHits += c.filter((d) => d.critical).length, a.battleStatistics.enemiesDefeated += c.reduce((d, f) => d + f.defeatedIds.length, 0), a.battleStatistics.ultimatesUsed += c.filter((d) => (Ze[d.skillId]?.ultimateCost ?? 0) > 0).length, Ki(a, i ? t.reward?.stoneXp ?? 45 : Math.round((t.reward?.stoneXp ?? 30) * 0.35)), un(a, i ? 18 : 6);
   }
-  if (r && t.reward && Di(e, { ...t.reward }), r && t.mode === "DUNGEON" && t.dungeonId && t.stageId) {
+  if (i && t.reward && Rr(e, { ...t.reward }), i && t.mode === "DUNGEON" && t.dungeonId && t.stageId) {
     const o = `${t.dungeonId}:${t.stageId}`, a = e.dungeonClears[o];
     e.dungeonClears[o] = a ? { ...a, bestTurns: Math.min(a.bestTurns, t.turn), clearCount: a.clearCount + 1 } : { bestTurns: t.turn, clearCount: 1, firstClearedAt: n.now().toISOString() };
   }
-  Vt(e, r ? 25 : 8), e.profile.totalAffinity = Object.values(e.stones).reduce((o, a) => o + a.affinity.points, 0), e.battleHistory.unshift(t), e.battleHistory.length > 100 && (e.battleHistory.length = 100), Xt(e, n);
-}, At = (e, t, n, r, i = de, s) => {
-  const o = i.now(), a = s ?? tt("evt", r, o.getTime()), l = e.online.queue.find((u) => u.eventId === a);
-  if (l) return l;
-  if (e.online.processedReceipts.some((u) => u.eventId === a)) throw new Error("Online event was already acknowledged");
+  kt(e, i ? 25 : 8), e.profile.totalAffinity = Object.values(e.stones).reduce((o, a) => o + a.affinity.points, 0), e.battleHistory.unshift(t), e.battleHistory.length > 100 && (e.battleHistory.length = 100), _t(e, n);
+}, rt = (e, t, n, i, r = Z, s) => {
+  const o = r.now(), a = s ?? Ge("evt", i, o.getTime()), c = e.online.queue.find((d) => d.eventId === a);
+  if (c) return c;
+  if (e.online.processedReceipts.some((d) => d.eventId === a)) throw new Error("Online event was already acknowledged");
   e.online.sequence += 1;
-  const d = {
+  const l = {
     eventId: a,
     sessionId: e.online.sessionId,
     sequence: e.online.sequence,
@@ -4303,33 +3451,33 @@ const Ur = (e) => {
     attempts: 0,
     nextAttemptAt: o.toISOString()
   };
-  return e.online.queue.push(d), d;
-}, ac = (e, t = de, n = 100) => {
-  const r = t.now().getTime();
-  return e.online.queue.filter((i) => new Date(i.nextAttemptAt).getTime() <= r).slice(0, Math.max(1, n));
-}, Yr = (e, t = de) => {
+  return e.online.queue.push(l), l;
+}, Za = (e, t = Z, n = 100) => {
+  const i = t.now().getTime();
+  return e.online.queue.filter((r) => new Date(r.nextAttemptAt).getTime() <= i).slice(0, Math.max(1, n));
+}, Oi = (e, t = Z) => {
   e.attempts += 1;
   const n = Math.min(3e5, 1e3 * 2 ** Math.min(8, e.attempts));
   e.nextAttemptAt = new Date(t.now().getTime() + n).toISOString();
-}, tr = 6e4, wt = 60 * tr, Mt = 720 * wt, cc = 2880, un = 64, Gn = 32, Bi = 100, qi = 1e9, nr = "::", rr = ":expedition-mutation:", lc = ["NONE", "PRISMATIC", "ANCIENT", "CORRUPTED", "PERFECT"], dc = (e) => `${e.itemId}${nr}${e.rarity}${nr}${encodeURIComponent(e.seed)}`, Gi = (e) => {
-  const [t, n, r, ...i] = e.split(nr);
-  if (!t?.startsWith("equipment_") || !n || !r || i.length > 0 || !mn.includes(n)) return null;
+}, Gn = 6e4, st = 60 * Gn, at = 720 * st, ec = 2880, Yt = 64, yn = 32, kr = 100, _r = 1e9, qn = "::", Un = ":expedition-mutation:", tc = ["NONE", "PRISMATIC", "ANCIENT", "CORRUPTED", "PERFECT"], nc = (e) => `${e.itemId}${qn}${e.rarity}${qn}${encodeURIComponent(e.seed)}`, Cr = (e) => {
+  const [t, n, i, ...r] = e.split(qn);
+  if (!t?.startsWith("equipment_") || !n || !i || r.length > 0 || !jt.includes(n)) return null;
   try {
-    const s = decodeURIComponent(r);
+    const s = decodeURIComponent(i);
     return s ? { itemId: t, rarity: n, seed: s } : null;
   } catch {
     return null;
   }
-}, Ui = [
-  { id: "duration_15m", label: "15 minutes", durationMs: 15 * tr, yieldMultiplier: 0.25, rareMultiplier: 0.52 },
-  { id: "duration_30m", label: "30 minutes", durationMs: 30 * tr, yieldMultiplier: 0.5, rareMultiplier: 0.72 },
-  { id: "duration_1h", label: "1 hour", durationMs: wt, yieldMultiplier: 1, rareMultiplier: 1 },
-  { id: "duration_3h", label: "3 hours", durationMs: 3 * wt, yieldMultiplier: 2.9, rareMultiplier: 1.8 },
-  { id: "duration_4h", label: "4 hours", durationMs: 4 * wt, yieldMultiplier: 3.8, rareMultiplier: 2.08 },
-  { id: "duration_6h", label: "6 hours", durationMs: 6 * wt, yieldMultiplier: 5.6, rareMultiplier: 2.55 },
-  { id: "duration_12h", label: "12 hours", durationMs: 12 * wt, yieldMultiplier: 10.8, rareMultiplier: 3.65 },
-  { id: "duration_24h", label: "24 hours", durationMs: 24 * wt, yieldMultiplier: 20.5, rareMultiplier: 5.2 }
-], Hi = [
+}, xr = [
+  { id: "duration_15m", label: "15 minutes", durationMs: 15 * Gn, yieldMultiplier: 0.25, rareMultiplier: 0.52 },
+  { id: "duration_30m", label: "30 minutes", durationMs: 30 * Gn, yieldMultiplier: 0.5, rareMultiplier: 0.72 },
+  { id: "duration_1h", label: "1 hour", durationMs: st, yieldMultiplier: 1, rareMultiplier: 1 },
+  { id: "duration_3h", label: "3 hours", durationMs: 3 * st, yieldMultiplier: 2.9, rareMultiplier: 1.8 },
+  { id: "duration_4h", label: "4 hours", durationMs: 4 * st, yieldMultiplier: 3.8, rareMultiplier: 2.08 },
+  { id: "duration_6h", label: "6 hours", durationMs: 6 * st, yieldMultiplier: 5.6, rareMultiplier: 2.55 },
+  { id: "duration_12h", label: "12 hours", durationMs: 12 * st, yieldMultiplier: 10.8, rareMultiplier: 3.65 },
+  { id: "duration_24h", label: "24 hours", durationMs: 24 * st, yieldMultiplier: 20.5, rareMultiplier: 5.2 }
+], Lr = [
   {
     id: "region_starter_quarry",
     name: "Starter Quarry",
@@ -4491,7 +3639,7 @@ const Ur = (e) => {
     eventChance: 0.13,
     bossChance: 0.055
   }
-], Mr = Object.fromEntries(Ui.map((e) => [e.id, e])), Un = Object.fromEntries(Hi.map((e) => [e.id, e])), mn = ["NORMAL", "RARE", "SR", "SSR", "UR", "LEGENDARY"], ji = {
+], li = Object.fromEntries(xr.map((e) => [e.id, e])), An = Object.fromEntries(Lr.map((e) => [e.id, e])), jt = ["NORMAL", "RARE", "SR", "SSR", "UR", "LEGENDARY"], Dr = {
   BALANCED: { id: "BALANCED", battle: 1, mining: 1, xp: 1, material: 1, discovery: 1, reward: 1, winShift: 0, failureRetention: 0.62 },
   COMBAT: { id: "COMBAT", battle: 1.28, mining: 0.82, xp: 1.25, material: 0.82, discovery: 0.78, reward: 1.08, winShift: 0.08, failureRetention: 0.58 },
   MINING: { id: "MINING", battle: 0.9, mining: 1.52, xp: 0.86, material: 1.7, discovery: 1.05, reward: 1.08, winShift: -0.04, failureRetention: 0.68 },
@@ -4500,23 +3648,23 @@ const Ur = (e) => {
   HIGH_RISK: { id: "HIGH_RISK", battle: 0.9, mining: 1.12, xp: 1.3, material: 1.36, discovery: 1.62, reward: 1.62, winShift: -0.16, failureRetention: 0.3 },
   EXPERIENCE: { id: "EXPERIENCE", battle: 1.08, mining: 0.82, xp: 1.55, material: 0.8, discovery: 0.82, reward: 1, winShift: 0, failureRetention: 0.6 },
   MATERIALS: { id: "MATERIALS", battle: 0.92, mining: 1.42, xp: 0.86, material: 1.7, discovery: 0.88, reward: 1.04, winShift: -0.03, failureRetention: 0.66 }
-}, Yi = (e) => {
-  const t = e.lastIndexOf(rr);
+}, Or = (e) => {
+  const t = e.lastIndexOf(Un);
   if (t < 0) return null;
-  const n = e.slice(t + rr.length);
-  return lc.includes(n) ? n : null;
-}, uc = (e, t) => `${e}${rr}${t}`, mc = (e, t, n, r, i = 1) => {
-  const s = Un[t], o = Mr[n], a = ji[r];
+  const n = e.slice(t + Un.length);
+  return tc.includes(n) ? n : null;
+}, ic = (e, t) => `${e}${Un}${t}`, rc = (e, t, n, i, r = 1) => {
+  const s = An[t], o = li[n], a = Dr[i];
   if (!s || !o || !a) throw new Error("Cannot roll a mutation for invalid expedition configuration");
-  const l = Math.max(0.55, Math.min(2.5, i)), d = Math.min(0.35, 15e-4 + s.mutationEncounterChance * o.rareMultiplier * a.discovery * l), u = new Re(`${e}:mutation-roll:${s.id}:${o.id}:${a.id}`);
-  return u.chance(d) ? u.weighted(["PRISMATIC", "ANCIENT", "CORRUPTED", "PERFECT"], (h) => ({
+  const c = Math.max(0.55, Math.min(2.5, r)), l = Math.min(0.35, 15e-4 + s.mutationEncounterChance * o.rareMultiplier * a.discovery * c), d = new Ee(`${e}:mutation-roll:${s.id}:${o.id}:${a.id}`);
+  return d.chance(l) ? d.weighted(["PRISMATIC", "ANCIENT", "CORRUPTED", "PERFECT"], (f) => ({
     NONE: 0,
     PRISMATIC: 54,
     ANCIENT: 27,
     CORRUPTED: 16,
     PERFECT: 3
-  })[h]) : "NONE";
-}, mt = () => ({
+  })[f]) : "NONE";
+}, Ke = () => ({
   credits: 0,
   upgradeDust: 0,
   researchCores: 0,
@@ -4525,113 +3673,113 @@ const Ur = (e) => {
   affinityPerMember: 0,
   items: {},
   rareDiscoveries: []
-}), pc = () => ({
+}), sc = () => ({
   battles: 0,
   wins: 0,
   miningYield: 0,
   rareDiscoveries: 0,
   equipmentDrops: 0,
   bestDropRarity: null
-}), pt = (e, t = qi) => !Number.isFinite(e) || e <= 0 ? 0 : Math.min(t, Math.floor(e)), ve = (e, t, n = qi) => Math.min(n, pt(e, n) + pt(t, n)), fc = (e, t) => {
-  if (e.rareDiscoveries.length + t.rareDiscoveries.length > Gn)
+}), ze = (e, t = _r) => !Number.isFinite(e) || e <= 0 ? 0 : Math.min(t, Math.floor(e)), fe = (e, t, n = _r) => Math.min(n, ze(e, n) + ze(t, n)), oc = (e, t) => {
+  if (e.rareDiscoveries.length + t.rareDiscoveries.length > yn)
     throw new Error("Expedition rare-discovery storage capacity invariant exceeded");
-  e.credits = ve(e.credits, t.credits), e.upgradeDust = ve(e.upgradeDust, t.upgradeDust), e.researchCores = ve(e.researchCores, t.researchCores), e.accountXp = ve(e.accountXp, t.accountXp), e.stoneXpPerMember = ve(e.stoneXpPerMember, t.stoneXpPerMember), e.affinityPerMember = ve(e.affinityPerMember, t.affinityPerMember);
-  for (const [n, r] of Object.entries(t.items)) e.items[n] = ve(e.items[n] ?? 0, r);
+  e.credits = fe(e.credits, t.credits), e.upgradeDust = fe(e.upgradeDust, t.upgradeDust), e.researchCores = fe(e.researchCores, t.researchCores), e.accountXp = fe(e.accountXp, t.accountXp), e.stoneXpPerMember = fe(e.stoneXpPerMember, t.stoneXpPerMember), e.affinityPerMember = fe(e.affinityPerMember, t.affinityPerMember);
+  for (const [n, i] of Object.entries(t.items)) e.items[n] = fe(e.items[n] ?? 0, i);
   e.rareDiscoveries.push(...t.rareDiscoveries);
-}, hc = (e) => ({
+}, ac = (e) => ({
   ...e,
   items: { ...e.items },
   rareDiscoveries: e.rareDiscoveries.map((t) => ({ ...t }))
-}), Ec = (e) => e.hardness + e.purity + e.power + e.defense + e.speed + e.resonance + e.maxHp / 8, gc = (e) => {
+}), cc = (e) => e.hardness + e.purity + e.power + e.defense + e.speed + e.resonance + e.maxHp / 8, lc = (e) => {
   const t = {}, n = /* @__PURE__ */ new Map();
-  for (const r of Object.values(e.equipment)) {
-    if (!r) continue;
-    const i = r.setId ?? ["BASTION", "RESONANCE", "HUNTER", "ABYSSAL"].find((s) => r.definitionId.startsWith(`${s}_`));
-    i && n.set(i, (n.get(i) ?? 0) + 1);
-    for (const s of r.affixes) {
+  for (const i of Object.values(e.equipment)) {
+    if (!i) continue;
+    const r = i.setId ?? ["BASTION", "RESONANCE", "HUNTER", "ABYSSAL"].find((s) => i.definitionId.startsWith(`${s}_`));
+    r && n.set(r, (n.get(r) ?? 0) + 1);
+    for (const s of i.affixes) {
       const o = e.stats[s.stat], a = s.operation === "PERCENT" ? o * s.value : s.value;
       t[s.stat] = (t[s.stat] ?? 0) + a;
     }
   }
   return (n.get("BASTION") ?? 0) >= 2 && (t.defense = (t.defense ?? 0) + e.stats.defense * 0.12), (n.get("BASTION") ?? 0) >= 4 && (t.maxHp = (t.maxHp ?? 0) + e.stats.maxHp * 0.2), (n.get("RESONANCE") ?? 0) >= 4 && (t.speed = (t.speed ?? 0) + e.stats.speed * 0.15), (n.get("HUNTER") ?? 0) >= 2 && (t.power = (t.power ?? 0) + e.stats.power * 0.1), (n.get("ABYSSAL") ?? 0) >= 2 && (t.resonance = (t.resonance ?? 0) + e.stats.resonance * 0.15), (n.get("ABYSSAL") ?? 0) >= 4 && (t.power = (t.power ?? 0) + e.stats.power * 0.18), t;
-}, Ic = (e, t) => {
-  const n = e.parties.find((r) => r.id === t);
+}, dc = (e, t) => {
+  const n = e.parties.find((i) => i.id === t);
   if (!n || n.slots.length === 0) throw new Error("Expedition requires a non-empty party");
-  return n.slots.map(({ stoneId: r }) => {
-    const i = e.stones[r];
-    if (!i) throw new Error(`Expedition party stone is missing: ${r}`);
-    const s = Object.values(i.equipment).filter((o) => !!o);
+  return n.slots.map(({ stoneId: i }) => {
+    const r = e.stones[i];
+    if (!r) throw new Error(`Expedition party stone is missing: ${i}`);
+    const s = Object.values(r.equipment).filter((o) => !!o);
     return {
-      stoneId: r,
-      speciesId: i.speciesId,
-      level: i.level,
-      rarity: i.rarity,
-      primaryElement: i.primaryElement,
-      secondaryElement: i.secondaryElement,
-      stats: { ...i.stats },
-      individualValues: { ...i.individualValues },
-      skillIds: i.skills.map((o) => o.skillId),
-      traitIds: [...i.traitIds],
+      stoneId: i,
+      speciesId: r.speciesId,
+      level: r.level,
+      rarity: r.rarity,
+      primaryElement: r.primaryElement,
+      secondaryElement: r.secondaryElement,
+      stats: { ...r.stats },
+      individualValues: { ...r.individualValues },
+      skillIds: r.skills.map((o) => o.skillId),
+      traitIds: [...r.traitIds],
       equipment: s.map((o) => ({ ...o, affixes: o.affixes.map((a) => ({ ...a })) })),
-      equipmentBonuses: gc(i),
-      mutation: i.mutation,
-      generation: i.generation,
-      lineage: [...i.parents, ...i.grandparents].slice(0, 8).map((o) => ({ ...o, traitIds: [...o.traitIds] })),
-      power: Math.floor(Ec(i.stats)),
-      affinityRank: i.affinity.rank
+      equipmentBonuses: lc(r),
+      mutation: r.mutation,
+      generation: r.generation,
+      lineage: [...r.parents, ...r.grandparents].slice(0, 8).map((o) => ({ ...o, traitIds: [...o.traitIds] })),
+      power: Math.floor(cc(r.stats)),
+      affinityRank: r.affinity.rank
     };
   });
-}, yc = (e) => Object.values(e.expeditions.runs).filter((t) => t.status !== "CLAIMED").length, Sc = (e, t) => {
+}, uc = (e) => Object.values(e.expeditions.runs).filter((t) => t.status !== "CLAIMED").length, mc = (e, t) => {
   const n = e.expeditions.runs[t];
   if (!n) throw new Error("Expedition not found");
   if (n.status === "CLAIMED") throw new Error("Expedition is already claimed");
   return n.repeat = !1, n;
-}, Ac = (e, t, n, r = de) => {
-  const i = Un[t.regionId], s = Mr[t.durationId];
-  if (!i) throw new Error(`Unknown expedition region: ${t.regionId}`);
+}, pc = (e, t, n, i = Z) => {
+  const r = An[t.regionId], s = li[t.durationId];
+  if (!r) throw new Error(`Unknown expedition region: ${t.regionId}`);
   if (!s) throw new Error(`Unknown expedition duration: ${t.durationId}`);
-  if (!$i.includes(t.strategy)) throw new Error("Unknown expedition strategy");
-  if (e.facilities.expeditionGuild < i.requiredGuildLevel) throw new Error(`Expedition Guild level ${i.requiredGuildLevel} required`);
+  if (!Tr.includes(t.strategy)) throw new Error("Unknown expedition strategy");
+  if (e.facilities.expeditionGuild < r.requiredGuildLevel) throw new Error(`Expedition Guild level ${r.requiredGuildLevel} required`);
   const o = Math.min(4, 1 + Math.floor((e.facilities.expeditionGuild - 1) / 2));
-  if (yc(e) >= o) throw new Error("All expedition slots are occupied");
-  const a = t.partyId ?? e.activePartyId, l = Ic(e, a), d = /* @__PURE__ */ new Set([
+  if (uc(e) >= o) throw new Error("All expedition slots are occupied");
+  const a = t.partyId ?? e.activePartyId, c = dc(e, a), l = /* @__PURE__ */ new Set([
     ...e.training.assignment ? [e.training.assignment.stoneId] : [],
     ...e.affinityGarden.assignment ? [e.affinityGarden.assignment.stoneId] : [],
     ...e.endlessMine.status === "RUNNING" || e.endlessMine.status === "PAUSED" ? e.endlessMine.partyStoneIds : [],
-    ...e.activeBattle && !e.activeBattle.winner ? e.activeBattle.units.filter((S) => S.team === "PLAYER").map((S) => S.stoneId) : []
+    ...e.activeBattle && !e.activeBattle.winner ? e.activeBattle.units.filter((g) => g.team === "PLAYER").map((g) => g.stoneId) : []
   ]);
-  if (l.some((S) => d.has(S.stoneId))) throw new Error("A party stone is assigned to another background activity");
-  const u = new Set(Object.values(e.expeditions.runs).filter((S) => S.status !== "CLAIMED").flatMap((S) => S.partySnapshot.map((k) => k.stoneId)));
-  if (l.some((S) => u.has(S.stoneId))) throw new Error("A party stone is already on expedition");
-  const h = r.now();
-  if (!Number.isFinite(h.getTime())) throw new Error("Expedition clock returned an invalid date");
-  const w = tt("expedition", n, h.getTime()), E = `${w}:${Math.floor(n.next() * 4294967296).toString(16)}`, m = {
-    expeditionId: w,
-    regionId: i.id,
+  if (c.some((g) => l.has(g.stoneId))) throw new Error("A party stone is assigned to another background activity");
+  const d = new Set(Object.values(e.expeditions.runs).filter((g) => g.status !== "CLAIMED").flatMap((g) => g.partySnapshot.map((b) => b.stoneId)));
+  if (c.some((g) => d.has(g.stoneId))) throw new Error("A party stone is already on expedition");
+  const f = i.now();
+  if (!Number.isFinite(f.getTime())) throw new Error("Expedition clock returned an invalid date");
+  const y = Ge("expedition", n, f.getTime()), h = `${y}:${Math.floor(n.next() * 4294967296).toString(16)}`, u = {
+    expeditionId: y,
+    regionId: r.id,
     durationId: s.id,
     durationMs: s.durationMs,
     strategy: t.strategy,
     partyId: a,
-    partySnapshot: l,
-    seed: E,
+    partySnapshot: c,
+    seed: h,
     repeat: !!t.repeat,
     status: "ACTIVE",
-    startedAt: h.toISOString(),
-    lastSimulatedAt: h.toISOString(),
-    nextCompletionAt: new Date(h.getTime() + s.durationMs).toISOString(),
+    startedAt: f.toISOString(),
+    lastSimulatedAt: f.toISOString(),
+    nextCompletionAt: new Date(f.getTime() + s.durationMs).toISOString(),
     completedCycles: 0,
     claimedCycles: 0,
     claimCount: 0,
-    expeditionStorage: mt(),
+    expeditionStorage: Ke(),
     reportEvents: [{
-      reportId: `${w}:departure`,
-      expeditionId: w,
+      reportId: `${y}:departure`,
+      expeditionId: y,
       cycle: 0,
-      completedAt: h.toISOString(),
+      completedAt: f.toISOString(),
       offsetMs: 0,
       kind: "DEPARTURE",
-      title: `Departed for ${i.name}`,
-      detail: `${l.length} stones began a ${s.label} expedition.`,
+      title: `Departed for ${r.name}`,
+      detail: `${c.length} stones began a ${s.label} expedition.`,
       successScore: 0,
       battleWon: null,
       miningYield: 0,
@@ -4641,16 +3789,16 @@ const Ur = (e) => {
       rareDiscoveryCount: 0,
       reward: { credits: 0, upgradeDust: 0, researchCores: 0, accountXp: 0, stoneXpPerMember: 0, affinityPerMember: 0, items: {} }
     }],
-    reportSummary: pc(),
+    reportSummary: sc(),
     lastClaimedAt: null
   };
-  e.expeditions.runs[w] = m, e.expeditions.order.unshift(w), e.expeditions.order = e.expeditions.order.slice(0, 100);
-  const A = new Set(e.expeditions.order);
-  for (const [S, k] of Object.entries(e.expeditions.runs)) !A.has(S) && k.status === "CLAIMED" && delete e.expeditions.runs[S];
-  return m;
-}, Nt = () => ({ combat: 0, mining: 0, exploration: 0, research: 0 }), ie = (e, t, n = 1) => {
+  e.expeditions.runs[y] = u, e.expeditions.order.unshift(y), e.expeditions.order = e.expeditions.order.slice(0, 100);
+  const I = new Set(e.expeditions.order);
+  for (const [g, b] of Object.entries(e.expeditions.runs)) !I.has(g) && b.status === "CLAIMED" && delete e.expeditions.runs[g];
+  return u;
+}, ut = () => ({ combat: 0, mining: 0, exploration: 0, research: 0 }), W = (e, t, n = 1) => {
   e.combat += t.combat * n, e.mining += t.mining * n, e.exploration += t.exploration * n, e.research += t.research * n;
-}, Rr = {
+}, di = {
   hardness: { combat: 0.18, mining: 1.35, exploration: 0.2, research: 0.08 },
   purity: { combat: 0.08, mining: 0.92, exploration: 0.84, research: 0.78 },
   power: { combat: 1.3, mining: 0.16, exploration: 0.1, research: 0.06 },
@@ -4658,7 +3806,7 @@ const Ur = (e) => {
   speed: { combat: 0.7, mining: 0.14, exploration: 0.78, research: 0.2 },
   resonance: { combat: 0.42, mining: 0.72, exploration: 1.08, research: 1.4 },
   maxHp: { combat: 0.14, mining: 0.018, exploration: 0.035, research: 0.01 }
-}, Nn = {
+}, an = {
   NEUTRAL: { combat: 3, mining: 3, exploration: 3, research: 3 },
   FIRE: { combat: 13, mining: 5, exploration: 2, research: 2 },
   WATER: { combat: 5, mining: 4, exploration: 11, research: 5 },
@@ -4669,20 +3817,20 @@ const Ur = (e) => {
   CRYSTAL: { combat: 5, mining: 8, exploration: 9, research: 14 },
   METAL: { combat: 9, mining: 13, exploration: 3, research: 4 },
   ANCIENT: { combat: 8, mining: 7, exploration: 8, research: 15 }
-}, wc = {
+}, fc = {
   ATTACK: { combat: 15, mining: 3, exploration: 2, research: 1 },
   TANK: { combat: 11, mining: 9, exploration: 5, research: 1 },
   SUPPORT: { combat: 6, mining: 4, exploration: 9, research: 12 },
   CONTROL: { combat: 9, mining: 2, exploration: 12, research: 7 }
-}, Vi = {
-  NONE: Nt(),
+}, $r = {
+  NONE: ut(),
   PRISMATIC: { combat: 9, mining: 4, exploration: 17, research: 15 },
   ANCIENT: { combat: 11, mining: 13, exploration: 8, research: 17 },
   CORRUPTED: { combat: 18, mining: 11, exploration: 5, research: 4 },
   PERFECT: { combat: 25, mining: 25, exploration: 25, research: 25 }
-}, Xi = (e, t, n = 1) => {
-  for (const r of t) {
-    const i = {
+}, Pr = (e, t, n = 1) => {
+  for (const i of t) {
+    const r = {
       attack: { combat: 8, mining: 1, exploration: 1, research: 0.5 },
       basic: { combat: 3, mining: 2, exploration: 2, research: 1 },
       tank: { combat: 7, mining: 5, exploration: 4, research: 0.5 },
@@ -4699,74 +3847,74 @@ const Ur = (e) => {
       rare: { combat: 2, mining: 1, exploration: 3, research: 5 },
       legendary: { combat: 5, mining: 3, exploration: 5, research: 8 },
       ultimate: { combat: 6, mining: 1, exploration: 2, research: 4 }
-    }[r] ?? null;
-    i && ie(e, i, n);
+    }[i] ?? null;
+    r && W(e, r, n);
   }
-}, vc = (e, t) => {
-  const n = Nt(), r = Et[e];
-  if (!r) return n;
-  const i = r.target === "ALL_ENEMIES" || r.target === "ALL_ALLIES" ? 1.22 : r.target === "SELF" ? 0.88 : 1, s = r.ultimateCost > 0 ? 0.82 : 1 / (1 + r.cooldown * 0.08);
-  for (const o of r.effects) {
-    const a = Math.max(0, o.power ?? 0) * i * s;
+}, hc = (e, t) => {
+  const n = ut(), i = Ze[e];
+  if (!i) return n;
+  const r = i.target === "ALL_ENEMIES" || i.target === "ALL_ALLIES" ? 1.22 : i.target === "SELF" ? 0.88 : 1, s = i.ultimateCost > 0 ? 0.82 : 1 / (1 + i.cooldown * 0.08);
+  for (const o of i.effects) {
+    const a = Math.max(0, o.power ?? 0) * r * s;
     switch (o.type) {
       case "DAMAGE":
-        ie(n, { combat: 29, mining: 2.5, exploration: 2, research: 0.8 }, a);
+        W(n, { combat: 29, mining: 2.5, exploration: 2, research: 0.8 }, a);
         break;
       case "HEAL":
-        ie(n, { combat: 13, mining: 1, exploration: 18, research: 5 }, a);
+        W(n, { combat: 13, mining: 1, exploration: 18, research: 5 }, a);
         break;
       case "SHIELD":
-        ie(n, { combat: 17, mining: 3, exploration: 15, research: 2 }, a);
+        W(n, { combat: 17, mining: 3, exploration: 15, research: 2 }, a);
         break;
       case "BUFF":
       case "DEBUFF": {
-        const l = o.stat ? Rr[o.stat] : null;
-        l && ie(n, l, Math.abs(o.value ?? 0) * 58 * i * s);
+        const c = o.stat ? di[o.stat] : null;
+        c && W(n, c, Math.abs(o.value ?? 0) * 58 * r * s);
         break;
       }
       case "STATUS":
-        ie(n, { combat: 8, mining: 0.5, exploration: 8, research: 4 }, (o.chance ?? 1) * i * s);
+        W(n, { combat: 8, mining: 0.5, exploration: 8, research: 4 }, (o.chance ?? 1) * r * s);
         break;
       case "ULTIMATE_GAIN":
-        ie(n, { combat: 3, mining: 0.5, exploration: 2, research: 5 }, Math.max(0, o.value ?? 0) / 8);
+        W(n, { combat: 3, mining: 0.5, exploration: 2, research: 5 }, Math.max(0, o.value ?? 0) / 8);
         break;
     }
   }
-  return Xi(n, r.tags, s), ie(n, Nn[r.element], t.favoredElements.includes(r.element) ? 1.35 : 0.72), n.research += Math.max(0, r.priority) * 0.8 + r.effects.length * 1.2, n;
-}, Wi = (e, t, n) => {
-  const r = Nt();
-  for (const i of e) {
-    const s = Yt[i];
+  return Pr(n, i.tags, s), W(n, an[i.element], t.favoredElements.includes(i.element) ? 1.35 : 0.72), n.research += Math.max(0, i.priority) * 0.8 + i.effects.length * 1.2, n;
+}, Fr = (e, t, n) => {
+  const i = ut();
+  for (const r of e) {
+    const s = Nt[r];
     if (!s) continue;
     const o = s.tier === "COMMON" ? 1 : s.tier === "RARE" ? 1.2 : 1.38, a = { ALWAYS: 1, BATTLE_START: 0.88, LOW_HP: 0.48, ON_HIT: 0.74, ON_CRIT: 0.42, TURN_START: 0.82 };
-    for (const l of s.effects) {
-      if (!l.stat) continue;
-      const d = Math.sqrt(Math.max(1, t[l.stat])), u = l.operation === "PERCENT" ? d * Math.abs(l.value ?? 0) * 6 : Math.log2(1 + Math.abs(l.value ?? 0)), h = l.element ? n.favoredElements.includes(l.element) ? 1.35 : 0.72 : 1;
-      ie(r, Rr[l.stat], u * a[l.trigger] * h * o);
+    for (const c of s.effects) {
+      if (!c.stat) continue;
+      const l = Math.sqrt(Math.max(1, t[c.stat])), d = c.operation === "PERCENT" ? l * Math.abs(c.value ?? 0) * 6 : Math.log2(1 + Math.abs(c.value ?? 0)), f = c.element ? n.favoredElements.includes(c.element) ? 1.35 : 0.72 : 1;
+      W(i, di[c.stat], d * a[c.trigger] * f * o);
     }
-    Xi(r, s.tags, o), r.research += s.effects.length * o;
+    Pr(i, s.tags, o), i.research += s.effects.length * o;
   }
-  return r;
-}, Mc = (e) => {
-  const t = Nt(), n = /* @__PURE__ */ new Map(), r = { NORMAL: 1, RARE: 1.25, SR: 1.55, SSR: 1.9, UR: 2.3, LEGENDARY: 2.8 }, i = {
+  return i;
+}, Ec = (e) => {
+  const t = ut(), n = /* @__PURE__ */ new Map(), i = { NORMAL: 1, RARE: 1.25, SR: 1.55, SSR: 1.9, UR: 2.3, LEGENDARY: 2.8 }, r = {
     CORE: { combat: 7, mining: 3, exploration: 2, research: 5 },
     RUNE: { combat: 3, mining: 3, exploration: 6, research: 9 },
     RELIC: { combat: 4, mining: 8, exploration: 6, research: 4 },
     CHARM: { combat: 2, mining: 5, exploration: 9, research: 5 }
   };
   for (const o of e.equipment) {
-    const a = o.setId ?? ["BASTION", "RESONANCE", "HUNTER", "ABYSSAL"].find((u) => o.definitionId.startsWith(`${u}_`)) ?? null;
+    const a = o.setId ?? ["BASTION", "RESONANCE", "HUNTER", "ABYSSAL"].find((d) => o.definitionId.startsWith(`${d}_`)) ?? null;
     a && n.set(a, (n.get(a) ?? 0) + 1);
-    const l = r[o.rarity] * (1 + Math.max(0, o.level - 1) * 0.025);
-    ie(t, i[o.slot] ?? Nt(), l);
-    for (const u of o.affixes) {
-      const h = u.operation === "PERCENT" ? Math.abs(u.value) * 48 : Math.log2(1 + Math.abs(u.value)) * 0.8;
-      ie(t, Rr[u.stat], h);
-      const w = u.sourceStat;
-      w === "accuracy" ? ie(t, { combat: 3, mining: 0, exploration: 7, research: 1 }, h) : w === "resistance" ? ie(t, { combat: 4, mining: 1, exploration: 6, research: 2 }, h) : w === "critChance" || w === "critDamage" ? ie(t, { combat: 8, mining: 0, exploration: 2, research: 1 }, h) : w === "breakPower" && ie(t, { combat: 5, mining: 8, exploration: 1, research: 0 }, h);
+    const c = i[o.rarity] * (1 + Math.max(0, o.level - 1) * 0.025);
+    W(t, r[o.slot] ?? ut(), c);
+    for (const d of o.affixes) {
+      const f = d.operation === "PERCENT" ? Math.abs(d.value) * 48 : Math.log2(1 + Math.abs(d.value)) * 0.8;
+      W(t, di[d.stat], f);
+      const y = d.sourceStat;
+      y === "accuracy" ? W(t, { combat: 3, mining: 0, exploration: 7, research: 1 }, f) : y === "resistance" ? W(t, { combat: 4, mining: 1, exploration: 6, research: 2 }, f) : y === "critChance" || y === "critDamage" ? W(t, { combat: 8, mining: 0, exploration: 2, research: 1 }, f) : y === "breakPower" && W(t, { combat: 5, mining: 8, exploration: 1, research: 0 }, f);
     }
-    const d = o.definitionId.toLowerCase();
-    d.includes("quarry") && ie(t, { combat: 0, mining: 7, exploration: 3, research: 1 }, l), (d.includes("resonance") || d.includes("rune")) && ie(t, { combat: 1, mining: 2, exploration: 4, research: 7 }, l), d.includes("caldera") && ie(t, { combat: 7, mining: 5, exploration: 1, research: 0 }, l), d.includes("ancestor") && ie(t, { combat: 2, mining: 4, exploration: 4, research: 8 }, l), d.includes("meteor") && ie(t, { combat: 3, mining: 6, exploration: 7, research: 2 }, l), d.includes("abyss") && ie(t, { combat: 6, mining: 2, exploration: 7, research: 4 }, l), d.includes("celestial") && ie(t, { combat: 4, mining: 2, exploration: 7, research: 8 }, l);
+    const l = o.definitionId.toLowerCase();
+    l.includes("quarry") && W(t, { combat: 0, mining: 7, exploration: 3, research: 1 }, c), (l.includes("resonance") || l.includes("rune")) && W(t, { combat: 1, mining: 2, exploration: 4, research: 7 }, c), l.includes("caldera") && W(t, { combat: 7, mining: 5, exploration: 1, research: 0 }, c), l.includes("ancestor") && W(t, { combat: 2, mining: 4, exploration: 4, research: 8 }, c), l.includes("meteor") && W(t, { combat: 3, mining: 6, exploration: 7, research: 2 }, c), l.includes("abyss") && W(t, { combat: 6, mining: 2, exploration: 7, research: 4 }, c), l.includes("celestial") && W(t, { combat: 4, mining: 2, exploration: 7, research: 8 }, c);
   }
   const s = {
     BASTION: { combat: 8, mining: 5, exploration: 4, research: 1 },
@@ -4775,26 +3923,26 @@ const Ur = (e) => {
     ABYSSAL: { combat: 9, mining: 3, exploration: 8, research: 6 }
   };
   for (const [o, a] of n) {
-    const l = s[o];
-    l && ie(t, l, a + (a >= 2 ? 1.5 : 0) + (a >= 4 ? 2.5 : 0));
+    const c = s[o];
+    c && W(t, c, a + (a >= 2 ? 1.5 : 0) + (a >= 4 ? 2.5 : 0));
   }
   return t;
-}, Rc = (e, t, n) => {
-  const r = Nt();
-  return e.lineage.forEach((i, s) => {
-    const o = fe[i.speciesId];
+}, gc = (e, t, n) => {
+  const i = ut();
+  return e.lineage.forEach((r, s) => {
+    const o = re[r.speciesId];
     if (!o) return;
     const a = 0.72 / (1 + s * 0.18);
-    ie(r, wc[o.role], a), ie(r, Nn[o.primaryElement], a * (n.favoredElements.includes(o.primaryElement) ? 1.25 : 0.58)), ie(r, Wi(i.traitIds, t, n), a * 0.42), ie(r, Vi[i.mutation], a * 0.55);
-  }), r;
-}, bc = (e, t) => {
+    W(i, fc[o.role], a), W(i, an[o.primaryElement], a * (n.favoredElements.includes(o.primaryElement) ? 1.25 : 0.58)), W(i, Fr(r.traitIds, t, n), a * 0.42), W(i, $r[r.mutation], a * 0.55);
+  }), i;
+}, Ic = (e, t) => {
   const n = { combat: 0, mining: 0, exploration: 0, research: 0, elementMatches: 0 };
-  for (const r of e) {
-    const i = Object.fromEntries(Object.entries(r.stats).map(([d, u]) => [d, u + (r.equipmentBonuses[d] ?? 0)])), s = Object.values(r.individualValues).reduce((d, u) => d + u, 0) / 186, o = Math.min(8, r.lineage.length) * 0.015 + Math.min(10, r.generation) * 0.012, a = t.favoredElements.includes(r.primaryElement) || r.secondaryElement !== null && t.favoredElements.includes(r.secondaryElement);
-    a && (n.elementMatches += 1), n.combat += i.power * 1.25 + i.defense + i.speed * 0.72 + i.maxHp * 0.14 + r.affinityRank * 12 + s * 80 + o * 100 + (a ? 72 : 0), n.mining += i.hardness * 1.2 + i.purity + i.resonance * 0.9 + r.level * 2.2 + s * 32, n.exploration += i.purity * 0.9 + i.resonance * 1.25 + i.speed * 0.4 + r.affinityRank * 15 + o * 75 + (a ? 28 : 0), n.research += i.resonance * 1.18 + i.purity * 0.76 + i.speed * 0.18 + r.level * 1.35 + r.affinityRank * 9 + s * 42 + o * 82;
-    const l = Nt();
-    for (const d of r.skillIds) ie(l, vc(d, t));
-    ie(l, Wi(r.traitIds, i, t)), ie(l, Mc(r)), ie(l, Rc(r, i, t)), ie(l, Vi[r.mutation]), ie(l, Nn[r.primaryElement], a ? 1.4 : 0.52), r.secondaryElement && ie(l, Nn[r.secondaryElement], t.favoredElements.includes(r.secondaryElement) ? 0.8 : 0.32), n.combat += l.combat, n.mining += l.mining, n.exploration += l.exploration, n.research += l.research;
+  for (const i of e) {
+    const r = Object.fromEntries(Object.entries(i.stats).map(([l, d]) => [l, d + (i.equipmentBonuses[l] ?? 0)])), s = Object.values(i.individualValues).reduce((l, d) => l + d, 0) / 186, o = Math.min(8, i.lineage.length) * 0.015 + Math.min(10, i.generation) * 0.012, a = t.favoredElements.includes(i.primaryElement) || i.secondaryElement !== null && t.favoredElements.includes(i.secondaryElement);
+    a && (n.elementMatches += 1), n.combat += r.power * 1.25 + r.defense + r.speed * 0.72 + r.maxHp * 0.14 + i.affinityRank * 12 + s * 80 + o * 100 + (a ? 72 : 0), n.mining += r.hardness * 1.2 + r.purity + r.resonance * 0.9 + i.level * 2.2 + s * 32, n.exploration += r.purity * 0.9 + r.resonance * 1.25 + r.speed * 0.4 + i.affinityRank * 15 + o * 75 + (a ? 28 : 0), n.research += r.resonance * 1.18 + r.purity * 0.76 + r.speed * 0.18 + i.level * 1.35 + i.affinityRank * 9 + s * 42 + o * 82;
+    const c = ut();
+    for (const l of i.skillIds) W(c, hc(l, t));
+    W(c, Fr(i.traitIds, r, t)), W(c, Ec(i)), W(c, gc(i, r, t)), W(c, $r[i.mutation]), W(c, an[i.primaryElement], a ? 1.4 : 0.52), i.secondaryElement && W(c, an[i.secondaryElement], t.favoredElements.includes(i.secondaryElement) ? 0.8 : 0.32), n.combat += c.combat, n.mining += c.mining, n.exploration += c.exploration, n.research += c.research;
   }
   return {
     combat: Math.round(n.combat * 1e6) / 1e6,
@@ -4803,7 +3951,7 @@ const Ur = (e) => {
     research: Math.round(n.research * 1e6) / 1e6,
     elementMatches: n.elementMatches
   };
-}, Ki = (e, t) => e === null ? t : t === null ? e : mn.indexOf(t) > mn.indexOf(e) ? t : e, vt = (e) => ({
+}, Br = (e, t) => e === null ? t : t === null ? e : jt.indexOf(t) > jt.indexOf(e) ? t : e, ot = (e) => ({
   credits: e.credits,
   upgradeDust: e.upgradeDust,
   researchCores: e.researchCores,
@@ -4811,185 +3959,185 @@ const Ur = (e) => {
   stoneXpPerMember: e.stoneXpPerMember,
   affinityPerMember: e.affinityPerMember,
   items: { ...e.items }
-}), Tc = (e, t, n, r = !1) => {
-  const i = Un[e.regionId], s = Mr[e.durationId];
-  if (!i || !s || e.durationMs !== s.durationMs) throw new Error("Expedition references invalid configuration");
-  const o = new Re(`${e.seed}:cycle:${t}`), a = bc(e.partySnapshot, i), l = ji[e.strategy], d = a.combat * l.battle / Math.max(1, i.enemyPower), u = Math.max(0.3, Math.min(2.5, a.mining * l.mining / Math.max(1, i.miningDifficulty))), h = Math.max(0.3, Math.min(2.5, a.exploration / Math.max(100, i.miningDifficulty * 0.48))), w = Math.max(0.3, Math.min(2.5, a.research / Math.max(100, i.miningDifficulty * 0.42))), E = Math.max(0.08, Math.min(0.995, 0.42 + Math.log2(Math.max(0.25, d)) * 0.18 + a.elementMatches * 0.035 + l.winShift)), m = o.chance(Math.min(0.8, i.bossChance * s.rareMultiplier)), A = o.chance(Math.max(0.08, E - (m ? 0.16 : 0))), S = Math.max(0.22, Math.min(1.65, 0.72 + d * 0.2 + (A ? 0.24 : -0.12))) * (A ? 1 : l.failureRetention), k = 0.88 + o.next() * 0.24, T = s.yieldMultiplier * S * k * l.reward, p = pt(10 * s.yieldMultiplier * u * l.material, 1e6), f = mt();
-  f.credits = pt(i.baseCreditsPerHour * T * (0.86 + h * 0.14)), f.upgradeDust = pt(i.baseDustPerHour * T * l.material * (0.78 + u * 0.22)), f.accountXp = pt(i.baseAccountXpPerHour * T * l.xp * (0.78 + w * 0.22)), f.stoneXpPerMember = pt(i.baseStoneXpPerHour * T * l.xp * (0.88 + (d + w) * 0.06)), f.affinityPerMember = pt(i.baseAffinityPerHour * s.yieldMultiplier * (e.strategy === "BALANCED" ? 1.15 : 1) * (0.82 + h * 0.1 + w * 0.08)), (r || o.chance(Math.min(0.72, (0.012 + i.requiredGuildLevel * 0.011) * s.rareMultiplier * (0.72 + w * 0.28)))) && (f.researchCores = 1);
-  const y = Math.min(0.96, i.materialChance * s.rareMultiplier * l.material * (0.82 + u * 0.18));
-  o.chance(y) && (f.items[o.pick(i.materialDropIds)] = Math.max(1, Math.floor(Math.sqrt(s.yieldMultiplier) * u)));
-  const b = o.chance(Math.min(0.55, i.equipmentDropChance * s.rareMultiplier * l.material * (0.84 + h * 0.16))), M = b ? i.requiredGuildLevel >= 6 ? "UR" : i.requiredGuildLevel >= 4 ? "SSR" : "SR" : null, N = b ? `${e.seed}:equipment:${t}` : null;
-  b && M && N && (f.items[dc({ itemId: i.equipmentDropId, rarity: M, seed: N })] = 1);
-  let L = o.chance(Math.min(0.5, i.mutationEncounterChance * s.rareMultiplier * l.discovery * (0.8 + h * 0.2)));
-  L && (f.items.material_mutation_trace = 1);
-  const G = o.chance(Math.min(0.8, i.eventChance * s.rareMultiplier * (0.78 + h * 0.22)));
-  G && (f.credits = ve(f.credits, Math.floor(i.baseCreditsPerHour * 0.35 * s.yieldMultiplier)));
-  const H = Math.min(0.35, i.rareDiscoveryChance * s.rareMultiplier * l.discovery * h * (A ? 1 : 0.55));
-  if (o.chance(H)) {
-    const se = o.pick(i.rareSpeciesIds), _e = fe[se];
-    if (_e) {
-      const Ne = `${e.seed}:discovery:${t}`, Le = mc(Ne, i.id, s.id, e.strategy, h), I = uc(Ne, Le);
-      Le !== "NONE" && (L = !0, f.items.material_mutation_trace = Math.max(1, f.items.material_mutation_trace ?? 0)), f.rareDiscoveries.push({
+}), Sc = (e, t, n, i = !1) => {
+  const r = An[e.regionId], s = li[e.durationId];
+  if (!r || !s || e.durationMs !== s.durationMs) throw new Error("Expedition references invalid configuration");
+  const o = new Ee(`${e.seed}:cycle:${t}`), a = Ic(e.partySnapshot, r), c = Dr[e.strategy], l = a.combat * c.battle / Math.max(1, r.enemyPower), d = Math.max(0.3, Math.min(2.5, a.mining * c.mining / Math.max(1, r.miningDifficulty))), f = Math.max(0.3, Math.min(2.5, a.exploration / Math.max(100, r.miningDifficulty * 0.48))), y = Math.max(0.3, Math.min(2.5, a.research / Math.max(100, r.miningDifficulty * 0.42))), h = Math.max(0.08, Math.min(0.995, 0.42 + Math.log2(Math.max(0.25, l)) * 0.18 + a.elementMatches * 0.035 + c.winShift)), u = o.chance(Math.min(0.8, r.bossChance * s.rareMultiplier)), I = o.chance(Math.max(0.08, h - (u ? 0.16 : 0))), g = Math.max(0.22, Math.min(1.65, 0.72 + l * 0.2 + (I ? 0.24 : -0.12))) * (I ? 1 : c.failureRetention), b = 0.88 + o.next() * 0.24, R = s.yieldMultiplier * g * b * c.reward, m = ze(10 * s.yieldMultiplier * d * c.material, 1e6), p = Ke();
+  p.credits = ze(r.baseCreditsPerHour * R * (0.86 + f * 0.14)), p.upgradeDust = ze(r.baseDustPerHour * R * c.material * (0.78 + d * 0.22)), p.accountXp = ze(r.baseAccountXpPerHour * R * c.xp * (0.78 + y * 0.22)), p.stoneXpPerMember = ze(r.baseStoneXpPerHour * R * c.xp * (0.88 + (l + y) * 0.06)), p.affinityPerMember = ze(r.baseAffinityPerHour * s.yieldMultiplier * (e.strategy === "BALANCED" ? 1.15 : 1) * (0.82 + f * 0.1 + y * 0.08)), (i || o.chance(Math.min(0.72, (0.012 + r.requiredGuildLevel * 0.011) * s.rareMultiplier * (0.72 + y * 0.28)))) && (p.researchCores = 1);
+  const S = Math.min(0.96, r.materialChance * s.rareMultiplier * c.material * (0.82 + d * 0.18));
+  o.chance(S) && (p.items[o.pick(r.materialDropIds)] = Math.max(1, Math.floor(Math.sqrt(s.yieldMultiplier) * d)));
+  const M = o.chance(Math.min(0.55, r.equipmentDropChance * s.rareMultiplier * c.material * (0.84 + f * 0.16))), w = M ? r.requiredGuildLevel >= 6 ? "UR" : r.requiredGuildLevel >= 4 ? "SSR" : "SR" : null, T = M ? `${e.seed}:equipment:${t}` : null;
+  M && w && T && (p.items[nc({ itemId: r.equipmentDropId, rarity: w, seed: T })] = 1);
+  let x = o.chance(Math.min(0.5, r.mutationEncounterChance * s.rareMultiplier * c.discovery * (0.8 + f * 0.2)));
+  x && (p.items.material_mutation_trace = 1);
+  const $ = o.chance(Math.min(0.8, r.eventChance * s.rareMultiplier * (0.78 + f * 0.22)));
+  $ && (p.credits = fe(p.credits, Math.floor(r.baseCreditsPerHour * 0.35 * s.yieldMultiplier)));
+  const F = Math.min(0.35, r.rareDiscoveryChance * s.rareMultiplier * c.discovery * f * (I ? 1 : 0.55));
+  if (o.chance(F)) {
+    const Q = o.pick(r.rareSpeciesIds), qe = re[Q];
+    if (qe) {
+      const Oe = `${e.seed}:discovery:${t}`, Ue = rc(Oe, r.id, s.id, e.strategy, f), E = ic(Oe, Ue);
+      Ue !== "NONE" && (x = !0, p.items.material_mutation_trace = Math.max(1, p.items.material_mutation_trace ?? 0)), p.rareDiscoveries.push({
         discoveryId: `${e.expeditionId}:discovery:${t}`,
-        seed: I,
-        speciesId: se,
-        veinId: `${i.id}:rare`,
-        areaId: i.id,
-        hintedRarity: _e.rarity,
+        seed: E,
+        speciesId: Q,
+        veinId: `${r.id}:rare`,
+        areaId: r.id,
+        hintedRarity: qe.rarity,
         sourceEventId: `${e.expeditionId}:cycle:${t}`,
         discoveredAt: new Date(n).toISOString()
       });
     }
   }
-  const q = new Date(n).toISOString(), K = Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, n - Date.parse(e.startedAt))), ue = Math.round(E * 1e3) / 10, F = [{
-    reportId: `${e.expeditionId}:${t}:${m ? "boss" : "battle"}`,
+  const q = new Date(n).toISOString(), Y = Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, n - Date.parse(e.startedAt))), oe = Math.round(h * 1e3) / 10, O = [{
+    reportId: `${e.expeditionId}:${t}:${u ? "boss" : "battle"}`,
     expeditionId: e.expeditionId,
     cycle: t,
     completedAt: q,
-    offsetMs: K,
-    kind: m ? "BOSS" : "BATTLE",
-    title: m ? `Boss encounter: ${i.enemyTags.at(-1)}` : `Battle in ${i.name}`,
-    detail: A ? "The expedition party secured the route." : "The party withdrew safely and preserved part of the haul.",
-    successScore: ue,
-    battleWon: A,
+    offsetMs: Y,
+    kind: u ? "BOSS" : "BATTLE",
+    title: u ? `Boss encounter: ${r.enemyTags.at(-1)}` : `Battle in ${r.name}`,
+    detail: I ? "The expedition party secured the route." : "The party withdrew safely and preserved part of the haul.",
+    successScore: oe,
+    battleWon: I,
     miningYield: 0,
     equipmentDropId: null,
     equipmentDropSeed: null,
     bestDropRarity: null,
     rareDiscoveryCount: 0,
-    reward: vt(mt())
+    reward: ot(Ke())
   }, {
     reportId: `${e.expeditionId}:${t}:mining`,
     expeditionId: e.expeditionId,
     cycle: t,
     completedAt: q,
-    offsetMs: K,
+    offsetMs: Y,
     kind: "MINING",
-    title: `Surveyed ${i.name}`,
-    detail: `Recovered ${p} units from ${i.miningDifficulty} difficulty strata.`,
-    successScore: ue,
+    title: `Surveyed ${r.name}`,
+    detail: `Recovered ${m} units from ${r.miningDifficulty} difficulty strata.`,
+    successScore: oe,
     battleWon: null,
-    miningYield: p,
+    miningYield: m,
     equipmentDropId: null,
     equipmentDropSeed: null,
     bestDropRarity: null,
     rareDiscoveryCount: 0,
-    reward: vt(f)
+    reward: ot(p)
   }];
-  b && F.push({
+  M && O.push({
     reportId: `${e.expeditionId}:${t}:equipment`,
     expeditionId: e.expeditionId,
     cycle: t,
     completedAt: q,
-    offsetMs: K,
+    offsetMs: Y,
     kind: "EQUIPMENT",
     title: "Equipment cache recovered",
-    detail: i.equipmentDropId,
-    successScore: ue,
+    detail: r.equipmentDropId,
+    successScore: oe,
     battleWon: null,
     miningYield: 0,
-    equipmentDropId: i.equipmentDropId,
-    equipmentDropSeed: N,
-    bestDropRarity: M,
+    equipmentDropId: r.equipmentDropId,
+    equipmentDropSeed: T,
+    bestDropRarity: w,
     rareDiscoveryCount: 0,
-    reward: vt(mt())
+    reward: ot(Ke())
   });
-  const z = Object.keys(f.items).filter((se) => !Gi(se) && se !== i.equipmentDropId && se !== "material_mutation_trace");
-  return z.length > 0 && F.push({
+  const V = Object.keys(p.items).filter((Q) => !Cr(Q) && Q !== r.equipmentDropId && Q !== "material_mutation_trace");
+  return V.length > 0 && O.push({
     reportId: `${e.expeditionId}:${t}:material`,
     expeditionId: e.expeditionId,
     cycle: t,
     completedAt: q,
-    offsetMs: K,
+    offsetMs: Y,
     kind: "MATERIAL",
     title: "Material cache secured",
-    detail: z.join(", "),
-    successScore: ue,
+    detail: V.join(", "),
+    successScore: oe,
     battleWon: null,
     miningYield: 0,
     equipmentDropId: null,
     equipmentDropSeed: null,
     bestDropRarity: "RARE",
     rareDiscoveryCount: 0,
-    reward: vt(mt())
-  }), f.rareDiscoveries.length > 0 && F.push({
+    reward: ot(Ke())
+  }), p.rareDiscoveries.length > 0 && O.push({
     reportId: `${e.expeditionId}:${t}:discovery`,
     expeditionId: e.expeditionId,
     cycle: t,
     completedAt: q,
-    offsetMs: K,
+    offsetMs: Y,
     kind: "DISCOVERY",
     title: "Rare resonance detected",
-    detail: f.rareDiscoveries.map((se) => se.speciesId).join(", "),
-    successScore: ue,
+    detail: p.rareDiscoveries.map((Q) => Q.speciesId).join(", "),
+    successScore: oe,
     battleWon: null,
     miningYield: 0,
     equipmentDropId: null,
     equipmentDropSeed: null,
-    bestDropRarity: f.rareDiscoveries[0]?.hintedRarity ?? null,
-    rareDiscoveryCount: f.rareDiscoveries.length,
-    reward: vt(mt())
-  }), (G || L) && F.push({
+    bestDropRarity: p.rareDiscoveries[0]?.hintedRarity ?? null,
+    rareDiscoveryCount: p.rareDiscoveries.length,
+    reward: ot(Ke())
+  }), ($ || x) && O.push({
     reportId: `${e.expeditionId}:${t}:event`,
     expeditionId: e.expeditionId,
     cycle: t,
     completedAt: q,
-    offsetMs: K,
+    offsetMs: Y,
     kind: "EVENT",
-    title: L ? "Mutation trace recorded" : "Field event resolved",
-    detail: L ? "The team archived an unstable geological signature." : "A local anomaly yielded bonus resources.",
-    successScore: ue,
+    title: x ? "Mutation trace recorded" : "Field event resolved",
+    detail: x ? "The team archived an unstable geological signature." : "A local anomaly yielded bonus resources.",
+    successScore: oe,
     battleWon: null,
     miningYield: 0,
     equipmentDropId: null,
     equipmentDropSeed: null,
-    bestDropRarity: L ? "SSR" : null,
+    bestDropRarity: x ? "SSR" : null,
     rareDiscoveryCount: 0,
-    reward: vt(mt())
+    reward: ot(Ke())
   }), {
-    reward: f,
-    events: F,
-    summary: { battles: 1, wins: A ? 1 : 0, miningYield: p, rareDiscoveries: f.rareDiscoveries.length, equipmentDrops: b ? 1 : 0, bestDropRarity: Ki(M, f.rareDiscoveries[0]?.hintedRarity ?? null) }
+    reward: p,
+    events: O,
+    summary: { battles: 1, wins: I ? 1 : 0, miningYield: m, rareDiscoveries: p.rareDiscoveries.length, equipmentDrops: M ? 1 : 0, bestDropRarity: Br(w, p.rareDiscoveries[0]?.hintedRarity ?? null) }
   };
-}, Vr = (e, t) => {
-  e.reportEvents.push(...t), e.reportEvents.length > un && e.reportEvents.splice(0, e.reportEvents.length - un);
-}, Nc = (e, t) => {
+}, $i = (e, t) => {
+  e.reportEvents.push(...t), e.reportEvents.length > Yt && e.reportEvents.splice(0, e.reportEvents.length - Yt);
+}, yc = (e, t) => {
   const n = t.getTime();
   if (!Number.isFinite(n)) throw new Error("Expedition clock returned an invalid date");
-  let r = 0, i = !1;
+  let i = 0, r = !1;
   const s = [];
   for (const o of e.expeditions.order) {
     const a = e.expeditions.runs[o];
     if (!a || a.status !== "ACTIVE") continue;
-    const l = Date.parse(a.nextCompletionAt), d = Date.parse(a.lastSimulatedAt);
-    if (!Number.isFinite(l) || !Number.isFinite(d)) throw new Error("Expedition contains an invalid timestamp");
-    if (n < d || n < l) continue;
-    const u = Math.floor((n - l) / a.durationMs) + 1, h = Math.max(1, Math.floor(Mt / a.durationMs)), w = Math.min(cc, h), E = a.repeat ? Math.min(u, w) : 1, m = Math.min(E, Number.MAX_SAFE_INTEGER - a.completedCycles), A = a.repeat && u > m;
-    if (i ||= A, a.completedCycles >= Number.MAX_SAFE_INTEGER) {
-      i = !0, a.lastSimulatedAt = t.toISOString(), a.nextCompletionAt = new Date(n + a.durationMs).toISOString();
+    const c = Date.parse(a.nextCompletionAt), l = Date.parse(a.lastSimulatedAt);
+    if (!Number.isFinite(c) || !Number.isFinite(l)) throw new Error("Expedition contains an invalid timestamp");
+    if (n < l || n < c) continue;
+    const d = Math.floor((n - c) / a.durationMs) + 1, f = Math.max(1, Math.floor(at / a.durationMs)), y = Math.min(ec, f), h = a.repeat ? Math.min(d, y) : 1, u = Math.min(h, Number.MAX_SAFE_INTEGER - a.completedCycles), I = a.repeat && d > u;
+    if (r ||= I, a.completedCycles >= Number.MAX_SAFE_INTEGER) {
+      r = !0, a.lastSimulatedAt = t.toISOString(), a.nextCompletionAt = new Date(n + a.durationMs).toISOString();
       continue;
     }
-    let S = 0, k = !1;
-    e: for (let T = 0; T < m; T += 128) {
-      const p = Math.min(m, T + 128);
-      for (let f = T; f < p; f += 1) {
-        const y = a.completedCycles + 1, b = l + f * a.durationMs, M = Un[a.regionId]?.requiredGuildLevel === 1 && e.inventory.currencies.researchCores === 0 && e.research.slot === null && e.research.completedProjectIds.length === 0 && !Object.values(e.expeditions.runs).some((L) => L.expeditionStorage.researchCores > 0), N = Tc(a, y, b, M);
-        if (a.expeditionStorage.rareDiscoveries.length + N.reward.rareDiscoveries.length > Gn) {
-          k = !0, i = !0;
+    let g = 0, b = !1;
+    e: for (let R = 0; R < u; R += 128) {
+      const m = Math.min(u, R + 128);
+      for (let p = R; p < m; p += 1) {
+        const S = a.completedCycles + 1, M = c + p * a.durationMs, w = An[a.regionId]?.requiredGuildLevel === 1 && e.inventory.currencies.researchCores === 0 && e.research.slot === null && e.research.completedProjectIds.length === 0 && !Object.values(e.expeditions.runs).some((x) => x.expeditionStorage.researchCores > 0), T = Sc(a, S, M, w);
+        if (a.expeditionStorage.rareDiscoveries.length + T.reward.rareDiscoveries.length > yn) {
+          b = !0, r = !0;
           break e;
         }
-        fc(a.expeditionStorage, N.reward), Vr(a, N.events), s.push(...N.events), s.length > un && s.splice(0, s.length - un), a.completedCycles = ve(a.completedCycles, 1, Number.MAX_SAFE_INTEGER), a.reportSummary.battles = ve(a.reportSummary.battles, N.summary.battles, Number.MAX_SAFE_INTEGER), a.reportSummary.wins = ve(a.reportSummary.wins, N.summary.wins, Number.MAX_SAFE_INTEGER), a.reportSummary.miningYield = ve(a.reportSummary.miningYield, N.summary.miningYield, Number.MAX_SAFE_INTEGER), a.reportSummary.rareDiscoveries = ve(a.reportSummary.rareDiscoveries, N.summary.rareDiscoveries, Number.MAX_SAFE_INTEGER), a.reportSummary.equipmentDrops = ve(a.reportSummary.equipmentDrops, N.summary.equipmentDrops, Number.MAX_SAFE_INTEGER), a.reportSummary.bestDropRarity = Ki(a.reportSummary.bestDropRarity, N.summary.bestDropRarity), e.expeditions.totalCycles = ve(e.expeditions.totalCycles, 1, Number.MAX_SAFE_INTEGER), r += 1, S += 1;
+        oc(a.expeditionStorage, T.reward), $i(a, T.events), s.push(...T.events), s.length > Yt && s.splice(0, s.length - Yt), a.completedCycles = fe(a.completedCycles, 1, Number.MAX_SAFE_INTEGER), a.reportSummary.battles = fe(a.reportSummary.battles, T.summary.battles, Number.MAX_SAFE_INTEGER), a.reportSummary.wins = fe(a.reportSummary.wins, T.summary.wins, Number.MAX_SAFE_INTEGER), a.reportSummary.miningYield = fe(a.reportSummary.miningYield, T.summary.miningYield, Number.MAX_SAFE_INTEGER), a.reportSummary.rareDiscoveries = fe(a.reportSummary.rareDiscoveries, T.summary.rareDiscoveries, Number.MAX_SAFE_INTEGER), a.reportSummary.equipmentDrops = fe(a.reportSummary.equipmentDrops, T.summary.equipmentDrops, Number.MAX_SAFE_INTEGER), a.reportSummary.bestDropRarity = Br(a.reportSummary.bestDropRarity, T.summary.bestDropRarity), e.expeditions.totalCycles = fe(e.expeditions.totalCycles, 1, Number.MAX_SAFE_INTEGER), i += 1, g += 1;
       }
     }
-    if (k ? (S > 0 && (a.lastSimulatedAt = new Date(l + (S - 1) * a.durationMs).toISOString()), a.nextCompletionAt = new Date(l + S * a.durationMs).toISOString()) : a.lastSimulatedAt = t.toISOString(), a.repeat && !k) a.nextCompletionAt = new Date(A ? n + a.durationMs : l + m * a.durationMs).toISOString();
+    if (b ? (g > 0 && (a.lastSimulatedAt = new Date(c + (g - 1) * a.durationMs).toISOString()), a.nextCompletionAt = new Date(c + g * a.durationMs).toISOString()) : a.lastSimulatedAt = t.toISOString(), a.repeat && !b) a.nextCompletionAt = new Date(I ? n + a.durationMs : c + u * a.durationMs).toISOString();
     else {
-      if (k) continue;
-      a.status = "READY", Vr(a, [{
+      if (b) continue;
+      a.status = "READY", $i(a, [{
         reportId: `${a.expeditionId}:return`,
         expeditionId: a.expeditionId,
         cycle: a.completedCycles,
-        completedAt: new Date(l).toISOString(),
-        offsetMs: Math.min(Number.MAX_SAFE_INTEGER, l - Date.parse(a.startedAt)),
+        completedAt: new Date(c).toISOString(),
+        offsetMs: Math.min(Number.MAX_SAFE_INTEGER, c - Date.parse(a.startedAt)),
         kind: "RETURN",
         title: "Expedition complete",
         detail: "The party returned with rewards ready to claim.",
@@ -5000,92 +4148,92 @@ const Ur = (e) => {
         equipmentDropSeed: null,
         bestDropRarity: a.reportSummary.bestDropRarity,
         rareDiscoveryCount: a.reportSummary.rareDiscoveries,
-        reward: vt(a.expeditionStorage)
+        reward: ot(a.expeditionStorage)
       }]);
     }
   }
-  return { cyclesProcessed: r, reports: s, capped: i };
-}, ft = (e, t) => ve(e, t, Number.MAX_SAFE_INTEGER), zi = (e, t, n) => {
-  e.stones[t.instanceId] = t, hn(e, t), mn.indexOf(t.rarity) >= mn.indexOf("SSR") && (e.statistics.rareDiscoveryCount = ft(e.statistics.rareDiscoveryCount, 1)), t.mutation !== "NONE" && (e.statistics.mutationCount = ft(e.statistics.mutationCount, 1)), On(t.individualValues) && t.mutation !== "PERFECT" && (e.statistics.mutationCount = ft(e.statistics.mutationCount, 1)), Xt(e, n);
-}, _c = (e, t, n = de) => {
-  const r = e.expeditions.runs[t];
-  if (!r) throw new Error("Expedition not found");
-  const i = r.completedCycles - r.claimedCycles;
-  if (i <= 0) throw new Error("Expedition has no unclaimed completion");
-  const s = hc(r.expeditionStorage), o = { accountId: e.account.accountId, username: e.account.username }, a = Math.max(0, e.inventory.capacity - Object.keys(e.stones).length), l = s.rareDiscoveries.slice(0, a), d = s.rareDiscoveries.slice(l.length), u = Math.max(0, Bi - e.expeditions.discoveryStorage.length);
-  if (d.length > u) throw new Error("Temporary Discovery Storage is full; free a Stone/storage slot before claiming");
-  const h = d.map((m) => ({ ...m })), w = l.map((m) => {
-    const A = fe[m.speciesId];
-    if (!A) throw new Error(`Unknown expedition species: ${m.speciesId}`);
-    const S = { now: () => new Date(m.discoveredAt) }, k = Yi(m.seed);
-    return Ct({
-      species: A,
+  return { cyclesProcessed: i, reports: s, capped: r };
+}, Je = (e, t) => fe(e, t, Number.MAX_SAFE_INTEGER), Gr = (e, t, n) => {
+  e.stones[t.instanceId] = t, Wt(e, t), jt.indexOf(t.rarity) >= jt.indexOf("SSR") && (e.statistics.rareDiscoveryCount = Je(e.statistics.rareDiscoveryCount, 1)), t.mutation !== "NONE" && (e.statistics.mutationCount = Je(e.statistics.mutationCount, 1)), mn(t.individualValues) && t.mutation !== "PERFECT" && (e.statistics.mutationCount = Je(e.statistics.mutationCount, 1)), _t(e, n);
+}, Ac = (e, t, n = Z) => {
+  const i = e.expeditions.runs[t];
+  if (!i) throw new Error("Expedition not found");
+  const r = i.completedCycles - i.claimedCycles;
+  if (r <= 0) throw new Error("Expedition has no unclaimed completion");
+  const s = ac(i.expeditionStorage), o = { accountId: e.account.accountId, username: e.account.username }, a = Math.max(0, e.inventory.capacity - Object.keys(e.stones).length), c = s.rareDiscoveries.slice(0, a), l = s.rareDiscoveries.slice(c.length), d = Math.max(0, kr - e.expeditions.discoveryStorage.length);
+  if (l.length > d) throw new Error("Temporary Discovery Storage is full; free a Stone/storage slot before claiming");
+  const f = l.map((u) => ({ ...u })), y = c.map((u) => {
+    const I = re[u.speciesId];
+    if (!I) throw new Error(`Unknown expedition species: ${u.speciesId}`);
+    const g = { now: () => new Date(u.discoveredAt) }, b = Or(u.seed);
+    return ft({
+      species: I,
       origin: "EXPEDITION",
       owner: o,
-      rng: new Re(m.seed),
-      clock: S,
+      rng: new Ee(u.seed),
+      clock: g,
       appraised: !0,
-      ...k === null ? {} : { mutation: k }
+      ...b === null ? {} : { mutation: b }
     });
   });
-  if (new Set(w.map((m) => m.instanceId)).size !== w.length || w.some((m) => e.stones[m.instanceId]))
+  if (new Set(y.map((u) => u.instanceId)).size !== y.length || y.some((u) => e.stones[u.instanceId]))
     throw new Error("Expedition discovery ID collision");
-  e.inventory.currencies.credits = ft(e.inventory.currencies.credits, s.credits), e.inventory.currencies.upgradeDust = ft(e.inventory.currencies.upgradeDust, s.upgradeDust), e.inventory.currencies.researchCores = ft(e.inventory.currencies.researchCores, s.researchCores);
-  for (const [m, A] of Object.entries(s.items)) e.inventory.items[m] = ft(e.inventory.items[m] ?? 0, A);
-  Vt(e, Math.min(s.accountXp, Number.MAX_SAFE_INTEGER - e.accountProgress.xp));
-  for (const m of r.partySnapshot) {
-    const A = e.stones[m.stoneId];
-    A && (wr(A, e.mastery, s.stoneXpPerMember), xn(A, s.affinityPerMember));
+  e.inventory.currencies.credits = Je(e.inventory.currencies.credits, s.credits), e.inventory.currencies.upgradeDust = Je(e.inventory.currencies.upgradeDust, s.upgradeDust), e.inventory.currencies.researchCores = Je(e.inventory.currencies.researchCores, s.researchCores);
+  for (const [u, I] of Object.entries(s.items)) e.inventory.items[u] = Je(e.inventory.items[u] ?? 0, I);
+  kt(e, Math.min(s.accountXp, Number.MAX_SAFE_INTEGER - e.accountProgress.xp));
+  for (const u of i.partySnapshot) {
+    const I = e.stones[u.stoneId];
+    I && (ai(I, e.mastery, s.stoneXpPerMember), un(I, s.affinityPerMember));
   }
-  for (const m of w)
-    zi(e, m, n);
-  e.expeditions.discoveryStorage.push(...h), e.profile.totalAffinity = Object.values(e.stones).reduce((m, A) => ft(m, A.affinity.points), 0);
-  const E = n.now();
-  return r.claimedCycles = r.completedCycles, r.claimCount = ve(r.claimCount, 1, Number.MAX_SAFE_INTEGER), r.lastClaimedAt = E.toISOString(), r.expeditionStorage = mt(), r.status === "READY" && (r.status = "CLAIMED"), e.expeditions.totalClaims = ve(e.expeditions.totalClaims, 1, Number.MAX_SAFE_INTEGER), { expeditionId: t, cyclesClaimed: i, reward: s, discoveredStones: w, storedDiscoveries: h, reports: r.reportEvents.map((m) => ({ ...m, reward: { ...m.reward, items: { ...m.reward.items } } })) };
-}, kc = (e, t, n = de) => {
+  for (const u of y)
+    Gr(e, u, n);
+  e.expeditions.discoveryStorage.push(...f), e.profile.totalAffinity = Object.values(e.stones).reduce((u, I) => Je(u, I.affinity.points), 0);
+  const h = n.now();
+  return i.claimedCycles = i.completedCycles, i.claimCount = fe(i.claimCount, 1, Number.MAX_SAFE_INTEGER), i.lastClaimedAt = h.toISOString(), i.expeditionStorage = Ke(), i.status === "READY" && (i.status = "CLAIMED"), e.expeditions.totalClaims = fe(e.expeditions.totalClaims, 1, Number.MAX_SAFE_INTEGER), { expeditionId: t, cyclesClaimed: r, reward: s, discoveredStones: y, storedDiscoveries: f, reports: i.reportEvents.map((u) => ({ ...u, reward: { ...u.reward, items: { ...u.reward.items } } })) };
+}, wc = (e, t, n = Z) => {
   if (Object.keys(e.stones).length >= e.inventory.capacity) throw new Error("Stone capacity is full");
-  const r = e.expeditions.discoveryStorage.findIndex((u) => u.discoveryId === t);
-  if (r < 0) throw new Error("Stored expedition discovery not found");
-  const i = e.expeditions.discoveryStorage[r], s = fe[i.speciesId];
-  if (!s) throw new Error(`Unknown expedition species: ${i.speciesId}`);
-  const o = { accountId: e.account.accountId, username: e.account.username }, a = { now: () => new Date(i.discoveredAt) }, l = Yi(i.seed), d = Ct({
+  const i = e.expeditions.discoveryStorage.findIndex((d) => d.discoveryId === t);
+  if (i < 0) throw new Error("Stored expedition discovery not found");
+  const r = e.expeditions.discoveryStorage[i], s = re[r.speciesId];
+  if (!s) throw new Error(`Unknown expedition species: ${r.speciesId}`);
+  const o = { accountId: e.account.accountId, username: e.account.username }, a = { now: () => new Date(r.discoveredAt) }, c = Or(r.seed), l = ft({
     species: s,
     origin: "EXPEDITION",
     owner: o,
-    rng: new Re(i.seed),
+    rng: new Ee(r.seed),
     clock: a,
     appraised: !0,
-    ...l === null ? {} : { mutation: l }
+    ...c === null ? {} : { mutation: c }
   });
-  if (e.stones[d.instanceId]) throw new Error("Expedition discovery ID collision");
-  return zi(e, d, n), e.expeditions.discoveryStorage.splice(r, 1), d;
-}, Ft = (e, t) => {
+  if (e.stones[l.instanceId]) throw new Error("Expedition discovery ID collision");
+  return Gr(e, l, n), e.expeditions.discoveryStorage.splice(i, 1), l;
+}, At = (e, t) => {
   if (!Number.isSafeInteger(e) || e < 0) throw new Error(`${t} must be a non-negative safe integer`);
-}, Qi = (e, t) => {
+}, qr = (e, t) => {
   if (!Number.isSafeInteger(e) || e <= 0) throw new Error(`${t} must be a positive safe integer`);
-}, Xr = (e) => {
+}, Pi = (e) => {
   if (typeof e.id != "string" || e.id.length === 0) throw new Error("job.id must be a non-empty string");
-  Ft(e.dueAtMs, "job.dueAtMs");
+  At(e.dueAtMs, "job.dueAtMs");
   const t = e.sequence ?? 0;
-  if (Ft(t, "job.sequence"), e.repeatEveryMs !== void 0 && Qi(e.repeatEveryMs, "job.repeatEveryMs"), e.endAtMs !== void 0) {
-    if (Ft(e.endAtMs, "job.endAtMs"), e.repeatEveryMs === void 0) throw new Error("job.endAtMs requires repeatEveryMs");
+  if (At(t, "job.sequence"), e.repeatEveryMs !== void 0 && qr(e.repeatEveryMs, "job.repeatEveryMs"), e.endAtMs !== void 0) {
+    if (At(e.endAtMs, "job.endAtMs"), e.repeatEveryMs === void 0) throw new Error("job.endAtMs requires repeatEveryMs");
     if (e.endAtMs < e.dueAtMs) throw new Error("job.endAtMs cannot precede job.dueAtMs");
   }
   return { ...e, sequence: t };
-}, Vn = (e) => [...e].sort((t, n) => t.dueAtMs - n.dueAtMs || t.id.localeCompare(n.id));
-class Ji {
+}, Cn = (e) => [...e].sort((t, n) => t.dueAtMs - n.dueAtMs || t.id.localeCompare(n.id));
+class Ur {
   jobs = /* @__PURE__ */ new Map();
   constructor(t) {
     if (t && t.version !== 1) throw new Error("Unsupported scheduler snapshot");
     for (const n of t?.jobs ?? []) this.schedule(n);
   }
   schedule(t) {
-    const n = Xr(t);
+    const n = Pi(t);
     if (this.jobs.has(n.id)) throw new Error(`Duplicate background job: ${n.id}`);
     this.jobs.set(n.id, n);
   }
   upsert(t) {
-    const n = Xr(t);
+    const n = Pi(t);
     this.jobs.set(n.id, n);
   }
   cancel(t) {
@@ -5098,78 +4246,78 @@ class Ji {
     return this.jobs.size;
   }
   nextDueAtMs() {
-    return Vn(this.jobs.values())[0]?.dueAtMs ?? null;
+    return Cn(this.jobs.values())[0]?.dueAtMs ?? null;
   }
   snapshot() {
-    return { version: 1, jobs: Vn(this.jobs.values()).map((t) => ({ ...t })) };
+    return { version: 1, jobs: Cn(this.jobs.values()).map((t) => ({ ...t })) };
   }
-  drainDue(t, n, r = {}) {
-    Ft(t, "nowMs");
-    const i = r.maxCallbacks ?? 100, s = r.maxOccurrencesPerCallback ?? 96, o = r.maxCatchUpMs ?? oi.THIRTY_DAYS;
-    Ft(i, "maxCallbacks"), Qi(s, "maxOccurrencesPerCallback"), Ft(o, "maxCatchUpMs");
-    let a = 0, l = 0, d = 0;
-    for (; a < i; ) {
-      const h = Vn(this.jobs.values()).find((M) => M.dueAtMs <= t);
-      if (!h) break;
-      const w = h.repeatEveryMs;
-      if (w === void 0) {
-        const M = {
-          jobId: h.id,
-          payload: h.payload,
-          firstDueAtMs: h.dueAtMs,
-          lastDueAtMs: h.dueAtMs,
+  drainDue(t, n, i = {}) {
+    At(t, "nowMs");
+    const r = i.maxCallbacks ?? 100, s = i.maxOccurrencesPerCallback ?? 96, o = i.maxCatchUpMs ?? zi.THIRTY_DAYS;
+    At(r, "maxCallbacks"), qr(s, "maxOccurrencesPerCallback"), At(o, "maxCatchUpMs");
+    let a = 0, c = 0, l = 0;
+    for (; a < r; ) {
+      const f = Cn(this.jobs.values()).find((w) => w.dueAtMs <= t);
+      if (!f) break;
+      const y = f.repeatEveryMs;
+      if (y === void 0) {
+        const w = {
+          jobId: f.id,
+          payload: f.payload,
+          firstDueAtMs: f.dueAtMs,
+          lastDueAtMs: f.dueAtMs,
           occurrences: 1,
-          firstSequence: h.sequence ?? 0,
-          lastSequence: h.sequence ?? 0,
-          delayedByMs: t - h.dueAtMs
+          firstSequence: f.sequence ?? 0,
+          lastSequence: f.sequence ?? 0,
+          delayedByMs: t - f.dueAtMs
         };
-        n(M), this.jobs.delete(h.id), a += 1, l += 1;
+        n(w), this.jobs.delete(f.id), a += 1, c += 1;
         continue;
       }
-      let E = h.dueAtMs, m = h.sequence ?? 0;
-      const A = Math.max(0, t - o);
-      if (E < A) {
-        const M = Math.ceil((A - E) / w);
-        E += M * w, m += M, d += M;
+      let h = f.dueAtMs, u = f.sequence ?? 0;
+      const I = Math.max(0, t - o);
+      if (h < I) {
+        const w = Math.ceil((I - h) / y);
+        h += w * y, u += w, l += w;
       }
-      if (h.endAtMs !== void 0 && E > h.endAtMs) {
-        this.jobs.delete(h.id);
+      if (f.endAtMs !== void 0 && h > f.endAtMs) {
+        this.jobs.delete(f.id);
         continue;
       }
-      const S = Math.min(t, h.endAtMs ?? t);
-      if (E > S) {
-        this.jobs.set(h.id, { ...h, dueAtMs: E, sequence: m });
+      const g = Math.min(t, f.endAtMs ?? t);
+      if (h > g) {
+        this.jobs.set(f.id, { ...f, dueAtMs: h, sequence: u });
         continue;
       }
-      const k = Math.floor((S - E) / w) + 1, T = Math.min(k, s), p = E + (T - 1) * w, f = {
-        jobId: h.id,
-        payload: h.payload,
-        firstDueAtMs: E,
-        lastDueAtMs: p,
-        occurrences: T,
-        firstSequence: m,
-        lastSequence: m + T - 1,
-        delayedByMs: t - p
+      const b = Math.floor((g - h) / y) + 1, R = Math.min(b, s), m = h + (R - 1) * y, p = {
+        jobId: f.id,
+        payload: f.payload,
+        firstDueAtMs: h,
+        lastDueAtMs: m,
+        occurrences: R,
+        firstSequence: u,
+        lastSequence: u + R - 1,
+        delayedByMs: t - m
       };
-      n(f), a += 1, l += T;
-      const y = p + w, b = m + T;
-      h.endAtMs !== void 0 && y > h.endAtMs ? this.jobs.delete(h.id) : this.jobs.set(h.id, { ...h, dueAtMs: y, sequence: b });
+      n(p), a += 1, c += R;
+      const S = m + y, M = u + R;
+      f.endAtMs !== void 0 && S > f.endAtMs ? this.jobs.delete(f.id) : this.jobs.set(f.id, { ...f, dueAtMs: S, sequence: M });
     }
-    const u = this.nextDueAtMs();
+    const d = this.nextDueAtMs();
     return {
       callbacks: a,
-      deliveredOccurrences: l,
-      skippedOccurrences: d,
-      hasMoreDue: u !== null && u <= t,
-      nextDueAtMs: u
+      deliveredOccurrences: c,
+      skippedOccurrences: l,
+      hasMoreDue: d !== null && d <= t,
+      nextDueAtMs: d
     };
   }
 }
-const sn = 3600 * 1e3, br = Mt, Cc = [
+const Ft = 3600 * 1e3, ui = at, vc = [
   {
     id: "GEOLOGY_SURVEY",
     name: "Geology Survey",
-    durationMs: sn,
+    durationMs: Ft,
     requiredLabLevel: 1,
     prerequisiteProjectId: null,
     coreCost: 1,
@@ -5180,7 +4328,7 @@ const sn = 3600 * 1e3, br = Mt, Cc = [
   {
     id: "GENETIC_ARCHIVE",
     name: "Genetic Archive",
-    durationMs: 12 * sn,
+    durationMs: 12 * Ft,
     requiredLabLevel: 3,
     prerequisiteProjectId: "GEOLOGY_SURVEY",
     coreCost: 4,
@@ -5191,7 +4339,7 @@ const sn = 3600 * 1e3, br = Mt, Cc = [
   {
     id: "EXPEDITION_LOGISTICS",
     name: "Expedition Logistics",
-    durationMs: 24 * sn,
+    durationMs: 24 * Ft,
     requiredLabLevel: 5,
     prerequisiteProjectId: "GENETIC_ARCHIVE",
     coreCost: 8,
@@ -5199,653 +4347,653 @@ const sn = 3600 * 1e3, br = Mt, Cc = [
     rewardItems: { research_logistics_plan: 1 },
     facilityLevelTargets: { fusionLab: 6, researchLab: 7, expeditionGuild: 7 }
   }
-], ir = Object.fromEntries(Cc.map((e) => [e.id, e])), xt = (e) => {
+], Hn = Object.fromEntries(vc.map((e) => [e.id, e])), ht = (e) => {
   const t = e.getTime();
   if (!Number.isSafeInteger(t) || t < 0) throw new Error("Background activity received an invalid timestamp");
   return t;
-}, _t = (e, t) => Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(e)) + Math.max(0, Math.floor(t))), Zi = (e, t) => {
-  const n = Date.parse(e), r = xt(t);
-  return !Number.isFinite(n) || r <= n ? 0 : Math.min(br, r - n);
-}, xc = (e, t) => Object.values(e.expeditions.runs).some((n) => n.status !== "CLAIMED" && n.partySnapshot.some((r) => r.stoneId === t)), Oc = (e, t) => (e.endlessMine.status === "RUNNING" || e.endlessMine.status === "PAUSED") && e.endlessMine.partyStoneIds.includes(t), Lc = (e, t) => !!(e.activeBattle && !e.activeBattle.winner && e.activeBattle.units.some((n) => n.team === "PLAYER" && n.stoneId === t)), es = (e, t, n) => {
+}, mt = (e, t) => Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(e)) + Math.max(0, Math.floor(t))), Hr = (e, t) => {
+  const n = Date.parse(e), i = ht(t);
+  return !Number.isFinite(n) || i <= n ? 0 : Math.min(ui, i - n);
+}, Mc = (e, t) => Object.values(e.expeditions.runs).some((n) => n.status !== "CLAIMED" && n.partySnapshot.some((i) => i.stoneId === t)), Rc = (e, t) => (e.endlessMine.status === "RUNNING" || e.endlessMine.status === "PAUSED") && e.endlessMine.partyStoneIds.includes(t), Tc = (e, t) => !!(e.activeBattle && !e.activeBattle.winner && e.activeBattle.units.some((n) => n.team === "PLAYER" && n.stoneId === t)), Yr = (e, t, n) => {
   if (!e.stones[t]) throw new Error(`Stone not found: ${t}`);
-  if (xc(e, t)) throw new Error("A stone on expedition cannot use a background facility");
-  if (Oc(e, t)) throw new Error("A stone in Endless Mine cannot use a background facility");
-  if (Lc(e, t)) throw new Error("A stone in an active battle cannot use a background facility");
+  if (Mc(e, t)) throw new Error("A stone on expedition cannot use a background facility");
+  if (Rc(e, t)) throw new Error("A stone in Endless Mine cannot use a background facility");
+  if (Tc(e, t)) throw new Error("A stone in an active battle cannot use a background facility");
   if (n !== "training" && e.training.assignment?.stoneId === t) throw new Error("Stone is already training");
   if (n !== "garden" && e.affinityGarden.assignment?.stoneId === t) throw new Error("Stone is already in the affinity garden");
-}, _n = (e) => {
+}, cn = (e) => {
   const t = e.training.assignment;
-  return t ? Math.min(Number.MAX_SAFE_INTEGER, Math.floor(t.bankedMs * t.xpPerHour / sn)) : 0;
-}, kn = (e) => {
+  return t ? Math.min(Number.MAX_SAFE_INTEGER, Math.floor(t.bankedMs * t.xpPerHour / Ft)) : 0;
+}, ln = (e) => {
   const t = e.affinityGarden.assignment;
-  return t ? Math.min(Number.MAX_SAFE_INTEGER, Math.floor(t.bankedMs * t.affinityPerHour / sn)) : 0;
-}, Dc = (e, t, n) => {
+  return t ? Math.min(Number.MAX_SAFE_INTEGER, Math.floor(t.bankedMs * t.affinityPerHour / Ft)) : 0;
+}, bc = (e, t, n) => {
   if (e.training.assignment) throw new Error("Training Chamber is occupied");
-  es(e, t, "training");
-  const r = new Date(xt(n)).toISOString();
+  Yr(e, t, "training");
+  const i = new Date(ht(n)).toISOString();
   e.training.assignment = {
     stoneId: t,
-    assignedAt: r,
-    lastProcessedAt: r,
+    assignedAt: i,
+    lastProcessedAt: i,
     xpPerHour: Math.min(1e4, 80 + e.facilities.researchLab * 40),
     bankedMs: 0,
     totalClaimedXp: 0
   };
-}, ts = (e, t) => {
+}, jr = (e, t) => {
   const n = e.training.assignment;
-  n && (n.bankedMs = Math.min(br, _t(n.bankedMs, Zi(n.lastProcessedAt, t))), xt(t) >= Date.parse(n.lastProcessedAt) && (n.lastProcessedAt = t.toISOString()));
-}, $c = (e, t) => {
-  ts(e, t);
+  n && (n.bankedMs = Math.min(ui, mt(n.bankedMs, Hr(n.lastProcessedAt, t))), ht(t) >= Date.parse(n.lastProcessedAt) && (n.lastProcessedAt = t.toISOString()));
+}, Nc = (e, t) => {
+  jr(e, t);
   const n = e.training.assignment;
   if (!n) throw new Error("Training Chamber is empty");
-  const r = _n(e);
-  if (r <= 0) throw new Error("No Training Chamber XP is ready");
-  const i = e.stones[n.stoneId];
-  if (!i) throw new Error("Training stone is missing");
-  return wr(i, e.mastery, r), n.bankedMs = 0, n.totalClaimedXp = _t(n.totalClaimedXp, r), r;
-}, Pc = (e) => {
+  const i = cn(e);
+  if (i <= 0) throw new Error("No Training Chamber XP is ready");
+  const r = e.stones[n.stoneId];
+  if (!r) throw new Error("Training stone is missing");
+  return ai(r, e.mastery, i), n.bankedMs = 0, n.totalClaimedXp = mt(n.totalClaimedXp, i), i;
+}, kc = (e) => {
   if (e.training.assignment) {
-    if (_n(e) > 0) throw new Error("Claim Training Chamber XP before removing the stone");
+    if (cn(e) > 0) throw new Error("Claim Training Chamber XP before removing the stone");
     e.training.assignment = null;
   }
-}, Fc = (e, t, n) => {
+}, _c = (e, t, n) => {
   if (e.affinityGarden.assignment) throw new Error("Affinity Garden is occupied");
-  es(e, t, "garden");
-  const r = new Date(xt(n)).toISOString();
+  Yr(e, t, "garden");
+  const i = new Date(ht(n)).toISOString();
   e.affinityGarden.assignment = {
     stoneId: t,
-    assignedAt: r,
-    lastProcessedAt: r,
+    assignedAt: i,
+    lastProcessedAt: i,
     affinityPerHour: Math.min(100, 1 + Math.floor(e.accountProgress.level / 10) + Math.floor(e.facilities.researchLab / 3)),
     bankedMs: 0,
     totalClaimedAffinity: 0
   };
-}, ns = (e, t) => {
+}, Vr = (e, t) => {
   const n = e.affinityGarden.assignment;
-  n && (n.bankedMs = Math.min(br, _t(n.bankedMs, Zi(n.lastProcessedAt, t))), xt(t) >= Date.parse(n.lastProcessedAt) && (n.lastProcessedAt = t.toISOString()));
-}, Bc = (e, t) => {
-  ns(e, t);
+  n && (n.bankedMs = Math.min(ui, mt(n.bankedMs, Hr(n.lastProcessedAt, t))), ht(t) >= Date.parse(n.lastProcessedAt) && (n.lastProcessedAt = t.toISOString()));
+}, Cc = (e, t) => {
+  Vr(e, t);
   const n = e.affinityGarden.assignment;
   if (!n) throw new Error("Affinity Garden is empty");
-  const r = kn(e);
-  if (r <= 0) throw new Error("No Affinity Garden reward is ready");
-  const i = e.stones[n.stoneId];
-  if (!i) throw new Error("Affinity Garden stone is missing");
-  return xn(i, r), n.bankedMs = 0, n.totalClaimedAffinity = _t(n.totalClaimedAffinity, r), e.profile.totalAffinity = Object.values(e.stones).reduce((s, o) => _t(s, o.affinity.points), 0), r;
-}, qc = (e) => {
+  const i = ln(e);
+  if (i <= 0) throw new Error("No Affinity Garden reward is ready");
+  const r = e.stones[n.stoneId];
+  if (!r) throw new Error("Affinity Garden stone is missing");
+  return un(r, i), n.bankedMs = 0, n.totalClaimedAffinity = mt(n.totalClaimedAffinity, i), e.profile.totalAffinity = Object.values(e.stones).reduce((s, o) => mt(s, o.affinity.points), 0), i;
+}, xc = (e) => {
   if (e.affinityGarden.assignment) {
-    if (kn(e) > 0) throw new Error("Claim Affinity Garden rewards before removing the stone");
+    if (ln(e) > 0) throw new Error("Claim Affinity Garden rewards before removing the stone");
     e.affinityGarden.assignment = null;
   }
-}, Gc = (e, t, n, r = de) => {
-  const i = ir[t];
-  if (!i) throw new Error(`Unknown research project: ${t}`);
+}, Lc = (e, t, n, i = Z) => {
+  const r = Hn[t];
+  if (!r) throw new Error(`Unknown research project: ${t}`);
   if (e.research.slot && e.research.slot.status !== "CLAIMED") throw new Error("Research slot is occupied");
   if (e.research.completedProjectIds.includes(t)) throw new Error("Research project is already complete");
-  if (i.prerequisiteProjectId && !e.research.completedProjectIds.includes(i.prerequisiteProjectId))
-    throw new Error(`${ir[i.prerequisiteProjectId].name} must be completed first`);
-  if (e.facilities.researchLab < i.requiredLabLevel) throw new Error(`Research Lab level ${i.requiredLabLevel} required`);
-  jt(e, { currencies: { researchCores: i.coreCost } });
-  const s = r.now(), o = xt(s), a = tt("research", n, o), l = {
+  if (r.prerequisiteProjectId && !e.research.completedProjectIds.includes(r.prerequisiteProjectId))
+    throw new Error(`${Hn[r.prerequisiteProjectId].name} must be completed first`);
+  if (e.facilities.researchLab < r.requiredLabLevel) throw new Error(`Research Lab level ${r.requiredLabLevel} required`);
+  bt(e, { currencies: { researchCores: r.coreCost } });
+  const s = i.now(), o = ht(s), a = Ge("research", n, o), c = {
     researchId: a,
     projectId: t,
     seed: `${a}:${Math.floor(n.next() * 4294967296).toString(16)}`,
     startedAt: s.toISOString(),
-    completesAt: new Date(o + i.durationMs).toISOString(),
+    completesAt: new Date(o + r.durationMs).toISOString(),
     status: "ACTIVE",
     claimedAt: null
   };
-  return e.research.slot = l, l;
-}, rs = (e, t) => {
+  return e.research.slot = c, c;
+}, Xr = (e, t) => {
   const n = e.research.slot;
-  return !n || n.status !== "ACTIVE" || xt(t) < Date.parse(n.completesAt) ? !1 : (n.status = "READY", !0);
-}, Uc = (e, t, n) => {
+  return !n || n.status !== "ACTIVE" || ht(t) < Date.parse(n.completesAt) ? !1 : (n.status = "READY", !0);
+}, Dc = (e, t, n) => {
   if (e.research.claimLedger[t]) throw new Error("Research reward was already claimed");
-  rs(e, n);
-  const r = e.research.slot;
-  if (!r || r.researchId !== t) throw new Error("Research slot not found");
-  if (r.status !== "READY") throw new Error("Research is not complete");
-  const i = ir[r.projectId];
-  e.accountProgress.researchPoints = _t(e.accountProgress.researchPoints, i.researchPoints);
-  for (const [s, o] of Object.entries(i.rewardItems)) e.inventory.items[s] = _t(e.inventory.items[s] ?? 0, o);
+  Xr(e, n);
+  const i = e.research.slot;
+  if (!i || i.researchId !== t) throw new Error("Research slot not found");
+  if (i.status !== "READY") throw new Error("Research is not complete");
+  const r = Hn[i.projectId];
+  e.accountProgress.researchPoints = mt(e.accountProgress.researchPoints, r.researchPoints);
+  for (const [s, o] of Object.entries(r.rewardItems)) e.inventory.items[s] = mt(e.inventory.items[s] ?? 0, o);
   for (const s of ["fusionLab", "researchLab", "expeditionGuild"])
-    e.facilities[s] = Math.max(e.facilities[s], i.facilityLevelTargets[s]);
-  return e.research.completedProjectIds.includes(i.id) || e.research.completedProjectIds.push(i.id), e.research.claimLedger[t] = !0, r.status = "CLAIMED", r.claimedAt = n.toISOString(), e.research.slot = null, { projectId: i.id, researchPoints: i.researchPoints, items: { ...i.rewardItems } };
-}, Wr = 900 * 1e3, Hc = 64, jc = 16, Dt = (e, t) => {
+    e.facilities[s] = Math.max(e.facilities[s], r.facilityLevelTargets[s]);
+  return e.research.completedProjectIds.includes(r.id) || e.research.completedProjectIds.push(r.id), e.research.claimLedger[t] = !0, i.status = "CLAIMED", i.claimedAt = n.toISOString(), e.research.slot = null, { projectId: r.id, researchPoints: r.researchPoints, items: { ...r.rewardItems } };
+}, Fi = 900 * 1e3, Oc = 64, $c = 16, It = (e, t) => {
   const n = Date.parse(e);
   if (!Number.isSafeInteger(n) || n < 0) throw new Error(`${t} is not a valid timestamp`);
   return n;
-}, Yc = (e) => {
+}, Pc = (e) => {
   const t = e.getTime();
   if (!Number.isSafeInteger(t) || t < 0) throw new Error("Idle anchor is invalid");
   return {
-    timeCheckpoint: ai(t),
+    timeCheckpoint: Ji(t),
     scheduler: { version: 1, jobs: [] },
     lastProcessedAt: e.toISOString(),
     lastActiveAt: e.toISOString(),
     lastWelcomeBack: null
   };
-}, Vc = (e) => {
+}, Fc = (e) => {
   const t = [];
   for (const n of Object.values(e.expeditions.runs))
-    n.status === "ACTIVE" && n.expeditionStorage.rareDiscoveries.length < Gn && t.push({
+    n.status === "ACTIVE" && n.expeditionStorage.rareDiscoveries.length < yn && t.push({
       id: `expedition:${n.expeditionId}`,
-      dueAtMs: Dt(n.nextCompletionAt, "expedition.nextCompletionAt"),
+      dueAtMs: It(n.nextCompletionAt, "expedition.nextCompletionAt"),
       payload: { kind: "EXPEDITION", expeditionId: n.expeditionId }
     });
   return e.training.assignment && t.push({
     id: `training:${e.training.assignment.stoneId}`,
-    dueAtMs: Dt(e.training.assignment.lastProcessedAt, "training.lastProcessedAt") + Wr,
+    dueAtMs: It(e.training.assignment.lastProcessedAt, "training.lastProcessedAt") + Fi,
     payload: { kind: "TRAINING", stoneId: e.training.assignment.stoneId }
   }), e.affinityGarden.assignment && t.push({
     id: `affinity-garden:${e.affinityGarden.assignment.stoneId}`,
-    dueAtMs: Dt(e.affinityGarden.assignment.lastProcessedAt, "affinityGarden.lastProcessedAt") + Wr,
+    dueAtMs: It(e.affinityGarden.assignment.lastProcessedAt, "affinityGarden.lastProcessedAt") + Fi,
     payload: { kind: "AFFINITY_GARDEN", stoneId: e.affinityGarden.assignment.stoneId }
   }), e.research.slot?.status === "ACTIVE" && t.push({
     id: `research:${e.research.slot.researchId}`,
-    dueAtMs: Dt(e.research.slot.completesAt, "research.completesAt"),
+    dueAtMs: It(e.research.slot.completesAt, "research.completesAt"),
     payload: { kind: "RESEARCH", researchId: e.research.slot.researchId }
   }), e.endlessMine.status === "RUNNING" && e.endlessMine.runId && e.endlessMine.nextFloorAt && !e.endlessMine.manualMode && t.push({
     id: `endless-mine:${e.endlessMine.runId}`,
-    dueAtMs: Dt(e.endlessMine.nextFloorAt, "endlessMine.nextFloorAt"),
+    dueAtMs: It(e.endlessMine.nextFloorAt, "endlessMine.nextFloorAt"),
     payload: { kind: "ENDLESS_MINE", runId: e.endlessMine.runId }
   }), t;
-}, Ve = (e) => {
-  const t = new Ji(e.idle.scheduler), n = /* @__PURE__ */ new Set();
-  for (const i of Vc(e))
-    n.add(i.id), t.upsert(i);
-  for (const i of t.snapshot().jobs) n.has(i.id) || t.cancel(i.id);
-  const r = t.snapshot();
-  return e.idle.scheduler = { version: 1, jobs: r.jobs.map((i) => ({ ...i })) }, t.nextDueAtMs();
-}, An = (e, t, n = {}) => {
-  const r = n.mode ?? "OFFLINE", i = t.now().getTime(), s = Ls(e.idle.timeCheckpoint, i, { maxForwardAdvanceMs: Mt });
+}, _e = (e) => {
+  const t = new Ur(e.idle.scheduler), n = /* @__PURE__ */ new Set();
+  for (const r of Fc(e))
+    n.add(r.id), t.upsert(r);
+  for (const r of t.snapshot().jobs) n.has(r.id) || t.cancel(r.id);
+  const i = t.snapshot();
+  return e.idle.scheduler = { version: 1, jobs: i.jobs.map((r) => ({ ...r })) }, t.nextDueAtMs();
+}, Zt = (e, t, n = {}) => {
+  const i = n.mode ?? "OFFLINE", r = t.now().getTime(), s = bs(e.idle.timeCheckpoint, r, { maxForwardAdvanceMs: at });
   e.idle.timeCheckpoint = { ...s.checkpoint };
-  const o = new Date(s.nowMs), a = Dt(e.idle.lastProcessedAt, "idle.lastProcessedAt"), l = Math.max(0, Math.min(Mt, s.nowMs - a));
-  Ve(e);
-  const d = new Ji(e.idle.scheduler);
-  let u = 0, h = 0, w = 0, E = 0, m = 0, A = 0;
-  const S = _n(e), k = kn(e);
-  let T = s.anomaly === "forward-capped";
-  const p = d.drainDue(s.nowMs, (q) => {
+  const o = new Date(s.nowMs), a = It(e.idle.lastProcessedAt, "idle.lastProcessedAt"), c = Math.max(0, Math.min(at, s.nowMs - a));
+  _e(e);
+  const l = new Ur(e.idle.scheduler);
+  let d = 0, f = 0, y = 0, h = 0, u = 0, I = 0;
+  const g = cn(e), b = ln(e);
+  let R = s.anomaly === "forward-capped";
+  const m = l.drainDue(s.nowMs, (q) => {
     switch (q.payload.kind) {
       case "EXPEDITION": {
-        const K = Nc(e, o);
-        u += K.cyclesProcessed, A += K.reports.reduce((ue, F) => ue + F.rareDiscoveryCount, 0), T ||= K.capped;
+        const Y = yc(e, o);
+        d += Y.cyclesProcessed, I += Y.reports.reduce((oe, O) => oe + O.rareDiscoveryCount, 0), R ||= Y.capped;
         break;
       }
       case "TRAINING":
-        ts(e, o);
+        jr(e, o);
         break;
       case "AFFINITY_GARDEN":
-        ns(e, o);
+        Vr(e, o);
         break;
       case "RESEARCH":
-        rs(e, o);
+        Xr(e, o);
         break;
       case "ENDLESS_MINE": {
         if (e.endlessMine.runId !== q.payload.runId || n.skipEndless) break;
-        const K = Date.parse(e.endlessMine.nextFloorAt ?? ""), ue = Number.isFinite(K) && s.nowMs >= K ? Math.floor((s.nowMs - K) / qe) + 1 : 0, F = r === "ACTIVE" ? Ci(e.endlessMine, Math.min(jc, ue), o) : qo(e.endlessMine, o);
-        h += F.clearedFloors, w += F.credits, E += F.equipmentAdded, m += F.equipmentSalvaged;
+        const Y = Date.parse(e.endlessMine.nextFloorAt ?? ""), oe = Number.isFinite(Y) && s.nowMs >= Y ? Math.floor((s.nowMs - Y) / Re) + 1 : 0, O = i === "ACTIVE" ? Ar(e.endlessMine, Math.min($c, oe), o) : Lo(e.endlessMine, o);
+        f += O.clearedFloors, y += O.credits, h += O.equipmentAdded, u += O.equipmentSalvaged;
         break;
       }
     }
-  }, { maxCallbacks: Hc, maxOccurrencesPerCallback: 128, maxCatchUpMs: Mt });
-  if (T ||= p.hasMoreDue || p.skippedOccurrences > 0, e.idle.scheduler = { version: 1, jobs: d.snapshot().jobs.map((q) => ({ ...q })) }, e.idle.lastProcessedAt = o.toISOString(), e.idle.lastActiveAt = o.toISOString(), Ve(e), r === "ACTIVE") return null;
-  const f = s.anomaly === "rollback" ? null : e.idle.lastWelcomeBack, y = Math.max(0, _n(e) - S), b = Math.max(0, kn(e) - k);
-  if (!(l >= 6e4 || s.anomaly !== "none" || u > 0 || h > 0 || E > 0 || m > 0 || A > 0)) return null;
-  const N = f?.from ?? new Date(a).toISOString(), L = o.toISOString(), G = (f?.elapsedMs ?? 0) + l, H = {
+  }, { maxCallbacks: Oc, maxOccurrencesPerCallback: 128, maxCatchUpMs: at });
+  if (R ||= m.hasMoreDue || m.skippedOccurrences > 0, e.idle.scheduler = { version: 1, jobs: l.snapshot().jobs.map((q) => ({ ...q })) }, e.idle.lastProcessedAt = o.toISOString(), e.idle.lastActiveAt = o.toISOString(), _e(e), i === "ACTIVE") return null;
+  const p = s.anomaly === "rollback" ? null : e.idle.lastWelcomeBack, S = Math.max(0, cn(e) - g), M = Math.max(0, ln(e) - b);
+  if (!(c >= 6e4 || s.anomaly !== "none" || d > 0 || f > 0 || h > 0 || u > 0 || I > 0)) return null;
+  const T = p?.from ?? new Date(a).toISOString(), x = o.toISOString(), $ = (p?.elapsedMs ?? 0) + c, F = {
     summaryId: `welcome:${a}:${s.nowMs}:${e.idle.timeCheckpoint.reconciliationCount}`,
-    from: N,
-    to: L,
-    elapsedMs: Math.min(Mt, G),
-    capped: T || G > Mt || !!f?.capped,
-    rollbackDetected: s.anomaly === "rollback" || !!f?.rollbackDetected,
-    expeditionCycles: (f?.expeditionCycles ?? 0) + u,
-    trainingXpReady: (f?.trainingXpReady ?? 0) + y,
-    affinityReady: (f?.affinityReady ?? 0) + b,
+    from: T,
+    to: x,
+    elapsedMs: Math.min(at, $),
+    capped: R || $ > at || !!p?.capped,
+    rollbackDetected: s.anomaly === "rollback" || !!p?.rollbackDetected,
+    expeditionCycles: (p?.expeditionCycles ?? 0) + d,
+    trainingXpReady: (p?.trainingXpReady ?? 0) + S,
+    affinityReady: (p?.affinityReady ?? 0) + M,
     researchReady: e.research.slot?.status === "READY",
-    endlessFloors: (f?.endlessFloors ?? 0) + h,
-    endlessCredits: (f?.endlessCredits ?? 0) + w,
-    equipmentAdded: (f?.equipmentAdded ?? 0) + E,
-    equipmentSalvaged: (f?.equipmentSalvaged ?? 0) + m,
-    rareDiscoveries: (f?.rareDiscoveries ?? 0) + A,
-    createdAt: L
+    endlessFloors: (p?.endlessFloors ?? 0) + f,
+    endlessCredits: (p?.endlessCredits ?? 0) + y,
+    equipmentAdded: (p?.equipmentAdded ?? 0) + h,
+    equipmentSalvaged: (p?.equipmentSalvaged ?? 0) + u,
+    rareDiscoveries: (p?.rareDiscoveries ?? 0) + I,
+    createdAt: x
   };
-  return e.idle.lastWelcomeBack = H, H;
-}, $t = "stoneverse.save.v5", en = "stoneverse.save.v5.backup", tn = "stoneverse.save.v5.pending", Xc = ["stoneverse.save.v4", "stoneverse.save.v4.pending", "stoneverse.save.v4.backup", "stoneverse.save.v3"], Wc = () => {
+  return e.idle.lastWelcomeBack = F, F;
+}, St = "stoneverse.save.v5", Dt = "stoneverse.save.v5.backup", Ot = "stoneverse.save.v5.pending", Bc = ["stoneverse.save.v4", "stoneverse.save.v4.pending", "stoneverse.save.v4.backup", "stoneverse.save.v3"], Gc = () => {
   try {
     return typeof window < "u" && window.localStorage ? window.localStorage : null;
   } catch {
     return null;
   }
-}, ce = (e) => !!e && typeof e == "object" && !Array.isArray(e), O = (e, t) => {
+}, z = (e) => !!e && typeof e == "object" && !Array.isArray(e), _ = (e, t) => {
   throw new Error(`Invalid save at ${e}: ${t}`);
-}, B = (e, t) => ce(e) ? e : O(t, "expected an object"), wn = (e, t, n) => {
-  const r = new Set(t), i = Object.keys(e).find((s) => !r.has(s));
-  i !== void 0 && O(`${n}.${i}`, "unexpected field");
-}, $ = (e, t, n = {}) => {
+}, D = (e, t) => z(e) ? e : _(t, "expected an object"), en = (e, t, n) => {
+  const i = new Set(t), r = Object.keys(e).find((s) => !i.has(s));
+  r !== void 0 && _(`${n}.${r}`, "unexpected field");
+}, C = (e, t, n = {}) => {
   if (e === null && n.nullable) return null;
-  if (typeof e != "string") return O(t, "expected a string");
-  const r = n.min ?? 0, i = n.max ?? 1e4;
-  return e.length < r || e.length > i ? O(t, `expected length ${r}-${i}`) : e;
-}, Se = (e, t) => typeof e != "boolean" ? O(t, "expected a boolean") : e, C = (e, t, n = {}) => typeof e != "number" || !Number.isFinite(e) ? O(t, "expected a finite number") : n.integer && !Number.isSafeInteger(e) ? O(t, "expected a safe integer") : n.min !== void 0 && e < n.min ? O(t, `expected >= ${n.min}`) : n.max !== void 0 && e > n.max ? O(t, `expected <= ${n.max}`) : e, V = (e, t, n) => typeof e != "string" || !t.includes(e) ? O(n, `expected one of ${t.join(", ")}`) : e, me = (e, t, n = 1e5) => Array.isArray(e) ? e.length > n ? O(t, `array exceeds ${n} entries`) : e : O(t, "expected an array"), te = (e, t, n = !1) => {
+  if (typeof e != "string") return _(t, "expected a string");
+  const i = n.min ?? 0, r = n.max ?? 1e4;
+  return e.length < i || e.length > r ? _(t, `expected length ${i}-${r}`) : e;
+}, ce = (e, t) => typeof e != "boolean" ? _(t, "expected a boolean") : e, N = (e, t, n = {}) => typeof e != "number" || !Number.isFinite(e) ? _(t, "expected a finite number") : n.integer && !Number.isSafeInteger(e) ? _(t, "expected a safe integer") : n.min !== void 0 && e < n.min ? _(t, `expected >= ${n.min}`) : n.max !== void 0 && e > n.max ? _(t, `expected <= ${n.max}`) : e, B = (e, t, n) => typeof e != "string" || !t.includes(e) ? _(n, `expected one of ${t.join(", ")}`) : e, te = (e, t, n = 1e5) => Array.isArray(e) ? e.length > n ? _(t, `array exceeds ${n} entries`) : e : _(t, "expected an array"), X = (e, t, n = !1) => {
   if (e === null && n) return null;
-  const r = $(e, t, { min: 1, max: 64 });
-  return (r === null || !Number.isFinite(Date.parse(r))) && O(t, "expected a valid timestamp"), r;
-}, he = (e, t, n = {}) => {
-  const r = me(e, t, n.max ?? 1e5).map((i, s) => $(i, `${t}[${s}]`, { min: 1, max: 256 }));
-  return n.unique && new Set(r).size !== r.length && O(t, "duplicate entries are not allowed"), r;
-}, Tr = (e, t, n = !1) => {
-  const r = B(e, t);
-  for (const i of [...je, "maxHp"]) C(r[i], `${t}.${i}`, { min: n ? 0 : 1, max: 1e9 });
-}, kt = (e, t) => {
-  const n = B(e, t);
-  for (const [r, i] of Object.entries(n))
-    (!r || r.length > 256) && O(t, "contains an invalid key"), C(i, `${t}.${r}`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
-}, sr = (e, t) => {
-  const n = B(e, t);
-  $(n.instanceId, `${t}.instanceId`, { min: 1, max: 256 }), $(n.definitionId, `${t}.definitionId`, { min: 1, max: 256 }), V(n.slot, ["CORE", "RUNE", "RELIC", "CHARM"], `${t}.slot`), C(n.level, `${t}.level`, { min: 1, max: 1e4, integer: !0 }), V(n.rarity, et, `${t}.rarity`), n.setId !== void 0 && n.setId !== null && V(n.setId, ["BASTION", "RESONANCE", "HUNTER", "ABYSSAL"], `${t}.setId`), Se(n.locked, `${t}.locked`), me(n.affixes, `${t}.affixes`, 32).forEach((r, i) => {
-    const s = B(r, `${t}.affixes[${i}]`);
-    V(s.stat, [...je, "maxHp"], `${t}.affixes[${i}].stat`), V(s.operation, ["FLAT", "PERCENT"], `${t}.affixes[${i}].operation`), C(s.value, `${t}.affixes[${i}].value`, { min: -1e6, max: 1e6 }), s.sourceStat !== void 0 && V(s.sourceStat, ["maxHp", "attack", "defense", "speed", "accuracy", "resistance", "critChance", "critDamage", "breakPower"], `${t}.affixes[${i}].sourceStat`);
+  const i = C(e, t, { min: 1, max: 64 });
+  return (i === null || !Number.isFinite(Date.parse(i))) && _(t, "expected a valid timestamp"), i;
+}, se = (e, t, n = {}) => {
+  const i = te(e, t, n.max ?? 1e5).map((r, s) => C(r, `${t}[${s}]`, { min: 1, max: 256 }));
+  return n.unique && new Set(i).size !== i.length && _(t, "duplicate entries are not allowed"), i;
+}, mi = (e, t, n = !1) => {
+  const i = D(e, t);
+  for (const r of [...ke, "maxHp"]) N(i[r], `${t}.${r}`, { min: n ? 0 : 1, max: 1e9 });
+}, pt = (e, t) => {
+  const n = D(e, t);
+  for (const [i, r] of Object.entries(n))
+    (!i || i.length > 256) && _(t, "contains an invalid key"), N(r, `${t}.${i}`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
+}, Yn = (e, t) => {
+  const n = D(e, t);
+  C(n.instanceId, `${t}.instanceId`, { min: 1, max: 256 }), C(n.definitionId, `${t}.definitionId`, { min: 1, max: 256 }), B(n.slot, ["CORE", "RUNE", "RELIC", "CHARM"], `${t}.slot`), N(n.level, `${t}.level`, { min: 1, max: 1e4, integer: !0 }), B(n.rarity, Be, `${t}.rarity`), n.setId !== void 0 && n.setId !== null && B(n.setId, ["BASTION", "RESONANCE", "HUNTER", "ABYSSAL"], `${t}.setId`), ce(n.locked, `${t}.locked`), te(n.affixes, `${t}.affixes`, 32).forEach((i, r) => {
+    const s = D(i, `${t}.affixes[${r}]`);
+    B(s.stat, [...ke, "maxHp"], `${t}.affixes[${r}].stat`), B(s.operation, ["FLAT", "PERCENT"], `${t}.affixes[${r}].operation`), N(s.value, `${t}.affixes[${r}].value`, { min: -1e6, max: 1e6 }), s.sourceStat !== void 0 && B(s.sourceStat, ["maxHp", "attack", "defense", "speed", "accuracy", "resistance", "critChance", "critDamage", "breakPower"], `${t}.affixes[${r}].sourceStat`);
   });
-}, Xn = (e, t) => {
-  const n = B(e, t);
-  $(n.accountId, `${t}.accountId`, { min: 1, max: 128 }), $(n.username, `${t}.username`, { min: 1, max: 64 });
-}, or = (e, t) => {
-  const n = B(e, t);
-  $(n.instanceId, `${t}.instanceId`, { min: 1, max: 256 }), $(n.speciesId, `${t}.speciesId`, { min: 1, max: 256 }), $(n.serialNumber, `${t}.serialNumber`, { min: 1, max: 256 }), $(n.nickname, `${t}.nickname`, { nullable: !0, max: 20 }), V(n.mutation, ["NONE", "PRISMATIC", "ANCIENT", "CORRUPTED", "PERFECT"], `${t}.mutation`), V(n.colorVariant, ["STANDARD", "SHINY", "AURORA", "OBSIDIAN"], `${t}.colorVariant`), he(n.traitIds, `${t}.traitIds`, { max: 8, unique: !0 });
-}, Kc = (e, t, n) => {
-  const r = B(e, n);
-  $(r.instanceId, `${n}.instanceId`, { min: 1, max: 256 }) !== t && O(n, "map key must equal instanceId"), $(r.serialNumber, `${n}.serialNumber`, { min: 1, max: 256 }), $(r.speciesId, `${n}.speciesId`, { min: 1, max: 256 }), $(r.name, `${n}.name`, { min: 1, max: 128 }), $(r.nickname, `${n}.nickname`, { nullable: !0, max: 20 }), V(r.rarity, et, `${n}.rarity`), V(r.origin, Ta, `${n}.origin`), C(r.level, `${n}.level`, { min: 1, max: 120, integer: !0 }), C(r.xp, `${n}.xp`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), C(r.potential, `${n}.potential`, { min: 0, max: 100, integer: !0 }), $(r.personalityId, `${n}.personalityId`, { min: 1, max: 256 }), V(r.primaryElement, dn, `${n}.primaryElement`), r.secondaryElement !== null && V(r.secondaryElement, dn, `${n}.secondaryElement`), Tr(r.stats, `${n}.stats`);
-  const s = B(r.individualValues, `${n}.individualValues`);
-  for (const h of je) C(s[h], `${n}.individualValues.${h}`, { min: 0, max: 31, integer: !0 });
-  he(r.traitIds, `${n}.traitIds`, { max: 8, unique: !0 }), me(r.skills, `${n}.skills`, 6).forEach((h, w) => {
-    const E = B(h, `${n}.skills[${w}]`);
-    $(E.skillId, `${n}.skills[${w}].skillId`, { min: 1, max: 256 }), C(E.level, `${n}.skills[${w}].level`, { min: 1, max: 100, integer: !0 }), V(E.source, ["NATURAL", "LEVEL", "AWAKENING", "FUSION", "EQUIPMENT", "TREE"], `${n}.skills[${w}].source`);
-  }), C(r.skillPoints, `${n}.skillPoints`, { min: 0, max: 1e6, integer: !0 }), he(r.learnedSkillNodes, `${n}.learnedSkillNodes`, { max: 1e3, unique: !0 });
-  const o = B(r.equipment, `${n}.equipment`);
-  for (const [h, w] of Object.entries(o))
-    V(h, ["CORE", "RUNE", "RELIC", "CHARM"], `${n}.equipment slot`), sr(w, `${n}.equipment.${h}`), w.slot !== h && O(`${n}.equipment.${h}`, "equipment slot mismatch");
-  const a = B(r.affinity, `${n}.affinity`);
-  C(a.points, `${n}.affinity.points`, { min: 0, max: 9999, integer: !0 }), C(a.rank, `${n}.affinity.rank`, { min: 0, max: 7, integer: !0 }), me(a.claimedMilestones, `${n}.affinity.claimedMilestones`, 32).forEach((h, w) => C(h, `${n}.affinity.claimedMilestones[${w}]`, { min: 0, max: 100, integer: !0 })), C(r.awakeningStage, `${n}.awakeningStage`, { min: 0, max: 10, integer: !0 }), C(r.evolutionStage, `${n}.evolutionStage`, { min: 0, max: 100, integer: !0 }), C(r.reincarnationCount, `${n}.reincarnationCount`, { min: 0, max: 1e3, integer: !0 }), C(r.limitBreak, `${n}.limitBreak`, { min: 0, max: 5, integer: !0 }), V(r.mutation, ["NONE", "PRISMATIC", "ANCIENT", "CORRUPTED", "PERFECT"], `${n}.mutation`), V(r.colorVariant, ["STANDARD", "SHINY", "AURORA", "OBSIDIAN"], `${n}.colorVariant`), me(r.parents, `${n}.parents`, 4).forEach((h, w) => or(h, `${n}.parents[${w}]`)), me(r.grandparents, `${n}.grandparents`, 8).forEach((h, w) => or(h, `${n}.grandparents[${w}]`)), C(r.generation, `${n}.generation`, { min: 0, max: 1e5, integer: !0 }), Xn(r.originalOwner, `${n}.originalOwner`), Xn(r.currentOwner, `${n}.currentOwner`), Xn(r.discoverer, `${n}.discoverer`), te(r.createdAt, `${n}.createdAt`), te(r.firstObtainedAt, `${n}.firstObtainedAt`), te(r.appraisedAt, `${n}.appraisedAt`, !0);
-  const l = B(r.battleStatistics, `${n}.battleStatistics`);
-  for (const h of ["battles", "wins", "losses", "damageDealt", "damageTaken", "healingDone", "criticalHits", "enemiesDefeated", "ultimatesUsed"])
-    C(l[h], `${n}.battleStatistics.${h}`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
-  Se(r.favorite, `${n}.favorite`), Se(r.locked, `${n}.locked`), he(r.tags, `${n}.tags`, { max: 100, unique: !0 });
-  const d = r, u = ks(d);
-  return u.length > 0 && O(n, u.join(", ")), d;
-}, zc = (e, t) => {
-  const n = B(e, t);
-  n.currencies !== void 0 && kt(n.currencies, `${t}.currencies`), n.items !== void 0 && kt(n.items, `${t}.items`);
-  for (const r of ["accountXp", "miningXp", "stoneXp"]) n[r] !== void 0 && C(n[r], `${t}.${r}`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
-}, Qc = (e, t) => {
-  const n = B(e, t);
-  for (const [r, i] of Object.entries(n))
-    V(r, [...je, "maxHp"], `${t} key`), C(i, `${t}.${r}`, { min: -1e9, max: 1e9 });
-}, is = (e, t) => {
-  const n = B(e, t), r = $(n.discoveryId, `${t}.discoveryId`, { min: 1, max: 256 });
-  $(n.seed, `${t}.seed`, { min: 1, max: 1024 });
-  const i = $(n.speciesId, `${t}.speciesId`, { min: 1, max: 256 });
-  return fe[i] || O(`${t}.speciesId`, "references an unknown species"), $(n.veinId, `${t}.veinId`, { min: 1, max: 256 }), $(n.areaId, `${t}.areaId`, { min: 1, max: 256 }), V(n.hintedRarity, et, `${t}.hintedRarity`), $(n.sourceEventId, `${t}.sourceEventId`, { min: 1, max: 256 }), te(n.discoveredAt, `${t}.discoveredAt`), r;
-}, Jc = (e, t) => {
-  const n = B(e, t);
-  for (const i of ["credits", "upgradeDust", "researchCores", "accountXp", "stoneXpPerMember", "affinityPerMember"])
-    C(n[i], `${t}.${i}`, { min: 0, max: 1e9, integer: !0 });
-  kt(n.items, `${t}.items`);
-  const r = /* @__PURE__ */ new Set();
-  me(n.rareDiscoveries, `${t}.rareDiscoveries`, Gn).forEach((i, s) => {
-    const o = is(i, `${t}.rareDiscoveries[${s}]`);
-    r.has(o) && O(`${t}.rareDiscoveries[${s}].discoveryId`, "duplicate discovery ID"), r.add(o);
+}, xn = (e, t) => {
+  const n = D(e, t);
+  C(n.accountId, `${t}.accountId`, { min: 1, max: 128 }), C(n.username, `${t}.username`, { min: 1, max: 64 });
+}, jn = (e, t) => {
+  const n = D(e, t);
+  C(n.instanceId, `${t}.instanceId`, { min: 1, max: 256 }), C(n.speciesId, `${t}.speciesId`, { min: 1, max: 256 }), C(n.serialNumber, `${t}.serialNumber`, { min: 1, max: 256 }), C(n.nickname, `${t}.nickname`, { nullable: !0, max: 20 }), B(n.mutation, ["NONE", "PRISMATIC", "ANCIENT", "CORRUPTED", "PERFECT"], `${t}.mutation`), B(n.colorVariant, ["STANDARD", "SHINY", "AURORA", "OBSIDIAN"], `${t}.colorVariant`), se(n.traitIds, `${t}.traitIds`, { max: 8, unique: !0 });
+}, qc = (e, t, n) => {
+  const i = D(e, n);
+  C(i.instanceId, `${n}.instanceId`, { min: 1, max: 256 }) !== t && _(n, "map key must equal instanceId"), C(i.serialNumber, `${n}.serialNumber`, { min: 1, max: 256 }), C(i.speciesId, `${n}.speciesId`, { min: 1, max: 256 }), C(i.name, `${n}.name`, { min: 1, max: 128 }), C(i.nickname, `${n}.nickname`, { nullable: !0, max: 20 }), B(i.rarity, Be, `${n}.rarity`), B(i.origin, Sa, `${n}.origin`), N(i.level, `${n}.level`, { min: 1, max: 120, integer: !0 }), N(i.xp, `${n}.xp`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), N(i.potential, `${n}.potential`, { min: 0, max: 100, integer: !0 }), C(i.personalityId, `${n}.personalityId`, { min: 1, max: 256 }), B(i.primaryElement, Ht, `${n}.primaryElement`), i.secondaryElement !== null && B(i.secondaryElement, Ht, `${n}.secondaryElement`), mi(i.stats, `${n}.stats`);
+  const s = D(i.individualValues, `${n}.individualValues`);
+  for (const f of ke) N(s[f], `${n}.individualValues.${f}`, { min: 0, max: 31, integer: !0 });
+  se(i.traitIds, `${n}.traitIds`, { max: 8, unique: !0 }), te(i.skills, `${n}.skills`, 6).forEach((f, y) => {
+    const h = D(f, `${n}.skills[${y}]`);
+    C(h.skillId, `${n}.skills[${y}].skillId`, { min: 1, max: 256 }), N(h.level, `${n}.skills[${y}].level`, { min: 1, max: 100, integer: !0 }), B(h.source, ["NATURAL", "LEVEL", "AWAKENING", "FUSION", "EQUIPMENT", "TREE"], `${n}.skills[${y}].source`);
+  }), N(i.skillPoints, `${n}.skillPoints`, { min: 0, max: 1e6, integer: !0 }), se(i.learnedSkillNodes, `${n}.learnedSkillNodes`, { max: 1e3, unique: !0 });
+  const o = D(i.equipment, `${n}.equipment`);
+  for (const [f, y] of Object.entries(o))
+    B(f, ["CORE", "RUNE", "RELIC", "CHARM"], `${n}.equipment slot`), Yn(y, `${n}.equipment.${f}`), y.slot !== f && _(`${n}.equipment.${f}`, "equipment slot mismatch");
+  const a = D(i.affinity, `${n}.affinity`);
+  N(a.points, `${n}.affinity.points`, { min: 0, max: 9999, integer: !0 }), N(a.rank, `${n}.affinity.rank`, { min: 0, max: 7, integer: !0 }), te(a.claimedMilestones, `${n}.affinity.claimedMilestones`, 32).forEach((f, y) => N(f, `${n}.affinity.claimedMilestones[${y}]`, { min: 0, max: 100, integer: !0 })), N(i.awakeningStage, `${n}.awakeningStage`, { min: 0, max: 10, integer: !0 }), N(i.evolutionStage, `${n}.evolutionStage`, { min: 0, max: 100, integer: !0 }), N(i.reincarnationCount, `${n}.reincarnationCount`, { min: 0, max: 1e3, integer: !0 }), N(i.limitBreak, `${n}.limitBreak`, { min: 0, max: 5, integer: !0 }), B(i.mutation, ["NONE", "PRISMATIC", "ANCIENT", "CORRUPTED", "PERFECT"], `${n}.mutation`), B(i.colorVariant, ["STANDARD", "SHINY", "AURORA", "OBSIDIAN"], `${n}.colorVariant`), te(i.parents, `${n}.parents`, 4).forEach((f, y) => jn(f, `${n}.parents[${y}]`)), te(i.grandparents, `${n}.grandparents`, 8).forEach((f, y) => jn(f, `${n}.grandparents[${y}]`)), N(i.generation, `${n}.generation`, { min: 0, max: 1e5, integer: !0 }), xn(i.originalOwner, `${n}.originalOwner`), xn(i.currentOwner, `${n}.currentOwner`), xn(i.discoverer, `${n}.discoverer`), X(i.createdAt, `${n}.createdAt`), X(i.firstObtainedAt, `${n}.firstObtainedAt`), X(i.appraisedAt, `${n}.appraisedAt`, !0);
+  const c = D(i.battleStatistics, `${n}.battleStatistics`);
+  for (const f of ["battles", "wins", "losses", "damageDealt", "damageTaken", "healingDone", "criticalHits", "enemiesDefeated", "ultimatesUsed"])
+    N(c[f], `${n}.battleStatistics.${f}`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
+  ce(i.favorite, `${n}.favorite`), ce(i.locked, `${n}.locked`), se(i.tags, `${n}.tags`, { max: 100, unique: !0 });
+  const l = i, d = vs(l);
+  return d.length > 0 && _(n, d.join(", ")), l;
+}, Uc = (e, t) => {
+  const n = D(e, t);
+  n.currencies !== void 0 && pt(n.currencies, `${t}.currencies`), n.items !== void 0 && pt(n.items, `${t}.items`);
+  for (const i of ["accountXp", "miningXp", "stoneXp"]) n[i] !== void 0 && N(n[i], `${t}.${i}`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
+}, Hc = (e, t) => {
+  const n = D(e, t);
+  for (const [i, r] of Object.entries(n))
+    B(i, [...ke, "maxHp"], `${t} key`), N(r, `${t}.${i}`, { min: -1e9, max: 1e9 });
+}, Wr = (e, t) => {
+  const n = D(e, t), i = C(n.discoveryId, `${t}.discoveryId`, { min: 1, max: 256 });
+  C(n.seed, `${t}.seed`, { min: 1, max: 1024 });
+  const r = C(n.speciesId, `${t}.speciesId`, { min: 1, max: 256 });
+  return re[r] || _(`${t}.speciesId`, "references an unknown species"), C(n.veinId, `${t}.veinId`, { min: 1, max: 256 }), C(n.areaId, `${t}.areaId`, { min: 1, max: 256 }), B(n.hintedRarity, Be, `${t}.hintedRarity`), C(n.sourceEventId, `${t}.sourceEventId`, { min: 1, max: 256 }), X(n.discoveredAt, `${t}.discoveredAt`), i;
+}, Yc = (e, t) => {
+  const n = D(e, t);
+  for (const r of ["credits", "upgradeDust", "researchCores", "accountXp", "stoneXpPerMember", "affinityPerMember"])
+    N(n[r], `${t}.${r}`, { min: 0, max: 1e9, integer: !0 });
+  pt(n.items, `${t}.items`);
+  const i = /* @__PURE__ */ new Set();
+  te(n.rareDiscoveries, `${t}.rareDiscoveries`, yn).forEach((r, s) => {
+    const o = Wr(r, `${t}.rareDiscoveries[${s}]`);
+    i.has(o) && _(`${t}.rareDiscoveries[${s}].discoveryId`, "duplicate discovery ID"), i.add(o);
   });
-}, Zc = (e, t, n) => {
-  const r = B(e, t);
-  $(r.reportId, `${t}.reportId`, { min: 1, max: 512 }), $(r.expeditionId, `${t}.expeditionId`, { min: 1, max: 256 }) !== n && O(`${t}.expeditionId`, "does not match its expedition"), C(r.cycle, `${t}.cycle`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), te(r.completedAt, `${t}.completedAt`), C(r.offsetMs, `${t}.offsetMs`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), V(r.kind, ["DEPARTURE", "BATTLE", "MINING", "MATERIAL", "EQUIPMENT", "DISCOVERY", "EVENT", "BOSS", "RETURN"], `${t}.kind`), $(r.title, `${t}.title`, { min: 1, max: 256 }), $(r.detail, `${t}.detail`, { max: 2048 }), C(r.successScore, `${t}.successScore`, { min: 0, max: 1e3 }), r.battleWon !== null && Se(r.battleWon, `${t}.battleWon`), C(r.miningYield, `${t}.miningYield`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), $(r.equipmentDropId, `${t}.equipmentDropId`, { nullable: !0, max: 256 }), $(r.equipmentDropSeed, `${t}.equipmentDropSeed`, { nullable: !0, max: 1024 }), r.bestDropRarity !== null && V(r.bestDropRarity, et, `${t}.bestDropRarity`), C(r.rareDiscoveryCount, `${t}.rareDiscoveryCount`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
-  const i = B(r.reward, `${t}.reward`);
-  for (const s of ["credits", "upgradeDust", "researchCores", "accountXp", "stoneXpPerMember", "affinityPerMember"]) C(i[s], `${t}.reward.${s}`, { min: 0, max: 1e9, integer: !0 });
-  kt(i.items, `${t}.reward.items`);
-}, Kr = (e, t, n, r) => {
-  const i = B(e, t);
-  $(i.battleId, `${t}.battleId`, { min: 1, max: 256 }), V(i.mode, ["DUNGEON", "INFINITE_MINE", "PVP", "RAID", "SIMULATION"], `${t}.mode`), i.dungeonId !== void 0 && $(i.dungeonId, `${t}.dungeonId`, { min: 1, max: 256 }), i.stageId !== void 0 && $(i.stageId, `${t}.stageId`, { min: 1, max: 256 });
-  const s = C(i.turn, `${t}.turn`, { min: 0, max: 100, integer: !0 }), o = me(i.units, `${t}.units`, 32);
-  o.length === 0 && O(`${t}.units`, "battle must contain units");
+}, jc = (e, t, n) => {
+  const i = D(e, t);
+  C(i.reportId, `${t}.reportId`, { min: 1, max: 512 }), C(i.expeditionId, `${t}.expeditionId`, { min: 1, max: 256 }) !== n && _(`${t}.expeditionId`, "does not match its expedition"), N(i.cycle, `${t}.cycle`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), X(i.completedAt, `${t}.completedAt`), N(i.offsetMs, `${t}.offsetMs`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), B(i.kind, ["DEPARTURE", "BATTLE", "MINING", "MATERIAL", "EQUIPMENT", "DISCOVERY", "EVENT", "BOSS", "RETURN"], `${t}.kind`), C(i.title, `${t}.title`, { min: 1, max: 256 }), C(i.detail, `${t}.detail`, { max: 2048 }), N(i.successScore, `${t}.successScore`, { min: 0, max: 1e3 }), i.battleWon !== null && ce(i.battleWon, `${t}.battleWon`), N(i.miningYield, `${t}.miningYield`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), C(i.equipmentDropId, `${t}.equipmentDropId`, { nullable: !0, max: 256 }), C(i.equipmentDropSeed, `${t}.equipmentDropSeed`, { nullable: !0, max: 1024 }), i.bestDropRarity !== null && B(i.bestDropRarity, Be, `${t}.bestDropRarity`), N(i.rareDiscoveryCount, `${t}.rareDiscoveryCount`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
+  const r = D(i.reward, `${t}.reward`);
+  for (const s of ["credits", "upgradeDust", "researchCores", "accountXp", "stoneXpPerMember", "affinityPerMember"]) N(r[s], `${t}.reward.${s}`, { min: 0, max: 1e9, integer: !0 });
+  pt(r.items, `${t}.reward.items`);
+}, Bi = (e, t, n, i) => {
+  const r = D(e, t);
+  C(r.battleId, `${t}.battleId`, { min: 1, max: 256 }), B(r.mode, ["DUNGEON", "INFINITE_MINE", "PVP", "RAID", "SIMULATION"], `${t}.mode`), r.dungeonId !== void 0 && C(r.dungeonId, `${t}.dungeonId`, { min: 1, max: 256 }), r.stageId !== void 0 && C(r.stageId, `${t}.stageId`, { min: 1, max: 256 });
+  const s = N(r.turn, `${t}.turn`, { min: 0, max: 100, integer: !0 }), o = te(r.units, `${t}.units`, 32);
+  o.length === 0 && _(`${t}.units`, "battle must contain units");
   const a = /* @__PURE__ */ new Set();
-  let l = !1, d = !1, u = !1, h = !1;
-  if (o.forEach((w, E) => {
-    const m = `${t}.units[${E}]`, A = B(w, m), S = $(A.unitId, `${m}.unitId`, { min: 1, max: 256 });
-    a.has(S) && O(`${m}.unitId`, "duplicate unitId"), a.add(S);
-    const k = $(A.stoneId, `${m}.stoneId`, { min: 1, max: 256 }), T = V(A.team, ["PLAYER", "ENEMY"], `${m}.team`);
-    l ||= T === "PLAYER", d ||= T === "ENEMY", r.active && T === "PLAYER" && !n.has(k) && O(`${m}.stoneId`, "active player unit references a missing stone"), $(A.speciesId, `${m}.speciesId`, { min: 1, max: 256 }), $(A.name, `${m}.name`, { min: 1, max: 128 }), V(A.element, dn, `${m}.element`), V(A.role, ["ATTACK", "TANK", "SUPPORT", "CONTROL"], `${m}.role`), C(A.level, `${m}.level`, { min: 1, max: 120, integer: !0 }), Tr(A.stats, `${m}.stats`);
-    const p = C(A.stats.maxHp, `${m}.stats.maxHp`, { min: 1, max: 1e9 }), f = C(A.currentHp, `${m}.currentHp`, { min: 0, max: p });
-    C(A.shield, `${m}.shield`, { min: 0, max: 1e9 }), C(A.ultimate, `${m}.ultimate`, { min: 0, max: 100 }), kt(A.cooldowns, `${m}.cooldowns`), he(A.skillIds, `${m}.skillIds`, { max: 6, unique: !0 }), he(A.traitIds, `${m}.traitIds`, { max: 8, unique: !0 });
-    const y = Se(A.alive, `${m}.alive`);
-    y !== f > 0 && O(`${m}.alive`, "must agree with currentHp"), u ||= T === "PLAYER" && y, h ||= T === "ENEMY" && y, me(A.statuses, `${m}.statuses`, 32).forEach((b, M) => {
-      const N = B(b, `${m}.statuses[${M}]`);
-      V(N.id, ["BURN", "POISON", "STUN", "FRACTURE", "REGEN", "TAUNT"], `${m}.statuses[${M}].id`), C(N.turns, `${m}.statuses[${M}].turns`, { min: 1, max: 100, integer: !0 }), C(N.potency, `${m}.statuses[${M}].potency`, { min: 0, max: 10 }), $(N.sourceId, `${m}.statuses[${M}].sourceId`, { min: 1, max: 256 });
-    }), me(A.modifiers, `${m}.modifiers`, 64).forEach((b, M) => {
-      const N = B(b, `${m}.modifiers[${M}]`);
-      V(N.stat, [...je, "maxHp"], `${m}.modifiers[${M}].stat`), C(N.multiplier, `${m}.modifiers[${M}].multiplier`, { min: 0.01, max: 100 }), C(N.turns, `${m}.modifiers[${M}].turns`, { min: 1, max: 100, integer: !0 }), $(N.sourceId, `${m}.modifiers[${M}].sourceId`, { min: 1, max: 256 });
+  let c = !1, l = !1, d = !1, f = !1;
+  if (o.forEach((y, h) => {
+    const u = `${t}.units[${h}]`, I = D(y, u), g = C(I.unitId, `${u}.unitId`, { min: 1, max: 256 });
+    a.has(g) && _(`${u}.unitId`, "duplicate unitId"), a.add(g);
+    const b = C(I.stoneId, `${u}.stoneId`, { min: 1, max: 256 }), R = B(I.team, ["PLAYER", "ENEMY"], `${u}.team`);
+    c ||= R === "PLAYER", l ||= R === "ENEMY", i.active && R === "PLAYER" && !n.has(b) && _(`${u}.stoneId`, "active player unit references a missing stone"), C(I.speciesId, `${u}.speciesId`, { min: 1, max: 256 }), C(I.name, `${u}.name`, { min: 1, max: 128 }), B(I.element, Ht, `${u}.element`), B(I.role, ["ATTACK", "TANK", "SUPPORT", "CONTROL"], `${u}.role`), N(I.level, `${u}.level`, { min: 1, max: 120, integer: !0 }), mi(I.stats, `${u}.stats`);
+    const m = N(I.stats.maxHp, `${u}.stats.maxHp`, { min: 1, max: 1e9 }), p = N(I.currentHp, `${u}.currentHp`, { min: 0, max: m });
+    N(I.shield, `${u}.shield`, { min: 0, max: 1e9 }), N(I.ultimate, `${u}.ultimate`, { min: 0, max: 100 }), pt(I.cooldowns, `${u}.cooldowns`), se(I.skillIds, `${u}.skillIds`, { max: 6, unique: !0 }), se(I.traitIds, `${u}.traitIds`, { max: 8, unique: !0 });
+    const S = ce(I.alive, `${u}.alive`);
+    S !== p > 0 && _(`${u}.alive`, "must agree with currentHp"), d ||= R === "PLAYER" && S, f ||= R === "ENEMY" && S, te(I.statuses, `${u}.statuses`, 32).forEach((M, w) => {
+      const T = D(M, `${u}.statuses[${w}]`);
+      B(T.id, ["BURN", "POISON", "STUN", "FRACTURE", "REGEN", "TAUNT"], `${u}.statuses[${w}].id`), N(T.turns, `${u}.statuses[${w}].turns`, { min: 1, max: 100, integer: !0 }), N(T.potency, `${u}.statuses[${w}].potency`, { min: 0, max: 10 }), C(T.sourceId, `${u}.statuses[${w}].sourceId`, { min: 1, max: 256 });
+    }), te(I.modifiers, `${u}.modifiers`, 64).forEach((M, w) => {
+      const T = D(M, `${u}.modifiers[${w}]`);
+      B(T.stat, [...ke, "maxHp"], `${u}.modifiers[${w}].stat`), N(T.multiplier, `${u}.modifiers[${w}].multiplier`, { min: 0.01, max: 100 }), N(T.turns, `${u}.modifiers[${w}].turns`, { min: 1, max: 100, integer: !0 }), C(T.sourceId, `${u}.modifiers[${w}].sourceId`, { min: 1, max: 256 });
     });
-  }), (!l || !d) && O(`${t}.units`, "battle requires both player and enemy teams"), me(i.actionLog, `${t}.actionLog`, 1e5).forEach((w, E) => {
-    const m = `${t}.actionLog[${E}]`, A = B(w, m);
-    C(A.turn, `${m}.turn`, { min: 1, max: 100, integer: !0 });
-    const S = $(A.actorId, `${m}.actorId`, { min: 1, max: 256 });
-    a.has(S) || O(`${m}.actorId`, "references an unknown unit"), $(A.skillId, `${m}.skillId`, { min: 1, max: 256 });
-    for (const k of he(A.targetIds, `${m}.targetIds`, { max: 32 })) a.has(k) || O(`${m}.targetIds`, "references an unknown unit");
-    C(A.damage, `${m}.damage`, { min: 0, max: Number.MAX_SAFE_INTEGER }), C(A.healing, `${m}.healing`, { min: 0, max: Number.MAX_SAFE_INTEGER }), Se(A.critical, `${m}.critical`), he(A.statusesApplied, `${m}.statusesApplied`, { max: 32 });
-    for (const k of he(A.defeatedIds, `${m}.defeatedIds`, { max: 32 })) a.has(k) || O(`${m}.defeatedIds`, "references an unknown unit");
-    for (const k of ["damageByTarget", "healingByTarget"]) {
-      if (A[k] === void 0) continue;
-      const T = B(A[k], `${m}.${k}`);
-      for (const [p, f] of Object.entries(T))
-        a.has(p) || O(`${m}.${k}`, "references an unknown unit"), C(f, `${m}.${k}.${p}`, { min: 0, max: Number.MAX_SAFE_INTEGER });
+  }), (!c || !l) && _(`${t}.units`, "battle requires both player and enemy teams"), te(r.actionLog, `${t}.actionLog`, 1e5).forEach((y, h) => {
+    const u = `${t}.actionLog[${h}]`, I = D(y, u);
+    N(I.turn, `${u}.turn`, { min: 1, max: 100, integer: !0 });
+    const g = C(I.actorId, `${u}.actorId`, { min: 1, max: 256 });
+    a.has(g) || _(`${u}.actorId`, "references an unknown unit"), C(I.skillId, `${u}.skillId`, { min: 1, max: 256 });
+    for (const b of se(I.targetIds, `${u}.targetIds`, { max: 32 })) a.has(b) || _(`${u}.targetIds`, "references an unknown unit");
+    N(I.damage, `${u}.damage`, { min: 0, max: Number.MAX_SAFE_INTEGER }), N(I.healing, `${u}.healing`, { min: 0, max: Number.MAX_SAFE_INTEGER }), ce(I.critical, `${u}.critical`), se(I.statusesApplied, `${u}.statusesApplied`, { max: 32 });
+    for (const b of se(I.defeatedIds, `${u}.defeatedIds`, { max: 32 })) a.has(b) || _(`${u}.defeatedIds`, "references an unknown unit");
+    for (const b of ["damageByTarget", "healingByTarget"]) {
+      if (I[b] === void 0) continue;
+      const R = D(I[b], `${u}.${b}`);
+      for (const [m, p] of Object.entries(R))
+        a.has(m) || _(`${u}.${b}`, "references an unknown unit"), N(p, `${u}.${b}.${m}`, { min: 0, max: Number.MAX_SAFE_INTEGER });
     }
-  }), i.winner !== null && V(i.winner, ["PLAYER", "ENEMY", "DRAW"], `${t}.winner`), i.reward !== null && zc(i.reward, `${t}.reward`), i.advanced !== void 0) {
-    const w = $s(i.advanced);
-    w.turn !== s && O(`${t}.advanced.turn`, "must match projected battle turn"), w.outcome !== i.winner && O(`${t}.advanced.outcome`, "must match projected battle winner");
-    for (const E of w.units) a.has(E.id) || O(`${t}.advanced.units`, "contains an unprojected combatant");
+  }), r.winner !== null && B(r.winner, ["PLAYER", "ENEMY", "DRAW"], `${t}.winner`), r.reward !== null && Uc(r.reward, `${t}.reward`), r.advanced !== void 0) {
+    const y = ks(r.advanced);
+    y.turn !== s && _(`${t}.advanced.turn`, "must match projected battle turn"), y.outcome !== r.winner && _(`${t}.advanced.outcome`, "must match projected battle winner");
+    for (const h of y.units) a.has(h.id) || _(`${t}.advanced.units`, "contains an unprojected combatant");
   }
-  if (i.controlMode !== void 0 && V(i.controlMode, ["MANUAL", "AUTO"], `${t}.controlMode`), i.speed !== void 0) {
-    const w = C(i.speed, `${t}.speed`, { integer: !0 });
-    [1, 2, 4].includes(w) || O(`${t}.speed`, "expected one of 1, 2, 4");
+  if (r.controlMode !== void 0 && B(r.controlMode, ["MANUAL", "AUTO"], `${t}.controlMode`), r.speed !== void 0) {
+    const y = N(r.speed, `${t}.speed`, { integer: !0 });
+    [1, 2, 4].includes(y) || _(`${t}.speed`, "expected one of 1, 2, 4");
   }
-  return te(i.startedAt, `${t}.startedAt`), i.winner === null ? (i.finishedAt !== null && O(`${t}.finishedAt`, "unfinished battle must not have a finish timestamp"), (!u || !h) && O(`${t}.winner`, "unfinished battle must have living units on both teams")) : (te(i.finishedAt, `${t}.finishedAt`), i.winner === "PLAYER" && (!u || h) && O(`${t}.winner`, "PLAYER result disagrees with living teams"), i.winner === "ENEMY" && (!h || u) && O(`${t}.winner`, "ENEMY result disagrees with living teams"), i.winner === "DRAW" && u && h && s < 100 && O(`${t}.winner`, "living-team DRAW requires the turn limit")), !r.active && i.winner === null && O(`${t}.winner`, "battle history cannot contain an unfinished battle"), i;
-}, el = (e) => {
-  const t = ce(e.account) ? e.account : {}, n = Jn({
+  return X(r.startedAt, `${t}.startedAt`), r.winner === null ? (r.finishedAt !== null && _(`${t}.finishedAt`, "unfinished battle must not have a finish timestamp"), (!d || !f) && _(`${t}.winner`, "unfinished battle must have living units on both teams")) : (X(r.finishedAt, `${t}.finishedAt`), r.winner === "PLAYER" && (!d || f) && _(`${t}.winner`, "PLAYER result disagrees with living teams"), r.winner === "ENEMY" && (!f || d) && _(`${t}.winner`, "ENEMY result disagrees with living teams"), r.winner === "DRAW" && d && f && s < 100 && _(`${t}.winner`, "living-team DRAW requires the turn limit")), !i.active && r.winner === null && _(`${t}.winner`, "battle history cannot contain an unfinished battle"), r;
+}, Vc = (e) => {
+  const t = z(e.account) ? e.account : {}, n = Pn({
     username: typeof t.username == "string" ? t.username : void 0,
     accountId: typeof t.accountId == "string" ? t.accountId : void 0,
     withStarter: !1,
     seed: "migration-defaults"
-  }), r = (s, o) => ({ ...s, ...ce(o) ? o : {} });
+  }), i = (s, o) => ({ ...s, ...z(o) ? o : {} });
   return {
     ...n,
     ...e,
-    account: r(n.account, e.account),
-    accountProgress: r(n.accountProgress, e.accountProgress),
-    mining: r(n.mining, e.mining),
-    facilities: r(n.facilities, e.facilities),
-    expeditions: r(n.expeditions, e.expeditions),
-    training: r(n.training, e.training),
-    affinityGarden: r(n.affinityGarden, e.affinityGarden),
-    research: r(n.research, e.research),
+    account: i(n.account, e.account),
+    accountProgress: i(n.accountProgress, e.accountProgress),
+    mining: i(n.mining, e.mining),
+    facilities: i(n.facilities, e.facilities),
+    expeditions: i(n.expeditions, e.expeditions),
+    training: i(n.training, e.training),
+    affinityGarden: i(n.affinityGarden, e.affinityGarden),
+    research: i(n.research, e.research),
     idle: {
       ...n.idle,
-      ...ce(e.idle) ? e.idle : {},
-      timeCheckpoint: r(n.idle.timeCheckpoint, ce(e.idle) ? e.idle.timeCheckpoint : void 0),
-      scheduler: r(n.idle.scheduler, ce(e.idle) ? e.idle.scheduler : void 0)
+      ...z(e.idle) ? e.idle : {},
+      timeCheckpoint: i(n.idle.timeCheckpoint, z(e.idle) ? e.idle.timeCheckpoint : void 0),
+      scheduler: i(n.idle.scheduler, z(e.idle) ? e.idle.scheduler : void 0)
     },
     endlessMine: e.endlessMine === void 0 ? n.endlessMine : e.endlessMine,
     mastery: e.mastery === void 0 ? n.mastery : e.mastery,
     inventory: {
       ...n.inventory,
-      ...ce(e.inventory) ? e.inventory : {},
-      currencies: r(n.inventory.currencies, ce(e.inventory) ? e.inventory.currencies : void 0),
-      items: r(n.inventory.items, ce(e.inventory) ? e.inventory.items : void 0),
-      equipment: r(n.inventory.equipment, ce(e.inventory) ? e.inventory.equipment : void 0)
+      ...z(e.inventory) ? e.inventory : {},
+      currencies: i(n.inventory.currencies, z(e.inventory) ? e.inventory.currencies : void 0),
+      items: i(n.inventory.items, z(e.inventory) ? e.inventory.items : void 0),
+      equipment: i(n.inventory.equipment, z(e.inventory) ? e.inventory.equipment : void 0)
     },
-    collection: r(n.collection, e.collection),
-    gacha: r(n.gacha, e.gacha),
-    profile: r(n.profile, e.profile),
-    statistics: r(n.statistics, e.statistics),
-    online: r(n.online, e.online),
-    settings: r(n.settings, e.settings)
+    collection: i(n.collection, e.collection),
+    gacha: i(n.gacha, e.gacha),
+    profile: i(n.profile, e.profile),
+    statistics: i(n.statistics, e.statistics),
+    online: i(n.online, e.online),
+    settings: i(n.settings, e.settings)
   };
-}, ss = (e) => {
-  const t = B(e, "state");
-  C(t.schemaVersion, "state.schemaVersion", { min: Ge, max: Ge, integer: !0 }), C(t.revision, "state.revision", { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
-  const n = B(t.account, "state.account"), r = $(n.accountId, "state.account.accountId", { min: 1, max: 128 });
-  $(n.username, "state.account.username", { min: 1, max: 24 }), $(n.avatarId, "state.account.avatarId", { min: 1, max: 256 }), $(n.profileFrameId, "state.account.profileFrameId", { min: 1, max: 256 }), $(n.equippedTitleId, "state.account.equippedTitleId", { min: 1, max: 256 }), he(n.ownedTitleIds, "state.account.ownedTitleIds", { max: 1e4, unique: !0 }), he(n.ownedFrameIds, "state.account.ownedFrameIds", { max: 1e4, unique: !0 }), C(n.arenaRating, "state.account.arenaRating", { min: 0, max: 1e6, integer: !0 });
-  const i = ["BRONZE", "SILVER", "GOLD", "PLATINUM", "DIAMOND", "MASTER", "LEGEND"];
-  V(n.arenaTier, i, "state.account.arenaTier"), V(n.highestArenaTier, i, "state.account.highestArenaTier");
-  const s = B(n.raidStats, "state.account.raidStats");
-  C(s.lifetimeDamage, "state.account.raidStats.lifetimeDamage", { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), C(s.bossesDefeated, "state.account.raidStats.bossesDefeated", { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), s.bestContributionRank !== null && C(s.bestContributionRank, "state.account.raidStats.bestContributionRank", { min: 1, max: Number.MAX_SAFE_INTEGER, integer: !0 }), te(n.createdAt, "state.account.createdAt"), te(n.lastOnlineAt, "state.account.lastOnlineAt");
-  const o = B(t.accountProgress, "state.accountProgress");
-  C(o.level, "state.accountProgress.level", { min: 1, max: 100, integer: !0 }), C(o.xp, "state.accountProgress.xp", { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), C(o.researchPoints, "state.accountProgress.researchPoints", { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), C(o.skillPoints, "state.accountProgress.skillPoints", { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), he(o.selectedSkillNodes, "state.accountProgress.selectedSkillNodes", { max: 1e4, unique: !0 });
-  const a = B(t.mining, "state.mining");
-  C(a.level, "state.mining.level", { min: 1, max: 100, integer: !0 }), C(a.xp, "state.mining.xp", { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
-  for (const R of ["totalMined", "dailyMined", "weeklyMined", "monthlyMined"]) C(a[R], `state.mining.${R}`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
-  he(a.unlockedAreas, "state.mining.unlockedAreas", { max: 1e4, unique: !0 }), he(a.unlockedVeins, "state.mining.unlockedVeins", { max: 1e4, unique: !0 });
-  const l = B(a.processedFarmEventIds, "state.mining.processedFarmEventIds");
-  for (const [R, U] of Object.entries(l))
-    (!R || R.length > 128 || U !== !0) && O(`state.mining.processedFarmEventIds.${R}`, "expected an exact event ID mapped to true");
-  te(a.lastMinedAt, "state.mining.lastMinedAt", !0);
-  const d = B(t.facilities, "state.facilities");
-  for (const R of ["fusionLab", "researchLab", "expeditionGuild"]) C(d[R], `state.facilities.${R}`, { min: 1, max: 100, integer: !0 });
-  const u = B(t.stones, "state.stones"), h = /* @__PURE__ */ new Set();
-  for (const [R, U] of Object.entries(u))
-    h.has(R) && O(`state.stones.${R}`, "duplicate stone ID"), h.add(R), Kc(U, R, `state.stones.${R}`);
-  const w = Jo(t.endlessMine);
-  for (const R of w.partyStoneIds) h.has(R) || O("state.endlessMine.partyStoneIds", "references a missing stone");
-  const E = na(t.mastery);
-  for (const R of Object.keys(E.stones)) h.has(R) || O("state.mastery.stones", "references a missing stone");
-  const m = B(t.expeditions, "state.expeditions"), A = B(m.runs, "state.expeditions.runs");
-  Object.keys(A).length > 100 && O("state.expeditions.runs", "exceeds 100 retained runs");
-  const S = he(m.order, "state.expeditions.order", { max: 100, unique: !0 }), k = new Map(Ui.map((R) => [R.id, R])), T = new Set(Hi.map((R) => R.id)), p = /* @__PURE__ */ new Set();
-  for (const [R, U] of Object.entries(A)) {
-    const v = `state.expeditions.runs.${R}`, D = B(U, v);
-    $(D.expeditionId, `${v}.expeditionId`, { min: 1, max: 256 }) !== R && O(`${v}.expeditionId`, "map key must equal expeditionId");
-    const Ie = $(D.regionId, `${v}.regionId`, { min: 1, max: 256 });
-    T.has(Ie) || O(`${v}.regionId`, "references an unknown region");
-    const Ye = $(D.durationId, `${v}.durationId`, { min: 1, max: 256 }), it = k.get(Ye);
-    it || O(`${v}.durationId`, "references an unknown duration"), C(D.durationMs, `${v}.durationMs`, { min: 1, max: 1440 * 60 * 1e3, integer: !0 }) !== it?.durationMs && O(`${v}.durationMs`, "does not match duration configuration"), V(D.strategy, $i, `${v}.strategy`), $(D.partyId, `${v}.partyId`, { min: 1, max: 256 });
-    const ye = V(D.status, ["ACTIVE", "READY", "CLAIMED"], `${v}.status`), ke = me(D.partySnapshot, `${v}.partySnapshot`, 3);
-    ke.length === 0 && O(`${v}.partySnapshot`, "must contain at least one stone");
-    const Qt = /* @__PURE__ */ new Set();
-    ke.forEach((Ce, c) => {
-      const g = `${v}.partySnapshot[${c}]`, _ = B(Ce, g), P = $(_.stoneId, `${g}.stoneId`, { min: 1, max: 256 });
-      Qt.has(P) && O(`${g}.stoneId`, "duplicate party snapshot stone"), Qt.add(P), ye !== "CLAIMED" && !h.has(P) && O(`${g}.stoneId`, "active expedition references a missing stone"), ye !== "CLAIMED" && (p.has(P) && O(`${g}.stoneId`, "stone is assigned to multiple expeditions"), p.add(P));
-      const j = $(_.speciesId, `${g}.speciesId`, { min: 1, max: 256 });
-      fe[j] || O(`${g}.speciesId`, "references an unknown species"), C(_.level, `${g}.level`, { min: 1, max: 120, integer: !0 }), V(_.rarity, et, `${g}.rarity`), V(_.primaryElement, dn, `${g}.primaryElement`), _.secondaryElement !== null && V(_.secondaryElement, dn, `${g}.secondaryElement`), Tr(_.stats, `${g}.stats`);
-      const ee = B(_.individualValues, `${g}.individualValues`);
-      for (const W of je) C(ee[W], `${g}.individualValues.${W}`, { min: 0, max: 31, integer: !0 });
-      he(_.skillIds, `${g}.skillIds`, { max: 6, unique: !0 }), he(_.traitIds, `${g}.traitIds`, { max: 8, unique: !0 }), me(_.equipment, `${g}.equipment`, 4).forEach((W, ae) => sr(W, `${g}.equipment[${ae}]`)), Qc(_.equipmentBonuses, `${g}.equipmentBonuses`), V(_.mutation, ["NONE", "PRISMATIC", "ANCIENT", "CORRUPTED", "PERFECT"], `${g}.mutation`), C(_.generation, `${g}.generation`, { min: 0, max: 1e5, integer: !0 }), me(_.lineage, `${g}.lineage`, 8).forEach((W, ae) => or(W, `${g}.lineage[${ae}]`)), C(_.power, `${g}.power`, { min: 1, max: 1e9, integer: !0 }), C(_.affinityRank, `${g}.affinityRank`, { min: 0, max: 7, integer: !0 });
-    }), $(D.seed, `${v}.seed`, { min: 1, max: 1024 });
-    const yt = Se(D.repeat, `${v}.repeat`);
-    te(D.startedAt, `${v}.startedAt`), te(D.lastSimulatedAt, `${v}.lastSimulatedAt`), te(D.nextCompletionAt, `${v}.nextCompletionAt`);
-    const at = C(D.completedCycles, `${v}.completedCycles`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), ct = C(D.claimedCycles, `${v}.claimedCycles`, { min: 0, max: at, integer: !0 });
-    C(D.claimCount, `${v}.claimCount`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), ye === "READY" && (yt || at <= ct) && O(`${v}.status`, "READY requires an unclaimed non-repeating completion"), ye === "CLAIMED" && (yt || at !== ct) && O(`${v}.status`, "CLAIMED must be a fully claimed non-repeating expedition"), Jc(D.expeditionStorage, `${v}.expeditionStorage`);
-    const Ot = /* @__PURE__ */ new Set();
-    me(D.reportEvents, `${v}.reportEvents`, un).forEach((Ce, c) => {
-      Zc(Ce, `${v}.reportEvents[${c}]`, R);
-      const g = Ce.reportId;
-      Ot.has(g) && O(`${v}.reportEvents[${c}].reportId`, "duplicate report ID"), Ot.add(g);
+}, Kr = (e) => {
+  const t = D(e, "state");
+  N(t.schemaVersion, "state.schemaVersion", { min: Te, max: Te, integer: !0 }), N(t.revision, "state.revision", { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
+  const n = D(t.account, "state.account"), i = C(n.accountId, "state.account.accountId", { min: 1, max: 128 });
+  C(n.username, "state.account.username", { min: 1, max: 24 }), C(n.avatarId, "state.account.avatarId", { min: 1, max: 256 }), C(n.profileFrameId, "state.account.profileFrameId", { min: 1, max: 256 }), C(n.equippedTitleId, "state.account.equippedTitleId", { min: 1, max: 256 }), se(n.ownedTitleIds, "state.account.ownedTitleIds", { max: 1e4, unique: !0 }), se(n.ownedFrameIds, "state.account.ownedFrameIds", { max: 1e4, unique: !0 }), N(n.arenaRating, "state.account.arenaRating", { min: 0, max: 1e6, integer: !0 });
+  const r = ["BRONZE", "SILVER", "GOLD", "PLATINUM", "DIAMOND", "MASTER", "LEGEND"];
+  B(n.arenaTier, r, "state.account.arenaTier"), B(n.highestArenaTier, r, "state.account.highestArenaTier");
+  const s = D(n.raidStats, "state.account.raidStats");
+  N(s.lifetimeDamage, "state.account.raidStats.lifetimeDamage", { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), N(s.bossesDefeated, "state.account.raidStats.bossesDefeated", { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), s.bestContributionRank !== null && N(s.bestContributionRank, "state.account.raidStats.bestContributionRank", { min: 1, max: Number.MAX_SAFE_INTEGER, integer: !0 }), X(n.createdAt, "state.account.createdAt"), X(n.lastOnlineAt, "state.account.lastOnlineAt");
+  const o = D(t.accountProgress, "state.accountProgress");
+  N(o.level, "state.accountProgress.level", { min: 1, max: 100, integer: !0 }), N(o.xp, "state.accountProgress.xp", { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), N(o.researchPoints, "state.accountProgress.researchPoints", { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), N(o.skillPoints, "state.accountProgress.skillPoints", { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), se(o.selectedSkillNodes, "state.accountProgress.selectedSkillNodes", { max: 1e4, unique: !0 });
+  const a = D(t.mining, "state.mining");
+  N(a.level, "state.mining.level", { min: 1, max: 100, integer: !0 }), N(a.xp, "state.mining.xp", { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
+  for (const v of ["totalMined", "dailyMined", "weeklyMined", "monthlyMined"]) N(a[v], `state.mining.${v}`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
+  se(a.unlockedAreas, "state.mining.unlockedAreas", { max: 1e4, unique: !0 }), se(a.unlockedVeins, "state.mining.unlockedVeins", { max: 1e4, unique: !0 });
+  const c = D(a.processedFarmEventIds, "state.mining.processedFarmEventIds");
+  for (const [v, P] of Object.entries(c))
+    (!v || v.length > 128 || P !== !0) && _(`state.mining.processedFarmEventIds.${v}`, "expected an exact event ID mapped to true");
+  X(a.lastMinedAt, "state.mining.lastMinedAt", !0);
+  const l = D(t.facilities, "state.facilities");
+  for (const v of ["fusionLab", "researchLab", "expeditionGuild"]) N(l[v], `state.facilities.${v}`, { min: 1, max: 100, integer: !0 });
+  const d = D(t.stones, "state.stones"), f = /* @__PURE__ */ new Set();
+  for (const [v, P] of Object.entries(d))
+    f.has(v) && _(`state.stones.${v}`, "duplicate stone ID"), f.add(v), qc(P, v, `state.stones.${v}`);
+  const y = jo(t.endlessMine);
+  for (const v of y.partyStoneIds) f.has(v) || _("state.endlessMine.partyStoneIds", "references a missing stone");
+  const h = Ko(t.mastery);
+  for (const v of Object.keys(h.stones)) f.has(v) || _("state.mastery.stones", "references a missing stone");
+  const u = D(t.expeditions, "state.expeditions"), I = D(u.runs, "state.expeditions.runs");
+  Object.keys(I).length > 100 && _("state.expeditions.runs", "exceeds 100 retained runs");
+  const g = se(u.order, "state.expeditions.order", { max: 100, unique: !0 }), b = new Map(xr.map((v) => [v.id, v])), R = new Set(Lr.map((v) => v.id)), m = /* @__PURE__ */ new Set();
+  for (const [v, P] of Object.entries(I)) {
+    const A = `state.expeditions.runs.${v}`, L = D(P, A);
+    C(L.expeditionId, `${A}.expeditionId`, { min: 1, max: 256 }) !== v && _(`${A}.expeditionId`, "map key must equal expeditionId");
+    const me = C(L.regionId, `${A}.regionId`, { min: 1, max: 256 });
+    R.has(me) || _(`${A}.regionId`, "references an unknown region");
+    const He = C(L.durationId, `${A}.durationId`, { min: 1, max: 256 }), tt = b.get(He);
+    tt || _(`${A}.durationId`, "references an unknown duration"), N(L.durationMs, `${A}.durationMs`, { min: 1, max: 1440 * 60 * 1e3, integer: !0 }) !== tt?.durationMs && _(`${A}.durationMs`, "does not match duration configuration"), B(L.strategy, Tr, `${A}.strategy`), C(L.partyId, `${A}.partyId`, { min: 1, max: 256 });
+    const he = B(L.status, ["ACTIVE", "READY", "CLAIMED"], `${A}.status`), $e = te(L.partySnapshot, `${A}.partySnapshot`, 3);
+    $e.length === 0 && _(`${A}.partySnapshot`, "must contain at least one stone");
+    const gi = /* @__PURE__ */ new Set();
+    $e.forEach((nt, zt) => {
+      const ee = `${A}.partySnapshot[${zt}]`, pe = D(nt, ee), xt = C(pe.stoneId, `${ee}.stoneId`, { min: 1, max: 256 });
+      gi.has(xt) && _(`${ee}.stoneId`, "duplicate party snapshot stone"), gi.add(xt), he !== "CLAIMED" && !f.has(xt) && _(`${ee}.stoneId`, "active expedition references a missing stone"), he !== "CLAIMED" && (m.has(xt) && _(`${ee}.stoneId`, "stone is assigned to multiple expeditions"), m.add(xt));
+      const ts = C(pe.speciesId, `${ee}.speciesId`, { min: 1, max: 256 });
+      re[ts] || _(`${ee}.speciesId`, "references an unknown species"), N(pe.level, `${ee}.level`, { min: 1, max: 120, integer: !0 }), B(pe.rarity, Be, `${ee}.rarity`), B(pe.primaryElement, Ht, `${ee}.primaryElement`), pe.secondaryElement !== null && B(pe.secondaryElement, Ht, `${ee}.secondaryElement`), mi(pe.stats, `${ee}.stats`);
+      const ns = D(pe.individualValues, `${ee}.individualValues`);
+      for (const gt of ke) N(ns[gt], `${ee}.individualValues.${gt}`, { min: 0, max: 31, integer: !0 });
+      se(pe.skillIds, `${ee}.skillIds`, { max: 6, unique: !0 }), se(pe.traitIds, `${ee}.traitIds`, { max: 8, unique: !0 }), te(pe.equipment, `${ee}.equipment`, 4).forEach((gt, Tn) => Yn(gt, `${ee}.equipment[${Tn}]`)), Hc(pe.equipmentBonuses, `${ee}.equipmentBonuses`), B(pe.mutation, ["NONE", "PRISMATIC", "ANCIENT", "CORRUPTED", "PERFECT"], `${ee}.mutation`), N(pe.generation, `${ee}.generation`, { min: 0, max: 1e5, integer: !0 }), te(pe.lineage, `${ee}.lineage`, 8).forEach((gt, Tn) => jn(gt, `${ee}.lineage[${Tn}]`)), N(pe.power, `${ee}.power`, { min: 1, max: 1e9, integer: !0 }), N(pe.affinityRank, `${ee}.affinityRank`, { min: 0, max: 7, integer: !0 });
+    }), C(L.seed, `${A}.seed`, { min: 1, max: 1024 });
+    const Ii = ce(L.repeat, `${A}.repeat`);
+    X(L.startedAt, `${A}.startedAt`), X(L.lastSimulatedAt, `${A}.lastSimulatedAt`), X(L.nextCompletionAt, `${A}.nextCompletionAt`);
+    const Mn = N(L.completedCycles, `${A}.completedCycles`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), Rn = N(L.claimedCycles, `${A}.claimedCycles`, { min: 0, max: Mn, integer: !0 });
+    N(L.claimCount, `${A}.claimCount`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), he === "READY" && (Ii || Mn <= Rn) && _(`${A}.status`, "READY requires an unclaimed non-repeating completion"), he === "CLAIMED" && (Ii || Mn !== Rn) && _(`${A}.status`, "CLAIMED must be a fully claimed non-repeating expedition"), Yc(L.expeditionStorage, `${A}.expeditionStorage`);
+    const Si = /* @__PURE__ */ new Set();
+    te(L.reportEvents, `${A}.reportEvents`, Yt).forEach((nt, zt) => {
+      jc(nt, `${A}.reportEvents[${zt}]`, v);
+      const ee = nt.reportId;
+      Si.has(ee) && _(`${A}.reportEvents[${zt}].reportId`, "duplicate report ID"), Si.add(ee);
     });
-    const lt = B(D.reportSummary, `${v}.reportSummary`);
-    for (const Ce of ["battles", "wins", "miningYield", "rareDiscoveries", "equipmentDrops"]) C(lt[Ce], `${v}.reportSummary.${Ce}`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
-    lt.wins > lt.battles && O(`${v}.reportSummary.wins`, "cannot exceed battles"), lt.bestDropRarity !== null && V(lt.bestDropRarity, et, `${v}.reportSummary.bestDropRarity`), te(D.lastClaimedAt, `${v}.lastClaimedAt`, !0), ct > 0 && D.lastClaimedAt === null && O(`${v}.lastClaimedAt`, "claimed cycles require a claim timestamp");
+    const Ct = D(L.reportSummary, `${A}.reportSummary`);
+    for (const nt of ["battles", "wins", "miningYield", "rareDiscoveries", "equipmentDrops"]) N(Ct[nt], `${A}.reportSummary.${nt}`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
+    Ct.wins > Ct.battles && _(`${A}.reportSummary.wins`, "cannot exceed battles"), Ct.bestDropRarity !== null && B(Ct.bestDropRarity, Be, `${A}.reportSummary.bestDropRarity`), X(L.lastClaimedAt, `${A}.lastClaimedAt`, !0), Rn > 0 && L.lastClaimedAt === null && _(`${A}.lastClaimedAt`, "claimed cycles require a claim timestamp");
   }
-  for (const R of S) Object.prototype.hasOwnProperty.call(A, R) || O("state.expeditions.order", "references a missing expedition");
-  const f = /* @__PURE__ */ new Set();
-  me(m.discoveryStorage, "state.expeditions.discoveryStorage", Bi).forEach((R, U) => {
-    const v = is(R, `state.expeditions.discoveryStorage[${U}]`);
-    f.has(v) && O(`state.expeditions.discoveryStorage[${U}].discoveryId`, "duplicate stored discovery"), f.add(v);
+  for (const v of g) Object.prototype.hasOwnProperty.call(I, v) || _("state.expeditions.order", "references a missing expedition");
+  const p = /* @__PURE__ */ new Set();
+  te(u.discoveryStorage, "state.expeditions.discoveryStorage", kr).forEach((v, P) => {
+    const A = Wr(v, `state.expeditions.discoveryStorage[${P}]`);
+    p.has(A) && _(`state.expeditions.discoveryStorage[${P}].discoveryId`, "duplicate stored discovery"), p.add(A);
   });
-  for (const R of ["overflowDiscarded", "totalCycles", "totalClaims"]) C(m[R], `state.expeditions.${R}`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
-  const y = B(t.training, "state.training");
-  if (y.assignment !== null) {
-    const R = B(y.assignment, "state.training.assignment"), U = $(R.stoneId, "state.training.assignment.stoneId", { min: 1, max: 256 });
-    h.has(U) || O("state.training.assignment.stoneId", "references a missing stone"), p.has(U) && O("state.training.assignment.stoneId", "stone is also assigned to an expedition"), te(R.assignedAt, "state.training.assignment.assignedAt"), te(R.lastProcessedAt, "state.training.assignment.lastProcessedAt"), C(R.xpPerHour, "state.training.assignment.xpPerHour", { min: 1, max: 1e4, integer: !0 }), C(R.bankedMs, "state.training.assignment.bankedMs", { min: 0, max: 720 * 60 * 60 * 1e3, integer: !0 }), C(R.totalClaimedXp, "state.training.assignment.totalClaimedXp", { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
+  for (const v of ["overflowDiscarded", "totalCycles", "totalClaims"]) N(u[v], `state.expeditions.${v}`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
+  const S = D(t.training, "state.training");
+  if (S.assignment !== null) {
+    const v = D(S.assignment, "state.training.assignment"), P = C(v.stoneId, "state.training.assignment.stoneId", { min: 1, max: 256 });
+    f.has(P) || _("state.training.assignment.stoneId", "references a missing stone"), m.has(P) && _("state.training.assignment.stoneId", "stone is also assigned to an expedition"), X(v.assignedAt, "state.training.assignment.assignedAt"), X(v.lastProcessedAt, "state.training.assignment.lastProcessedAt"), N(v.xpPerHour, "state.training.assignment.xpPerHour", { min: 1, max: 1e4, integer: !0 }), N(v.bankedMs, "state.training.assignment.bankedMs", { min: 0, max: 720 * 60 * 60 * 1e3, integer: !0 }), N(v.totalClaimedXp, "state.training.assignment.totalClaimedXp", { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
   }
-  const b = B(t.affinityGarden, "state.affinityGarden");
-  if (b.assignment !== null) {
-    const R = B(b.assignment, "state.affinityGarden.assignment"), U = $(R.stoneId, "state.affinityGarden.assignment.stoneId", { min: 1, max: 256 });
-    h.has(U) || O("state.affinityGarden.assignment.stoneId", "references a missing stone"), (p.has(U) || y.assignment !== null && y.assignment.stoneId === U) && O("state.affinityGarden.assignment.stoneId", "stone has another background assignment"), te(R.assignedAt, "state.affinityGarden.assignment.assignedAt"), te(R.lastProcessedAt, "state.affinityGarden.assignment.lastProcessedAt"), C(R.affinityPerHour, "state.affinityGarden.assignment.affinityPerHour", { min: 1, max: 100, integer: !0 }), C(R.bankedMs, "state.affinityGarden.assignment.bankedMs", { min: 0, max: 720 * 60 * 60 * 1e3, integer: !0 }), C(R.totalClaimedAffinity, "state.affinityGarden.assignment.totalClaimedAffinity", { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
+  const M = D(t.affinityGarden, "state.affinityGarden");
+  if (M.assignment !== null) {
+    const v = D(M.assignment, "state.affinityGarden.assignment"), P = C(v.stoneId, "state.affinityGarden.assignment.stoneId", { min: 1, max: 256 });
+    f.has(P) || _("state.affinityGarden.assignment.stoneId", "references a missing stone"), (m.has(P) || S.assignment !== null && S.assignment.stoneId === P) && _("state.affinityGarden.assignment.stoneId", "stone has another background assignment"), X(v.assignedAt, "state.affinityGarden.assignment.assignedAt"), X(v.lastProcessedAt, "state.affinityGarden.assignment.lastProcessedAt"), N(v.affinityPerHour, "state.affinityGarden.assignment.affinityPerHour", { min: 1, max: 100, integer: !0 }), N(v.bankedMs, "state.affinityGarden.assignment.bankedMs", { min: 0, max: 720 * 60 * 60 * 1e3, integer: !0 }), N(v.totalClaimedAffinity, "state.affinityGarden.assignment.totalClaimedAffinity", { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
   }
-  const M = B(t.research, "state.research"), N = ["GEOLOGY_SURVEY", "GENETIC_ARCHIVE", "EXPEDITION_LOGISTICS"];
-  if (M.slot !== null) {
-    const R = B(M.slot, "state.research.slot");
-    $(R.researchId, "state.research.slot.researchId", { min: 1, max: 256 }), V(R.projectId, N, "state.research.slot.projectId"), $(R.seed, "state.research.slot.seed", { min: 1, max: 1024 }), te(R.startedAt, "state.research.slot.startedAt"), te(R.completesAt, "state.research.slot.completesAt");
-    const U = V(R.status, ["ACTIVE", "READY", "CLAIMED"], "state.research.slot.status");
-    te(R.claimedAt, "state.research.slot.claimedAt", !0), U === "CLAIMED" != (R.claimedAt !== null) && O("state.research.slot.claimedAt", "must agree with research status");
+  const w = D(t.research, "state.research"), T = ["GEOLOGY_SURVEY", "GENETIC_ARCHIVE", "EXPEDITION_LOGISTICS"];
+  if (w.slot !== null) {
+    const v = D(w.slot, "state.research.slot");
+    C(v.researchId, "state.research.slot.researchId", { min: 1, max: 256 }), B(v.projectId, T, "state.research.slot.projectId"), C(v.seed, "state.research.slot.seed", { min: 1, max: 1024 }), X(v.startedAt, "state.research.slot.startedAt"), X(v.completesAt, "state.research.slot.completesAt");
+    const P = B(v.status, ["ACTIVE", "READY", "CLAIMED"], "state.research.slot.status");
+    X(v.claimedAt, "state.research.slot.claimedAt", !0), P === "CLAIMED" != (v.claimedAt !== null) && _("state.research.slot.claimedAt", "must agree with research status");
   }
-  me(M.completedProjectIds, "state.research.completedProjectIds", N.length).forEach((R, U) => V(R, N, `state.research.completedProjectIds[${U}]`));
-  const L = B(M.claimLedger, "state.research.claimLedger");
-  for (const [R, U] of Object.entries(L)) (!R || R.length > 256 || U !== !0) && O(`state.research.claimLedger.${R}`, "expected an exact research ID mapped to true");
-  const G = B(t.idle, "state.idle"), H = B(G.timeCheckpoint, "state.idle.timeCheckpoint");
-  C(H.version, "state.idle.timeCheckpoint.version", { min: 1, max: 1, integer: !0 });
-  const q = C(H.trustedNowMs, "state.idle.timeCheckpoint.trustedNowMs", { min: 0, max: 864e13, integer: !0 }), K = C(H.wallHighWaterMs, "state.idle.timeCheckpoint.wallHighWaterMs", { min: 0, max: 864e13, integer: !0 });
-  q > K && O("state.idle.timeCheckpoint", "trusted time cannot exceed wall high-water"), C(H.reconciliationCount, "state.idle.timeCheckpoint.reconciliationCount", { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
-  const ue = B(G.scheduler, "state.idle.scheduler");
-  C(ue.version, "state.idle.scheduler.version", { min: 1, max: 1, integer: !0 });
-  const F = /* @__PURE__ */ new Set();
-  if (me(ue.jobs, "state.idle.scheduler.jobs", 256).forEach((R, U) => {
-    const v = `state.idle.scheduler.jobs[${U}]`, D = B(R, v), Ie = $(D.id, `${v}.id`, { min: 1, max: 512 });
-    F.has(Ie) && O(`${v}.id`, "duplicate scheduler job"), F.add(Ie);
-    const Ye = C(D.dueAtMs, `${v}.dueAtMs`, { min: 0, max: 864e13, integer: !0 }), it = D.repeatEveryMs === void 0 ? void 0 : C(D.repeatEveryMs, `${v}.repeatEveryMs`, { min: 1, max: Number.MAX_SAFE_INTEGER, integer: !0 }), De = D.endAtMs === void 0 ? void 0 : C(D.endAtMs, `${v}.endAtMs`, { min: 0, max: 864e13, integer: !0 });
-    De !== void 0 && it === void 0 && O(`${v}.endAtMs`, "requires repeatEveryMs"), De !== void 0 && De < Ye && O(`${v}.endAtMs`, "cannot precede dueAtMs"), D.sequence !== void 0 && C(D.sequence, `${v}.sequence`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
-    const ye = B(D.payload, `${v}.payload`), ke = V(ye.kind, ["EXPEDITION", "TRAINING", "AFFINITY_GARDEN", "RESEARCH", "ENDLESS_MINE"], `${v}.payload.kind`);
-    ke === "EXPEDITION" ? (wn(ye, ["kind", "expeditionId"], `${v}.payload`), $(ye.expeditionId, `${v}.payload.expeditionId`, { min: 1, max: 256 })) : ke === "RESEARCH" ? (wn(ye, ["kind", "researchId"], `${v}.payload`), $(ye.researchId, `${v}.payload.researchId`, { min: 1, max: 256 })) : ke === "ENDLESS_MINE" ? (wn(ye, ["kind", "runId"], `${v}.payload`), $(ye.runId, `${v}.payload.runId`, { min: 1, max: 512 })) : (wn(ye, ["kind", "stoneId"], `${v}.payload`), $(ye.stoneId, `${v}.payload.stoneId`, { min: 1, max: 256 }));
-  }), te(G.lastProcessedAt, "state.idle.lastProcessedAt"), te(G.lastActiveAt, "state.idle.lastActiveAt"), G.lastWelcomeBack !== null) {
-    const R = B(G.lastWelcomeBack, "state.idle.lastWelcomeBack");
-    $(R.summaryId, "state.idle.lastWelcomeBack.summaryId", { min: 1, max: 512 }), te(R.from, "state.idle.lastWelcomeBack.from"), te(R.to, "state.idle.lastWelcomeBack.to");
-    for (const U of ["elapsedMs", "expeditionCycles", "trainingXpReady", "affinityReady", "endlessFloors", "endlessCredits", "equipmentAdded", "equipmentSalvaged", "rareDiscoveries"]) C(R[U], `state.idle.lastWelcomeBack.${U}`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
-    Se(R.capped, "state.idle.lastWelcomeBack.capped"), Se(R.rollbackDetected, "state.idle.lastWelcomeBack.rollbackDetected"), Se(R.researchReady, "state.idle.lastWelcomeBack.researchReady"), te(R.createdAt, "state.idle.lastWelcomeBack.createdAt");
+  te(w.completedProjectIds, "state.research.completedProjectIds", T.length).forEach((v, P) => B(v, T, `state.research.completedProjectIds[${P}]`));
+  const x = D(w.claimLedger, "state.research.claimLedger");
+  for (const [v, P] of Object.entries(x)) (!v || v.length > 256 || P !== !0) && _(`state.research.claimLedger.${v}`, "expected an exact research ID mapped to true");
+  const $ = D(t.idle, "state.idle"), F = D($.timeCheckpoint, "state.idle.timeCheckpoint");
+  N(F.version, "state.idle.timeCheckpoint.version", { min: 1, max: 1, integer: !0 });
+  const q = N(F.trustedNowMs, "state.idle.timeCheckpoint.trustedNowMs", { min: 0, max: 864e13, integer: !0 }), Y = N(F.wallHighWaterMs, "state.idle.timeCheckpoint.wallHighWaterMs", { min: 0, max: 864e13, integer: !0 });
+  q > Y && _("state.idle.timeCheckpoint", "trusted time cannot exceed wall high-water"), N(F.reconciliationCount, "state.idle.timeCheckpoint.reconciliationCount", { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
+  const oe = D($.scheduler, "state.idle.scheduler");
+  N(oe.version, "state.idle.scheduler.version", { min: 1, max: 1, integer: !0 });
+  const O = /* @__PURE__ */ new Set();
+  if (te(oe.jobs, "state.idle.scheduler.jobs", 256).forEach((v, P) => {
+    const A = `state.idle.scheduler.jobs[${P}]`, L = D(v, A), me = C(L.id, `${A}.id`, { min: 1, max: 512 });
+    O.has(me) && _(`${A}.id`, "duplicate scheduler job"), O.add(me);
+    const He = N(L.dueAtMs, `${A}.dueAtMs`, { min: 0, max: 864e13, integer: !0 }), tt = L.repeatEveryMs === void 0 ? void 0 : N(L.repeatEveryMs, `${A}.repeatEveryMs`, { min: 1, max: Number.MAX_SAFE_INTEGER, integer: !0 }), Ye = L.endAtMs === void 0 ? void 0 : N(L.endAtMs, `${A}.endAtMs`, { min: 0, max: 864e13, integer: !0 });
+    Ye !== void 0 && tt === void 0 && _(`${A}.endAtMs`, "requires repeatEveryMs"), Ye !== void 0 && Ye < He && _(`${A}.endAtMs`, "cannot precede dueAtMs"), L.sequence !== void 0 && N(L.sequence, `${A}.sequence`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
+    const he = D(L.payload, `${A}.payload`), $e = B(he.kind, ["EXPEDITION", "TRAINING", "AFFINITY_GARDEN", "RESEARCH", "ENDLESS_MINE"], `${A}.payload.kind`);
+    $e === "EXPEDITION" ? (en(he, ["kind", "expeditionId"], `${A}.payload`), C(he.expeditionId, `${A}.payload.expeditionId`, { min: 1, max: 256 })) : $e === "RESEARCH" ? (en(he, ["kind", "researchId"], `${A}.payload`), C(he.researchId, `${A}.payload.researchId`, { min: 1, max: 256 })) : $e === "ENDLESS_MINE" ? (en(he, ["kind", "runId"], `${A}.payload`), C(he.runId, `${A}.payload.runId`, { min: 1, max: 512 })) : (en(he, ["kind", "stoneId"], `${A}.payload`), C(he.stoneId, `${A}.payload.stoneId`, { min: 1, max: 256 }));
+  }), X($.lastProcessedAt, "state.idle.lastProcessedAt"), X($.lastActiveAt, "state.idle.lastActiveAt"), $.lastWelcomeBack !== null) {
+    const v = D($.lastWelcomeBack, "state.idle.lastWelcomeBack");
+    C(v.summaryId, "state.idle.lastWelcomeBack.summaryId", { min: 1, max: 512 }), X(v.from, "state.idle.lastWelcomeBack.from"), X(v.to, "state.idle.lastWelcomeBack.to");
+    for (const P of ["elapsedMs", "expeditionCycles", "trainingXpReady", "affinityReady", "endlessFloors", "endlessCredits", "equipmentAdded", "equipmentSalvaged", "rareDiscoveries"]) N(v[P], `state.idle.lastWelcomeBack.${P}`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
+    ce(v.capped, "state.idle.lastWelcomeBack.capped"), ce(v.rollbackDetected, "state.idle.lastWelcomeBack.rollbackDetected"), ce(v.researchReady, "state.idle.lastWelcomeBack.researchReady"), X(v.createdAt, "state.idle.lastWelcomeBack.createdAt");
   }
-  const z = B(t.inventory, "state.inventory"), se = B(z.currencies, "state.inventory.currencies");
-  for (const R of ["credits", "gachaTickets", "researchCores", "upgradeDust"]) C(se[R], `state.inventory.currencies.${R}`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
-  for (const [R, U] of Object.entries(se)) C(U, `state.inventory.currencies.${R}`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
-  kt(z.items, "state.inventory.items");
-  const _e = B(z.equipment, "state.inventory.equipment");
-  for (const [R, U] of Object.entries(_e))
-    sr(U, `state.inventory.equipment.${R}`), U.instanceId !== R && O(`state.inventory.equipment.${R}`, "map key must equal instanceId");
-  C(z.capacity, "state.inventory.capacity", { min: h.size, max: 1e6, integer: !0 });
-  const Ne = me(t.unappraisedFinds, "state.unappraisedFinds", 1e5), Le = /* @__PURE__ */ new Set();
-  Ne.forEach((R, U) => {
-    const v = `state.unappraisedFinds[${U}]`, D = B(R, v), Ie = $(D.discoveryId, `${v}.discoveryId`, { min: 1, max: 256 });
-    Le.has(Ie) && O(`${v}.discoveryId`, "duplicate discovery ID"), Le.add(Ie), $(D.seed, `${v}.seed`, { min: 1, max: 1024 }), $(D.veinId, `${v}.veinId`, { min: 1, max: 256 }), $(D.areaId, `${v}.areaId`, { min: 1, max: 256 }), te(D.discoveredAt, `${v}.discoveredAt`), V(D.hintedRarity, et, `${v}.hintedRarity`);
-    const Ye = $(D.sourceEventId, `${v}.sourceEventId`, { min: 1, max: 128 });
-    Object.prototype.hasOwnProperty.call(l, Ye) || O(`${v}.sourceEventId`, "does not exist in the Farm event ledger");
+  const V = D(t.inventory, "state.inventory"), Q = D(V.currencies, "state.inventory.currencies");
+  for (const v of ["credits", "gachaTickets", "researchCores", "upgradeDust"]) N(Q[v], `state.inventory.currencies.${v}`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
+  for (const [v, P] of Object.entries(Q)) N(P, `state.inventory.currencies.${v}`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
+  pt(V.items, "state.inventory.items");
+  const qe = D(V.equipment, "state.inventory.equipment");
+  for (const [v, P] of Object.entries(qe))
+    Yn(P, `state.inventory.equipment.${v}`), P.instanceId !== v && _(`state.inventory.equipment.${v}`, "map key must equal instanceId");
+  N(V.capacity, "state.inventory.capacity", { min: f.size, max: 1e6, integer: !0 });
+  const Oe = te(t.unappraisedFinds, "state.unappraisedFinds", 1e5), Ue = /* @__PURE__ */ new Set();
+  Oe.forEach((v, P) => {
+    const A = `state.unappraisedFinds[${P}]`, L = D(v, A), me = C(L.discoveryId, `${A}.discoveryId`, { min: 1, max: 256 });
+    Ue.has(me) && _(`${A}.discoveryId`, "duplicate discovery ID"), Ue.add(me), C(L.seed, `${A}.seed`, { min: 1, max: 1024 }), C(L.veinId, `${A}.veinId`, { min: 1, max: 256 }), C(L.areaId, `${A}.areaId`, { min: 1, max: 256 }), X(L.discoveredAt, `${A}.discoveredAt`), B(L.hintedRarity, Be, `${A}.hintedRarity`);
+    const He = C(L.sourceEventId, `${A}.sourceEventId`, { min: 1, max: 128 });
+    Object.prototype.hasOwnProperty.call(c, He) || _(`${A}.sourceEventId`, "does not exist in the Farm event ledger");
   });
-  const I = B(t.collection, "state.collection");
-  he(I.discoveredSpeciesIds, "state.collection.discoveredSpeciesIds", { max: 1e5, unique: !0 });
-  const x = B(I.mutationSpecies, "state.collection.mutationSpecies");
-  for (const [R, U] of Object.entries(x)) me(U, `state.collection.mutationSpecies.${R}`, 5).forEach((v, D) => V(v, ["NONE", "PRISMATIC", "ANCIENT", "CORRUPTED", "PERFECT"], `state.collection.mutationSpecies.${R}[${D}]`));
-  const X = B(I.variantSpecies, "state.collection.variantSpecies");
-  for (const [R, U] of Object.entries(X)) me(U, `state.collection.variantSpecies.${R}`, 4).forEach((v, D) => V(v, ["STANDARD", "SHINY", "AURORA", "OBSIDIAN"], `state.collection.variantSpecies.${R}[${D}]`));
-  kt(I.origins, "state.collection.origins"), me(t.fusionHistory, "state.fusionHistory", 1e5).forEach((R, U) => {
-    const v = `state.fusionHistory[${U}]`, D = B(R, v);
-    $(D.id, `${v}.id`, { min: 1, max: 256 }), he(D.parentIds, `${v}.parentIds`, { max: 4, unique: !0 }).length < 2 && O(`${v}.parentIds`, "fusion requires at least two parents"), $(D.childId, `${v}.childId`, { min: 1, max: 256 }), $(D.recipeId, `${v}.recipeId`, { nullable: !0, max: 256 }), he(D.catalystIds, `${v}.catalystIds`, { max: 16, unique: !0 }), he(D.inheritedTraits, `${v}.inheritedTraits`, { max: 8, unique: !0 }), he(D.inheritedSkills, `${v}.inheritedSkills`, { max: 6, unique: !0 }), V(D.mutation, ["NONE", "PRISMATIC", "ANCIENT", "CORRUPTED", "PERFECT"], `${v}.mutation`), Se(D.consumeParents, `${v}.consumeParents`), te(D.createdAt, `${v}.createdAt`);
+  const E = D(t.collection, "state.collection");
+  se(E.discoveredSpeciesIds, "state.collection.discoveredSpeciesIds", { max: 1e5, unique: !0 });
+  const k = D(E.mutationSpecies, "state.collection.mutationSpecies");
+  for (const [v, P] of Object.entries(k)) te(P, `state.collection.mutationSpecies.${v}`, 5).forEach((A, L) => B(A, ["NONE", "PRISMATIC", "ANCIENT", "CORRUPTED", "PERFECT"], `state.collection.mutationSpecies.${v}[${L}]`));
+  const U = D(E.variantSpecies, "state.collection.variantSpecies");
+  for (const [v, P] of Object.entries(U)) te(P, `state.collection.variantSpecies.${v}`, 4).forEach((A, L) => B(A, ["STANDARD", "SHINY", "AURORA", "OBSIDIAN"], `state.collection.variantSpecies.${v}[${L}]`));
+  pt(E.origins, "state.collection.origins"), te(t.fusionHistory, "state.fusionHistory", 1e5).forEach((v, P) => {
+    const A = `state.fusionHistory[${P}]`, L = D(v, A);
+    C(L.id, `${A}.id`, { min: 1, max: 256 }), se(L.parentIds, `${A}.parentIds`, { max: 4, unique: !0 }).length < 2 && _(`${A}.parentIds`, "fusion requires at least two parents"), C(L.childId, `${A}.childId`, { min: 1, max: 256 }), C(L.recipeId, `${A}.recipeId`, { nullable: !0, max: 256 }), se(L.catalystIds, `${A}.catalystIds`, { max: 16, unique: !0 }), se(L.inheritedTraits, `${A}.inheritedTraits`, { max: 8, unique: !0 }), se(L.inheritedSkills, `${A}.inheritedSkills`, { max: 6, unique: !0 }), B(L.mutation, ["NONE", "PRISMATIC", "ANCIENT", "CORRUPTED", "PERFECT"], `${A}.mutation`), ce(L.consumeParents, `${A}.consumeParents`), X(L.createdAt, `${A}.createdAt`);
   });
-  const Y = B(t.gacha, "state.gacha"), re = B(Y.pityByBanner, "state.gacha.pityByBanner");
-  for (const [R, U] of Object.entries(re)) {
-    const v = B(U, `state.gacha.pityByBanner.${R}`);
-    C(v.pullsSinceSsr, `state.gacha.pityByBanner.${R}.pullsSinceSsr`, { min: 0, max: 1e6, integer: !0 }), C(v.lifetimePulls, `state.gacha.pityByBanner.${R}.lifetimePulls`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), Se(v.featuredGuaranteed, `state.gacha.pityByBanner.${R}.featuredGuaranteed`);
+  const G = D(t.gacha, "state.gacha"), K = D(G.pityByBanner, "state.gacha.pityByBanner");
+  for (const [v, P] of Object.entries(K)) {
+    const A = D(P, `state.gacha.pityByBanner.${v}`);
+    N(A.pullsSinceSsr, `state.gacha.pityByBanner.${v}.pullsSinceSsr`, { min: 0, max: 1e6, integer: !0 }), N(A.lifetimePulls, `state.gacha.pityByBanner.${v}.lifetimePulls`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), ce(A.featuredGuaranteed, `state.gacha.pityByBanner.${v}.featuredGuaranteed`);
   }
-  me(Y.history, "state.gacha.history", 1e3).forEach((R, U) => {
-    const v = `state.gacha.history[${U}]`, D = B(R, v);
-    $(D.id, `${v}.id`, { min: 1, max: 256 }), $(D.bannerId, `${v}.bannerId`, { min: 1, max: 256 }), $(D.stoneId, `${v}.stoneId`, { min: 1, max: 256 }), V(D.rarity, et, `${v}.rarity`), C(D.pullNumber, `${v}.pullNumber`, { min: 1, max: Number.MAX_SAFE_INTEGER, integer: !0 }), C(D.pityBefore, `${v}.pityBefore`, { min: 0, max: 1e6, integer: !0 }), Se(D.guaranteed, `${v}.guaranteed`), te(D.createdAt, `${v}.createdAt`);
+  te(G.history, "state.gacha.history", 1e3).forEach((v, P) => {
+    const A = `state.gacha.history[${P}]`, L = D(v, A);
+    C(L.id, `${A}.id`, { min: 1, max: 256 }), C(L.bannerId, `${A}.bannerId`, { min: 1, max: 256 }), C(L.stoneId, `${A}.stoneId`, { min: 1, max: 256 }), B(L.rarity, Be, `${A}.rarity`), N(L.pullNumber, `${A}.pullNumber`, { min: 1, max: Number.MAX_SAFE_INTEGER, integer: !0 }), N(L.pityBefore, `${A}.pityBefore`, { min: 0, max: 1e6, integer: !0 }), ce(L.guaranteed, `${A}.guaranteed`), X(L.createdAt, `${A}.createdAt`);
   });
-  const oe = B(Y.rarityCounts, "state.gacha.rarityCounts");
-  for (const [R, U] of Object.entries(oe))
-    V(R, et, `state.gacha.rarityCounts key ${R}`), C(U, `state.gacha.rarityCounts.${R}`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
-  const le = B(t.achievements, "state.achievements");
-  for (const [R, U] of Object.entries(le)) {
-    const v = B(U, `state.achievements.${R}`);
-    C(v.value, `state.achievements.${R}.value`, { min: 0, max: Number.MAX_SAFE_INTEGER }), te(v.unlockedAt, `state.achievements.${R}.unlockedAt`, !0), te(v.claimedAt, `state.achievements.${R}.claimedAt`, !0), v.claimedAt !== null && v.unlockedAt === null && O(`state.achievements.${R}`, "claimed achievement must be unlocked");
+  const J = D(G.rarityCounts, "state.gacha.rarityCounts");
+  for (const [v, P] of Object.entries(J))
+    B(v, Be, `state.gacha.rarityCounts key ${v}`), N(P, `state.gacha.rarityCounts.${v}`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
+  const ne = D(t.achievements, "state.achievements");
+  for (const [v, P] of Object.entries(ne)) {
+    const A = D(P, `state.achievements.${v}`);
+    N(A.value, `state.achievements.${v}.value`, { min: 0, max: Number.MAX_SAFE_INTEGER }), X(A.unlockedAt, `state.achievements.${v}.unlockedAt`, !0), X(A.claimedAt, `state.achievements.${v}.claimedAt`, !0), A.claimedAt !== null && A.unlockedAt === null && _(`state.achievements.${v}`, "claimed achievement must be unlocked");
   }
-  const be = me(t.parties, "state.parties", 100);
-  be.length === 0 && O("state.parties", "at least one party is required");
-  const Ee = /* @__PURE__ */ new Set();
-  be.forEach((R, U) => {
-    const v = `state.parties[${U}]`, D = B(R, v), Ie = $(D.id, `${v}.id`, { min: 1, max: 256 });
-    Ee.has(Ie) && O(`${v}.id`, "duplicate party ID"), Ee.add(Ie), $(D.name, `${v}.name`, { min: 1, max: 64 }), Se(D.defense, `${v}.defense`);
-    const Ye = /* @__PURE__ */ new Set();
-    me(D.slots, `${v}.slots`, 3).forEach((it, De) => {
-      const ye = B(it, `${v}.slots[${De}]`), ke = $(ye.stoneId, `${v}.slots[${De}].stoneId`, { min: 1, max: 256 });
-      h.has(ke) || O(`${v}.slots[${De}].stoneId`, "references a missing stone"), Ye.has(ke) && O(`${v}.slots`, "contains a duplicate stone"), Ye.add(ke), V(ye.position, ["FRONT", "BACK", "SUPPORT"], `${v}.slots[${De}].position`);
+  const Ie = te(t.parties, "state.parties", 100);
+  Ie.length === 0 && _("state.parties", "at least one party is required");
+  const ue = /* @__PURE__ */ new Set();
+  Ie.forEach((v, P) => {
+    const A = `state.parties[${P}]`, L = D(v, A), me = C(L.id, `${A}.id`, { min: 1, max: 256 });
+    ue.has(me) && _(`${A}.id`, "duplicate party ID"), ue.add(me), C(L.name, `${A}.name`, { min: 1, max: 64 }), ce(L.defense, `${A}.defense`);
+    const He = /* @__PURE__ */ new Set();
+    te(L.slots, `${A}.slots`, 3).forEach((tt, Ye) => {
+      const he = D(tt, `${A}.slots[${Ye}]`), $e = C(he.stoneId, `${A}.slots[${Ye}].stoneId`, { min: 1, max: 256 });
+      f.has($e) || _(`${A}.slots[${Ye}].stoneId`, "references a missing stone"), He.has($e) && _(`${A}.slots`, "contains a duplicate stone"), He.add($e), B(he.position, ["FRONT", "BACK", "SUPPORT"], `${A}.slots[${Ye}].position`);
     });
   });
-  const nt = $(t.activePartyId, "state.activePartyId", { min: 1, max: 256 });
-  Ee.has(nt) || O("state.activePartyId", "references a missing party"), t.activeBattle === null || Kr(t.activeBattle, "state.activeBattle", h, { active: !0 });
-  const Wt = /* @__PURE__ */ new Set();
-  me(t.battleHistory, "state.battleHistory", 100).forEach((R, U) => {
-    const v = Kr(R, `state.battleHistory[${U}]`, h, { active: !1 });
-    Wt.has(v.battleId) && O(`state.battleHistory[${U}].battleId`, "duplicate battle ID"), Wt.add(v.battleId);
+  const wn = C(t.activePartyId, "state.activePartyId", { min: 1, max: 256 });
+  ue.has(wn) || _("state.activePartyId", "references a missing party"), t.activeBattle === null || Bi(t.activeBattle, "state.activeBattle", f, { active: !0 });
+  const fi = /* @__PURE__ */ new Set();
+  te(t.battleHistory, "state.battleHistory", 100).forEach((v, P) => {
+    const A = Bi(v, `state.battleHistory[${P}]`, f, { active: !1 });
+    fi.has(A.battleId) && _(`state.battleHistory[${P}].battleId`, "duplicate battle ID"), fi.add(A.battleId);
   });
-  const En = B(t.dungeonClears, "state.dungeonClears");
-  for (const [R, U] of Object.entries(En)) {
-    const v = B(U, `state.dungeonClears.${R}`);
-    C(v.bestTurns, `state.dungeonClears.${R}.bestTurns`, { min: 1, max: 100, integer: !0 }), C(v.clearCount, `state.dungeonClears.${R}.clearCount`, { min: 1, max: Number.MAX_SAFE_INTEGER, integer: !0 }), te(v.firstClearedAt, `state.dungeonClears.${R}.firstClearedAt`);
+  const Qr = D(t.dungeonClears, "state.dungeonClears");
+  for (const [v, P] of Object.entries(Qr)) {
+    const A = D(P, `state.dungeonClears.${v}`);
+    N(A.bestTurns, `state.dungeonClears.${v}.bestTurns`, { min: 1, max: 100, integer: !0 }), N(A.clearCount, `state.dungeonClears.${v}.clearCount`, { min: 1, max: Number.MAX_SAFE_INTEGER, integer: !0 }), X(A.firstClearedAt, `state.dungeonClears.${v}.firstClearedAt`);
   }
-  const It = B(t.profile, "state.profile");
-  for (const R of he(It.showcaseStoneIds, "state.profile.showcaseStoneIds", { max: 6, unique: !0 })) h.has(R) || O("state.profile.showcaseStoneIds", "references a missing stone");
-  for (const R of he(It.favoriteStoneIds, "state.profile.favoriteStoneIds", { max: 12, unique: !0 })) h.has(R) || O("state.profile.favoriteStoneIds", "references a missing stone");
-  C(It.totalAffinity, "state.profile.totalAffinity", { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), Se(It.public, "state.profile.public");
-  const gn = B(t.statistics, "state.statistics");
-  for (const R of ["fusionCount", "mutationCount", "rareDiscoveryCount", "battleWins", "battleLosses", "highestInfiniteFloor", "totalRaidDamage"]) C(gn[R], `state.statistics.${R}`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
-  const rt = B(t.online, "state.online");
-  Se(rt.connected, "state.online.connected"), $(rt.sessionId, "state.online.sessionId", { min: 1, max: 256 });
-  const Kt = C(rt.sequence, "state.online.sequence", { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), Me = /* @__PURE__ */ new Set();
-  me(rt.queue, "state.online.queue", 1e5).forEach((R, U) => {
-    const v = `state.online.queue[${U}]`, D = B(R, v), Ie = $(D.eventId, `${v}.eventId`, { min: 1, max: 256 });
-    Me.has(Ie) && O(`${v}.eventId`, "duplicate queued event"), Me.add(Ie), $(D.sessionId, `${v}.sessionId`, { min: 1, max: 256 }), C(D.sequence, `${v}.sequence`, { min: 1, max: Number.MAX_SAFE_INTEGER, integer: !0 }) > Kt && O(`${v}.sequence`, "exceeds online sequence"), te(D.timestamp, `${v}.timestamp`), $(D.accountId, `${v}.accountId`, { min: 1, max: 128 }) !== r && O(`${v}.accountId`, "does not match account"), V(D.kind, ["MINING_RECORDED", "STONE_CREATED", "STONE_EVOLVED", "STONE_FUSED", "BATTLE_FINISHED", "ACHIEVEMENT_UNLOCKED", "PROFILE_UPDATED", "RANK_REQUESTED"], `${v}.kind`), D.payload === void 0 && O(`${v}.payload`, "payload is required"), C(D.attempts, `${v}.attempts`, { min: 0, max: 1e3, integer: !0 }), te(D.nextAttemptAt, `${v}.nextAttemptAt`);
+  const Kt = D(t.profile, "state.profile");
+  for (const v of se(Kt.showcaseStoneIds, "state.profile.showcaseStoneIds", { max: 6, unique: !0 })) f.has(v) || _("state.profile.showcaseStoneIds", "references a missing stone");
+  for (const v of se(Kt.favoriteStoneIds, "state.profile.favoriteStoneIds", { max: 12, unique: !0 })) f.has(v) || _("state.profile.favoriteStoneIds", "references a missing stone");
+  N(Kt.totalAffinity, "state.profile.totalAffinity", { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), ce(Kt.public, "state.profile.public");
+  const Zr = D(t.statistics, "state.statistics");
+  for (const v of ["fusionCount", "mutationCount", "rareDiscoveryCount", "battleWins", "battleLosses", "highestInfiniteFloor", "totalRaidDamage"]) N(Zr[v], `state.statistics.${v}`, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 });
+  const Et = D(t.online, "state.online");
+  ce(Et.connected, "state.online.connected"), C(Et.sessionId, "state.online.sessionId", { min: 1, max: 256 });
+  const es = N(Et.sequence, "state.online.sequence", { min: 0, max: Number.MAX_SAFE_INTEGER, integer: !0 }), vn = /* @__PURE__ */ new Set();
+  te(Et.queue, "state.online.queue", 1e5).forEach((v, P) => {
+    const A = `state.online.queue[${P}]`, L = D(v, A), me = C(L.eventId, `${A}.eventId`, { min: 1, max: 256 });
+    vn.has(me) && _(`${A}.eventId`, "duplicate queued event"), vn.add(me), C(L.sessionId, `${A}.sessionId`, { min: 1, max: 256 }), N(L.sequence, `${A}.sequence`, { min: 1, max: Number.MAX_SAFE_INTEGER, integer: !0 }) > es && _(`${A}.sequence`, "exceeds online sequence"), X(L.timestamp, `${A}.timestamp`), C(L.accountId, `${A}.accountId`, { min: 1, max: 128 }) !== i && _(`${A}.accountId`, "does not match account"), B(L.kind, ["MINING_RECORDED", "STONE_CREATED", "STONE_EVOLVED", "STONE_FUSED", "BATTLE_FINISHED", "ACHIEVEMENT_UNLOCKED", "PROFILE_UPDATED", "RANK_REQUESTED"], `${A}.kind`), L.payload === void 0 && _(`${A}.payload`, "payload is required"), N(L.attempts, `${A}.attempts`, { min: 0, max: 1e3, integer: !0 }), X(L.nextAttemptAt, `${A}.nextAttemptAt`);
   });
-  const zt = /* @__PURE__ */ new Set();
-  me(rt.processedReceipts, "state.online.processedReceipts", 2e3).forEach((R, U) => {
-    const v = `state.online.processedReceipts[${U}]`, D = B(R, v), Ie = $(D.eventId, `${v}.eventId`, { min: 1, max: 256 });
-    zt.has(Ie) && O(`${v}.eventId`, "duplicate receipt"), Me.has(Ie) && O(`${v}.eventId`, "event cannot be both queued and acknowledged"), zt.add(Ie), te(D.processedAt, `${v}.processedAt`), $(D.checksum, `${v}.checksum`, { min: 1, max: 256 });
-  }), te(rt.lastSyncedAt, "state.online.lastSyncedAt", !0);
-  const Qe = B(t.settings, "state.settings");
-  V(Qe.effectQuality, ["LOW", "MEDIUM", "HIGH", "ULTRA"], "state.settings.effectQuality"), Se(Qe.reduceMotion, "state.settings.reduceMotion"), Se(Qe.mute, "state.settings.mute"), C(Qe.masterVolume, "state.settings.masterVolume", { min: 0, max: 1 }), C(Qe.musicVolume, "state.settings.musicVolume", { min: 0, max: 1 }), C(Qe.effectsVolume, "state.settings.effectsVolume", { min: 0, max: 1 }), C(Qe.textScale, "state.settings.textScale", { min: 0.8, max: 1.5 }), Se(Qe.developerMode, "state.settings.developerMode"), te(t.createdAt, "state.createdAt"), te(t.updatedAt, "state.updatedAt");
-  const Z = t;
-  for (const R of Object.values(Z.stones)) R.stats = Ke(R);
-  return Z;
-}, zr = (e, t) => {
-  if (!ce(e)) throw new Error("Save state must be an object");
+  const hi = /* @__PURE__ */ new Set();
+  te(Et.processedReceipts, "state.online.processedReceipts", 2e3).forEach((v, P) => {
+    const A = `state.online.processedReceipts[${P}]`, L = D(v, A), me = C(L.eventId, `${A}.eventId`, { min: 1, max: 256 });
+    hi.has(me) && _(`${A}.eventId`, "duplicate receipt"), vn.has(me) && _(`${A}.eventId`, "event cannot be both queued and acknowledged"), hi.add(me), X(L.processedAt, `${A}.processedAt`), C(L.checksum, `${A}.checksum`, { min: 1, max: 256 });
+  }), X(Et.lastSyncedAt, "state.online.lastSyncedAt", !0);
+  const Xe = D(t.settings, "state.settings");
+  B(Xe.effectQuality, ["LOW", "MEDIUM", "HIGH", "ULTRA"], "state.settings.effectQuality"), ce(Xe.reduceMotion, "state.settings.reduceMotion"), ce(Xe.mute, "state.settings.mute"), N(Xe.masterVolume, "state.settings.masterVolume", { min: 0, max: 1 }), N(Xe.musicVolume, "state.settings.musicVolume", { min: 0, max: 1 }), N(Xe.effectsVolume, "state.settings.effectsVolume", { min: 0, max: 1 }), N(Xe.textScale, "state.settings.textScale", { min: 0.8, max: 1.5 }), ce(Xe.developerMode, "state.settings.developerMode"), X(t.createdAt, "state.createdAt"), X(t.updatedAt, "state.updatedAt");
+  const Ei = t;
+  for (const v of Object.values(Ei.stones)) v.stats = Le(v);
+  return Ei;
+}, Gi = (e, t) => {
+  if (!z(e)) throw new Error("Save state must be an object");
   if (typeof e.schemaVersion != "number") throw new Error("Legacy raw saves require an explicit schemaVersion");
   const n = e.schemaVersion;
   if (!Number.isSafeInteger(n) || n < 1) throw new Error("Save schemaVersion must be a positive integer");
-  if (n > Ge) throw new Error(`Save schema ${n} is newer than this client`);
-  if (n === Ge && !t) throw new Error(`Raw schema ${Ge} saves are not accepted; a checksummed STONEVERSE_SAVE envelope is required`);
+  if (n > Te) throw new Error(`Save schema ${n} is newer than this client`);
+  if (n === Te && !t) throw new Error(`Raw schema ${Te} saves are not accepted; a checksummed STONEVERSE_SAVE envelope is required`);
   if (n === 4 && !t) throw new Error("Raw schema 4 saves are not accepted; the checksummed v4 STONEVERSE_SAVE envelope is required");
-  const r = { ...e };
-  if (n < 2 && (r.facilities ??= { fusionLab: 1, researchLab: 1, expeditionGuild: 1 }, r.statistics ??= { fusionCount: 0, mutationCount: 0, rareDiscoveryCount: 0, battleWins: 0, battleLosses: 0, highestInfiniteFloor: 0, totalRaidDamage: 0 }, r.online ??= { connected: !0, sessionId: "migrated_session", sequence: 0, queue: [], processedReceipts: [], lastSyncedAt: null }), n < 3 && (r.activeBattle ??= null, r.dungeonClears ??= {}, r.unappraisedFinds ??= []), n < 4) {
-    const l = ce(r.mining) ? { ...r.mining } : {}, d = ce(r.online) ? r.online : {}, u = Array.isArray(d.processedReceipts) ? d.processedReceipts : [], h = {};
-    for (const w of u)
-      !ce(w) || typeof w.eventId != "string" || w.eventId.startsWith("sync_") || Object.defineProperty(h, w.eventId, { value: !0, enumerable: !0, configurable: !0, writable: !0 });
-    l.processedFarmEventIds = h, r.mining = l;
+  const i = { ...e };
+  if (n < 2 && (i.facilities ??= { fusionLab: 1, researchLab: 1, expeditionGuild: 1 }, i.statistics ??= { fusionCount: 0, mutationCount: 0, rareDiscoveryCount: 0, battleWins: 0, battleLosses: 0, highestInfiniteFloor: 0, totalRaidDamage: 0 }, i.online ??= { connected: !0, sessionId: "migrated_session", sequence: 0, queue: [], processedReceipts: [], lastSyncedAt: null }), n < 3 && (i.activeBattle ??= null, i.dungeonClears ??= {}, i.unappraisedFinds ??= []), n < 4) {
+    const c = z(i.mining) ? { ...i.mining } : {}, l = z(i.online) ? i.online : {}, d = Array.isArray(l.processedReceipts) ? l.processedReceipts : [], f = {};
+    for (const y of d)
+      !z(y) || typeof y.eventId != "string" || y.eventId.startsWith("sync_") || Object.defineProperty(f, y.eventId, { value: !0, enumerable: !0, configurable: !0, writable: !0 });
+    c.processedFarmEventIds = f, i.mining = c;
   }
   if (n < 5) {
-    const d = [r.updatedAt, ce(r.account) ? r.account.lastOnlineAt : void 0, r.createdAt].find((h) => typeof h == "string" && Number.isFinite(Date.parse(h))), u = d ? new Date(d) : de.now();
-    r.expeditions ??= { runs: {}, order: [], discoveryStorage: [], overflowDiscarded: 0, totalCycles: 0, totalClaims: 0 }, r.training ??= { assignment: null }, r.affinityGarden ??= { assignment: null }, r.research ??= { slot: null, completedProjectIds: [], claimLedger: {} }, r.idle ??= Yc(u);
+    const l = [i.updatedAt, z(i.account) ? i.account.lastOnlineAt : void 0, i.createdAt].find((f) => typeof f == "string" && Number.isFinite(Date.parse(f))), d = l ? new Date(l) : Z.now();
+    i.expeditions ??= { runs: {}, order: [], discoveryStorage: [], overflowDiscarded: 0, totalCycles: 0, totalClaims: 0 }, i.training ??= { assignment: null }, i.affinityGarden ??= { assignment: null }, i.research ??= { slot: null, completedProjectIds: [], claimLedger: {} }, i.idle ??= Pc(d);
   }
-  const i = [r.updatedAt, r.createdAt].find((l) => typeof l == "string" && Number.isFinite(Date.parse(l))), s = i ? new Date(i) : de.now();
-  r.endlessMine ??= Ni(s), r.mastery ??= Li(), ce(r.idle) && ce(r.idle.lastWelcomeBack) && (r.idle.lastWelcomeBack.endlessFloors ??= 0, r.idle.lastWelcomeBack.endlessCredits ??= 0, r.idle.lastWelcomeBack.equipmentAdded ??= 0, r.idle.lastWelcomeBack.equipmentSalvaged ??= 0, r.idle.lastWelcomeBack.rareDiscoveries ??= 0), r.schemaVersion = Ge;
-  const o = n < Ge, a = o ? el(r) : r;
-  if (a.schemaVersion = Ge, o) {
-    a.stones = ce(r.stones) ? r.stones : a.stones, a.unappraisedFinds = Array.isArray(r.unappraisedFinds) ? r.unappraisedFinds : a.unappraisedFinds, a.fusionHistory = Array.isArray(r.fusionHistory) ? r.fusionHistory : a.fusionHistory, a.parties = Array.isArray(r.parties) ? r.parties : a.parties, a.battleHistory = Array.isArray(r.battleHistory) ? r.battleHistory : a.battleHistory, a.achievements = ce(r.achievements) ? r.achievements : a.achievements, a.dungeonClears = ce(r.dungeonClears) ? r.dungeonClears : a.dungeonClears, a.expeditions.runs = ce(a.expeditions.runs) ? a.expeditions.runs : {}, a.expeditions.order = Array.isArray(a.expeditions.order) ? a.expeditions.order : [], a.expeditions.discoveryStorage = Array.isArray(a.expeditions.discoveryStorage) ? a.expeditions.discoveryStorage : [], a.research.completedProjectIds = Array.isArray(a.research.completedProjectIds) ? a.research.completedProjectIds : [], a.research.claimLedger = ce(a.research.claimLedger) ? a.research.claimLedger : {}, a.idle.scheduler.jobs = Array.isArray(a.idle.scheduler.jobs) ? a.idle.scheduler.jobs : [], a.online.queue = Array.isArray(a.online.queue) ? a.online.queue : [], a.online.processedReceipts = Array.isArray(a.online.processedReceipts) ? a.online.processedReceipts : [], a.collection.discoveredSpeciesIds = Array.isArray(a.collection.discoveredSpeciesIds) ? [...new Set(a.collection.discoveredSpeciesIds)] : [], a.collection.mutationSpecies = ce(a.collection.mutationSpecies) ? a.collection.mutationSpecies : {}, a.collection.variantSpecies = ce(a.collection.variantSpecies) ? a.collection.variantSpecies : {}, a.collection.origins = ce(a.collection.origins) ? a.collection.origins : {};
-    const l = Object.keys(a.stones).length;
-    if (l > 1e6) throw new Error("Legacy save exceeds the maximum Stone capacity");
-    Number.isSafeInteger(a.inventory.capacity) && a.inventory.capacity >= 0 && a.inventory.capacity <= 1e6 && (a.inventory.capacity = Math.max(a.inventory.capacity, l));
-    const d = ce(a.mining.processedFarmEventIds) ? a.mining.processedFarmEventIds : {}, u = {};
-    for (const h of Object.keys(d)) Object.defineProperty(u, h, { value: !0, enumerable: !0, configurable: !0, writable: !0 });
-    for (const h of a.unappraisedFinds)
-      ce(h) && typeof h.sourceEventId == "string" && Object.defineProperty(u, h.sourceEventId, { value: !0, enumerable: !0, configurable: !0, writable: !0 });
-    a.mining.processedFarmEventIds = u;
-    for (const h of Object.values(a.stones))
-      if (ce(h)) {
-        for (const w of ["parents", "grandparents"])
-          if (Array.isArray(h[w]))
-            for (const E of h[w]) ce(E) && !Array.isArray(E.traitIds) && (E.traitIds = []);
+  const r = [i.updatedAt, i.createdAt].find((c) => typeof c == "string" && Number.isFinite(Date.parse(c))), s = r ? new Date(r) : Z.now();
+  i.endlessMine ??= Ir(s), i.mastery ??= Mr(), z(i.idle) && z(i.idle.lastWelcomeBack) && (i.idle.lastWelcomeBack.endlessFloors ??= 0, i.idle.lastWelcomeBack.endlessCredits ??= 0, i.idle.lastWelcomeBack.equipmentAdded ??= 0, i.idle.lastWelcomeBack.equipmentSalvaged ??= 0, i.idle.lastWelcomeBack.rareDiscoveries ??= 0), i.schemaVersion = Te;
+  const o = n < Te, a = o ? Vc(i) : i;
+  if (a.schemaVersion = Te, o) {
+    a.stones = z(i.stones) ? i.stones : a.stones, a.unappraisedFinds = Array.isArray(i.unappraisedFinds) ? i.unappraisedFinds : a.unappraisedFinds, a.fusionHistory = Array.isArray(i.fusionHistory) ? i.fusionHistory : a.fusionHistory, a.parties = Array.isArray(i.parties) ? i.parties : a.parties, a.battleHistory = Array.isArray(i.battleHistory) ? i.battleHistory : a.battleHistory, a.achievements = z(i.achievements) ? i.achievements : a.achievements, a.dungeonClears = z(i.dungeonClears) ? i.dungeonClears : a.dungeonClears, a.expeditions.runs = z(a.expeditions.runs) ? a.expeditions.runs : {}, a.expeditions.order = Array.isArray(a.expeditions.order) ? a.expeditions.order : [], a.expeditions.discoveryStorage = Array.isArray(a.expeditions.discoveryStorage) ? a.expeditions.discoveryStorage : [], a.research.completedProjectIds = Array.isArray(a.research.completedProjectIds) ? a.research.completedProjectIds : [], a.research.claimLedger = z(a.research.claimLedger) ? a.research.claimLedger : {}, a.idle.scheduler.jobs = Array.isArray(a.idle.scheduler.jobs) ? a.idle.scheduler.jobs : [], a.online.queue = Array.isArray(a.online.queue) ? a.online.queue : [], a.online.processedReceipts = Array.isArray(a.online.processedReceipts) ? a.online.processedReceipts : [], a.collection.discoveredSpeciesIds = Array.isArray(a.collection.discoveredSpeciesIds) ? [...new Set(a.collection.discoveredSpeciesIds)] : [], a.collection.mutationSpecies = z(a.collection.mutationSpecies) ? a.collection.mutationSpecies : {}, a.collection.variantSpecies = z(a.collection.variantSpecies) ? a.collection.variantSpecies : {}, a.collection.origins = z(a.collection.origins) ? a.collection.origins : {};
+    const c = Object.keys(a.stones).length;
+    if (c > 1e6) throw new Error("Legacy save exceeds the maximum Stone capacity");
+    Number.isSafeInteger(a.inventory.capacity) && a.inventory.capacity >= 0 && a.inventory.capacity <= 1e6 && (a.inventory.capacity = Math.max(a.inventory.capacity, c));
+    const l = z(a.mining.processedFarmEventIds) ? a.mining.processedFarmEventIds : {}, d = {};
+    for (const f of Object.keys(l)) Object.defineProperty(d, f, { value: !0, enumerable: !0, configurable: !0, writable: !0 });
+    for (const f of a.unappraisedFinds)
+      z(f) && typeof f.sourceEventId == "string" && Object.defineProperty(d, f.sourceEventId, { value: !0, enumerable: !0, configurable: !0, writable: !0 });
+    a.mining.processedFarmEventIds = d;
+    for (const f of Object.values(a.stones))
+      if (z(f)) {
+        for (const y of ["parents", "grandparents"])
+          if (Array.isArray(f[y]))
+            for (const h of f[y]) z(h) && !Array.isArray(h.traitIds) && (h.traitIds = []);
       }
   }
-  return ss(a);
-}, os = (e, t = de) => {
+  return Kr(a);
+}, zr = (e, t = Z) => {
   let n;
   try {
     n = JSON.parse(JSON.stringify(e));
   } catch {
     throw new Error("Game state is not JSON serializable");
   }
-  ss(n);
-  const r = {
+  Kr(n);
+  const i = {
     format: "STONEVERSE_SAVE",
-    schemaVersion: Ge,
+    schemaVersion: Te,
     savedAt: t.now().toISOString(),
-    checksum: Mn(n),
+    checksum: nn(n),
     state: n
   };
-  return JSON.stringify(r, null, 2);
-}, on = (e) => {
+  return JSON.stringify(i, null, 2);
+}, Bt = (e) => {
   if (e.length > 2e7) throw new Error("Save exceeds the 20 MB safety limit");
   let t;
   try {
@@ -5853,466 +5001,466 @@ const sn = 3600 * 1e3, br = Mt, Cc = [
   } catch {
     throw new Error("Save is not valid JSON");
   }
-  if (!ce(t)) throw new Error("Save envelope must be an object");
+  if (!z(t)) throw new Error("Save envelope must be an object");
   if (t.format === "STONEVERSE_SAVE") {
-    if (!ce(t.state)) throw new Error("Save envelope has no state");
-    const r = C(t.schemaVersion, "envelope.schemaVersion", { min: 1, max: Ge, integer: !0 }), i = C(t.state.schemaVersion, "envelope.state.schemaVersion", { min: 1, max: Ge, integer: !0 });
-    if (r !== i) throw new Error("Save envelope schemaVersion does not match its state");
-    te(t.savedAt, "envelope.savedAt");
-    const s = $(t.checksum, "envelope.checksum", { min: 8, max: 8 });
+    if (!z(t.state)) throw new Error("Save envelope has no state");
+    const i = N(t.schemaVersion, "envelope.schemaVersion", { min: 1, max: Te, integer: !0 }), r = N(t.state.schemaVersion, "envelope.state.schemaVersion", { min: 1, max: Te, integer: !0 });
+    if (i !== r) throw new Error("Save envelope schemaVersion does not match its state");
+    X(t.savedAt, "envelope.savedAt");
+    const s = C(t.checksum, "envelope.checksum", { min: 8, max: 8 });
     if (!s || !/^[0-9a-f]{8}$/i.test(s)) throw new Error("Save envelope checksum is invalid");
-    if (Mn(t.state) !== s) throw new Error("Save checksum mismatch");
-    return zr(t.state, !0);
+    if (nn(t.state) !== s) throw new Error("Save checksum mismatch");
+    return Gi(t.state, !0);
   }
   if (typeof t.schemaVersion != "number") throw new Error("Legacy raw saves require an explicit schemaVersion");
   const n = t.schemaVersion;
   if (n >= 4) throw new Error(`Raw schema ${n} saves require their original checksummed STONEVERSE_SAVE envelope`);
-  return zr(t, !1);
-}, tl = (e, t, n = de) => {
-  const r = os(t, n), i = e.getItem($t), s = e.getItem(en);
+  return Gi(t, !1);
+}, Xc = (e, t, n = Z) => {
+  const i = zr(t, n), r = e.getItem(St), s = e.getItem(Dt);
   try {
-    e.setItem(tn, r);
-    const o = e.getItem(tn);
+    e.setItem(Ot, i);
+    const o = e.getItem(Ot);
     if (!o) throw new Error("Storage did not retain pending save");
-    if (on(o), i)
+    if (Bt(o), r)
       try {
-        on(i), e.setItem(en, i);
+        Bt(r), e.setItem(Dt, r);
       } catch {
       }
-    e.setItem($t, o);
-    const a = e.getItem($t);
+    e.setItem(St, o);
+    const a = e.getItem(St);
     if (!a) throw new Error("Storage did not retain committed save");
-    on(a), e.removeItem(tn);
+    Bt(a), e.removeItem(Ot);
   } catch (o) {
     try {
-      i === null ? e.removeItem($t) : e.setItem($t, i);
+      r === null ? e.removeItem(St) : e.setItem(St, r);
     } catch {
     }
     try {
-      s === null ? e.removeItem(en) : e.setItem(en, s);
+      s === null ? e.removeItem(Dt) : e.setItem(Dt, s);
     } catch {
     }
     try {
-      e.removeItem(tn);
+      e.removeItem(Ot);
     } catch {
     }
     throw o;
   }
-}, as = (e) => {
+}, Jr = (e) => {
   const t = [];
   let n = 0;
-  for (const i of [$t, tn, en, ...Xc])
+  for (const r of [St, Ot, Dt, ...Bc])
     try {
-      const s = e.getItem(i);
+      const s = e.getItem(r);
       s && t.push(s);
     } catch {
       n += 1;
     }
-  let r = 0;
-  for (const i of t)
+  let i = 0;
+  for (const r of t)
     try {
-      return { state: on(i), invalidReadableCandidates: r, unreadableSlots: n };
+      return { state: Bt(r), invalidReadableCandidates: i, unreadableSlots: n };
     } catch {
-      r += 1;
+      i += 1;
     }
-  return { state: null, invalidReadableCandidates: r, unreadableSlots: n };
-}, nl = (e) => as(e).state, rl = (e = {}) => (t, n) => {
-  const r = e.clock ?? de, i = e.storage === void 0 ? Wc() : e.storage;
-  let s = i !== null;
-  const o = (p) => {
-    if (!i)
+  return { state: null, invalidReadableCandidates: i, unreadableSlots: n };
+}, Wc = (e) => Jr(e).state, Kc = (e = {}) => (t, n) => {
+  const i = e.clock ?? Z, r = e.storage === void 0 ? Gc() : e.storage;
+  let s = r !== null;
+  const o = (m) => {
+    if (!r)
       throw s = !1, new Error("Local persistence is unavailable; this session cannot be saved");
     try {
-      tl(i, p, r), s = !0;
-    } catch (f) {
-      throw s = !1, f;
+      Xc(r, m, i), s = !0;
+    } catch (p) {
+      throw s = !1, p;
     }
-  }, a = e.autoSave ?? !0, l = e.rng, d = () => e.rngFactory?.() ?? l ?? new lr(), u = i ? as(i) : { state: null, invalidReadableCandidates: 0 }, h = u.state;
-  let w = !h && u.invalidReadableCandidates > 0;
-  const E = e.initialState ?? h ?? Jn({ ...e.newGame, clock: r });
-  let m = st(E), A = w ? "保存データを検証できません。破損スロットを保護するため、Importまたは明示的なResetまで書き込みを停止しました。" : null;
+  }, a = e.autoSave ?? !0, c = e.rng, l = () => e.rngFactory?.() ?? c ?? new Wn(), d = r ? Jr(r) : { state: null, invalidReadableCandidates: 0 }, f = d.state;
+  let y = !f && d.invalidReadableCandidates > 0;
+  const h = e.initialState ?? f ?? Pn({ ...e.newGame, clock: i });
+  let u = je(h), I = y ? "保存データを検証できません。破損スロットを保護するため、Importまたは明示的なResetまで書き込みを停止しました。" : null;
   try {
-    An(m, r), h && a && i && o(m);
-  } catch (p) {
-    m = st(E), A = p instanceof Error ? p.message : String(p);
+    Zt(u, i), f && a && r && o(u);
+  } catch (m) {
+    u = je(h), I = m instanceof Error ? m.message : String(m);
   }
-  const S = (p, f = { mode: "ACTIVE" }) => {
-    let y, b;
-    if (t((M) => {
+  const g = (m, p = { mode: "ACTIVE" }) => {
+    let S, M;
+    if (t((w) => {
       try {
-        const N = st(M.game), L = An(N, r, f), G = { now: () => new Date(N.idle.timeCheckpoint.trustedNowMs) };
-        if (y = p(N, d(), G, L), Ve(N), ra(N, G), a && i) {
-          if (w) throw new Error("Corrupt save recovery is write-protected; import a valid save or explicitly reset");
-          o(N);
+        const T = je(w.game), x = Zt(T, i, p), $ = { now: () => new Date(T.idle.timeCheckpoint.trustedNowMs) };
+        if (S = m(T, l(), $, x), _e(T), zo(T, $), a && r) {
+          if (y) throw new Error("Corrupt save recovery is write-protected; import a valid save or explicitly reset");
+          o(T);
         }
-        return { ...M, game: N, persistenceAvailable: s, lastError: null };
-      } catch (N) {
-        return b = N, { ...M, persistenceAvailable: s, lastError: N instanceof Error ? N.message : String(N) };
+        return { ...w, game: T, persistenceAvailable: s, lastError: null };
+      } catch (T) {
+        return M = T, { ...w, persistenceAvailable: s, lastError: T instanceof Error ? T.message : String(T) };
       }
-    }), b) throw b;
-    return y;
-  }, k = (p, f) => {
-    const y = p.stones[f];
-    if (!y) throw new Error(`Stone not found: ${f}`);
-    return y;
-  }, T = (p, f, y) => {
-    const b = p.battleHistory.some((M) => M.battleId === f.battleId);
-    f.winner && (oc(p, f, r), b || At(p, "BATTLE_FINISHED", { battleId: f.battleId, mode: f.mode, winner: f.winner, turns: f.turn }, y, r, `sync_battle_${f.battleId}`));
+    }), M) throw M;
+    return S;
+  }, b = (m, p) => {
+    const S = m.stones[p];
+    if (!S) throw new Error(`Stone not found: ${p}`);
+    return S;
+  }, R = (m, p, S) => {
+    const M = m.battleHistory.some((w) => w.battleId === p.battleId);
+    p.winner && (Qa(m, p, i), M || rt(m, "BATTLE_FINISHED", { battleId: p.battleId, mode: p.mode, winner: p.winner, turns: p.turn }, S, i, `sync_battle_${p.battleId}`));
   };
   return {
-    game: m,
+    game: u,
     route: "HOME",
     selectedStoneId: null,
     farmSessionActive: void 0,
     persistenceAvailable: s,
-    lastError: A,
-    mine: (p, f) => Zn(n().game, p, r, f).valid ? S((b, M) => {
-      const N = Zn(b, p, r, f), L = Ma(b, p, M, r, f);
-      return L.accepted && At(b, "MINING_RECORDED", {
-        amount: N.amount,
-        quality: N.quality,
-        areaId: p.areaId ?? "area_greenbreak",
-        veinId: p.veinId ?? null,
+    lastError: I,
+    mine: (m, p) => Fn(n().game, m, i, p).valid ? g((M, w) => {
+      const T = Fn(M, m, i, p), x = Ea(M, m, w, i, p);
+      return x.accepted && rt(M, "MINING_RECORDED", {
+        amount: T.amount,
+        quality: T.quality,
+        areaId: m.areaId ?? "area_greenbreak",
+        veinId: m.veinId ?? null,
         source: {
-          eventId: p.eventId,
-          sessionId: p.sessionId ?? b.online.sessionId,
-          timestamp: N.sourceTimestamp,
-          metadata: N.metadata ?? {}
+          eventId: m.eventId,
+          sessionId: m.sessionId ?? M.online.sessionId,
+          timestamp: T.sourceTimestamp,
+          metadata: T.metadata ?? {}
         }
-      }, M, r, `sync_mining_${p.eventId}`), L;
+      }, w, i, `sync_mining_${m.eventId}`), x;
     }) : { accepted: !1, duplicate: !1, xpGranted: 0, creditsGranted: 0, discoveries: [], miningLevelsGained: 0 },
-    appraise: (p) => S((f, y) => {
-      const b = ba(f, p, r);
-      return At(f, "STONE_CREATED", { stoneId: b.stone.instanceId, speciesId: b.stone.speciesId, rarity: b.stone.rarity, origin: b.stone.origin }, y, r, `sync_stone_${b.stone.instanceId}`), b;
+    appraise: (m) => g((p, S) => {
+      const M = Ia(p, m, i);
+      return rt(p, "STONE_CREATED", { stoneId: M.stone.instanceId, speciesId: M.stone.speciesId, rarity: M.stone.rarity, origin: M.stone.origin }, S, i, `sync_stone_${M.stone.instanceId}`), M;
     }),
-    pullGacha: (p, f) => S((y, b) => xa(y, p, f, b, r)),
-    fuse: (p, f = {}) => S((y, b) => {
-      if (f.consumeParents) {
-        const N = /* @__PURE__ */ new Set([
-          ...Object.values(y.expeditions.runs).filter((L) => L.status !== "CLAIMED").flatMap((L) => L.partySnapshot.map((G) => G.stoneId)),
-          ...y.training.assignment ? [y.training.assignment.stoneId] : [],
-          ...y.affinityGarden.assignment ? [y.affinityGarden.assignment.stoneId] : [],
-          ...y.endlessMine.status === "RUNNING" || y.endlessMine.status === "PAUSED" ? y.endlessMine.partyStoneIds : [],
-          ...y.activeBattle && !y.activeBattle.winner ? y.activeBattle.units.filter((L) => L.team === "PLAYER").map((L) => L.stoneId) : []
+    pullGacha: (m, p) => g((S, M) => Ma(S, m, p, M, i)),
+    fuse: (m, p = {}) => g((S, M) => {
+      if (p.consumeParents) {
+        const T = /* @__PURE__ */ new Set([
+          ...Object.values(S.expeditions.runs).filter((x) => x.status !== "CLAIMED").flatMap((x) => x.partySnapshot.map(($) => $.stoneId)),
+          ...S.training.assignment ? [S.training.assignment.stoneId] : [],
+          ...S.affinityGarden.assignment ? [S.affinityGarden.assignment.stoneId] : [],
+          ...S.endlessMine.status === "RUNNING" || S.endlessMine.status === "PAUSED" ? S.endlessMine.partyStoneIds : [],
+          ...S.activeBattle && !S.activeBattle.winner ? S.activeBattle.units.filter((x) => x.team === "PLAYER").map((x) => x.stoneId) : []
         ]);
-        if (p.some((L) => N.has(L))) throw new Error("A stone assigned to a background activity cannot be consumed");
+        if (m.some((x) => T.has(x))) throw new Error("A stone assigned to a background activity cannot be consumed");
       }
-      const M = Ga(y, p, f, b, r);
-      return At(y, "STONE_FUSED", { fusionId: M.history.id, parentIds: M.history.parentIds, childId: M.child.instanceId, recipeId: M.history.recipeId }, b, r, `sync_fusion_${M.history.id}`), M;
+      const w = La(S, m, p, M, i);
+      return rt(S, "STONE_FUSED", { fusionId: w.history.id, parentIds: w.history.parentIds, childId: w.child.instanceId, recipeId: w.history.recipeId }, M, i, `sync_fusion_${w.history.id}`), w;
     }),
-    addStoneXp: (p, f) => S((y) => wr(k(y, p), y.mastery, f)),
-    addAffinity: (p, f) => S((y) => {
-      const b = xn(k(y, p), f);
-      return y.profile.totalAffinity = Object.values(y.stones).reduce((M, N) => M + N.affinity.points, 0), b;
+    addStoneXp: (m, p) => g((S) => ai(b(S, m), S.mastery, p)),
+    addAffinity: (m, p) => g((S) => {
+      const M = un(b(S, m), p);
+      return S.profile.totalAffinity = Object.values(S.stones).reduce((w, T) => w + T.affinity.points, 0), M;
     }),
-    evolve: (p, f, y) => S((b, M) => {
-      const N = k(b, p), L = {
-        items: b.inventory.items,
-        areaId: y,
-        achievementIds: Object.entries(b.achievements).filter(([, K]) => !!K.unlockedAt).map(([K]) => K),
-        fusionCount: b.statistics.fusionCount,
-        timestamp: r.now()
-      }, G = Rs(N, L).find((K) => K.id === f);
-      if (!G) throw new Error("Evolution conditions are not met");
-      const H = Object.fromEntries(G.conditions.filter((K) => K.kind === "ITEM").map((K) => [String(K.value), K.amount ?? 1]));
-      jt(b, { ...G.cost, items: { ...H, ...G.cost?.items ?? {} } });
-      const q = bs(N, G);
-      return At(b, "STONE_EVOLVED", { stoneId: p, previousSpeciesId: q.previousSpeciesId, speciesId: q.stone.speciesId, evolutionId: f }, M, r, `sync_evolution_${p}_${N.evolutionStage}`), q;
+    evolve: (m, p, S) => g((M, w) => {
+      const T = b(M, m), x = {
+        items: M.inventory.items,
+        areaId: S,
+        achievementIds: Object.entries(M.achievements).filter(([, Y]) => !!Y.unlockedAt).map(([Y]) => Y),
+        fusionCount: M.statistics.fusionCount,
+        timestamp: i.now()
+      }, $ = Is(T, x).find((Y) => Y.id === p);
+      if (!$) throw new Error("Evolution conditions are not met");
+      const F = Object.fromEntries($.conditions.filter((Y) => Y.kind === "ITEM").map((Y) => [String(Y.value), Y.amount ?? 1]));
+      bt(M, { ...$.cost, items: { ...F, ...$.cost?.items ?? {} } });
+      const q = Ss(T, $);
+      return rt(M, "STONE_EVOLVED", { stoneId: m, previousSpeciesId: q.previousSpeciesId, speciesId: q.stone.speciesId, evolutionId: p }, w, i, `sync_evolution_${m}_${T.evolutionStage}`), q;
     }),
-    awaken: (p) => S((f) => {
-      const y = k(f, p);
-      jt(f, { currencies: { upgradeDust: 100 * (y.awakeningStage + 1) } }), Ts(y);
+    awaken: (m) => g((p) => {
+      const S = b(p, m);
+      bt(p, { currencies: { upgradeDust: 100 * (S.awakeningStage + 1) } }), ys(S);
     }),
-    reincarnate: (p) => S((f) => Ns(k(f, p))),
-    learnSkillNode: (p, f) => S((y) => _s(k(y, p), f)),
-    toggleFavorite: (p) => S((f) => {
-      const y = k(f, p);
-      y.favorite = !y.favorite, f.profile.favoriteStoneIds = y.favorite ? [.../* @__PURE__ */ new Set([...f.profile.favoriteStoneIds, p])].slice(0, 12) : f.profile.favoriteStoneIds.filter((b) => b !== p);
+    reincarnate: (m) => g((p) => As(b(p, m))),
+    learnSkillNode: (m, p) => g((S) => ws(b(S, m), p)),
+    toggleFavorite: (m) => g((p) => {
+      const S = b(p, m);
+      S.favorite = !S.favorite, p.profile.favoriteStoneIds = S.favorite ? [.../* @__PURE__ */ new Set([...p.profile.favoriteStoneIds, m])].slice(0, 12) : p.profile.favoriteStoneIds.filter((M) => M !== m);
     }),
-    toggleLock: (p) => S((f) => {
-      const y = k(f, p);
-      y.locked = !y.locked;
+    toggleLock: (m) => g((p) => {
+      const S = b(p, m);
+      S.locked = !S.locked;
     }),
-    setNickname: (p, f) => S((y) => {
-      const b = f?.trim() || null;
-      if (b && b.length > 20) throw new Error("Nickname must be 20 characters or fewer");
-      k(y, p).nickname = b;
+    setNickname: (m, p) => g((S) => {
+      const M = p?.trim() || null;
+      if (M && M.length > 20) throw new Error("Nickname must be 20 characters or fewer");
+      b(S, m).nickname = M;
     }),
-    setParty: (p, f = n().game.activePartyId) => S((y) => {
-      if (p.length < 1 || p.length > 3 || new Set(p).size !== p.length) throw new Error("A party requires 1-3 unique stones");
-      for (const M of p) k(y, M);
-      const b = y.parties.find((M) => M.id === f);
-      if (!b) throw new Error("Party not found");
-      b.slots = p.map((M, N) => ({ stoneId: M, position: N === 0 ? "FRONT" : "BACK" })), y.activePartyId = b.id;
+    setParty: (m, p = n().game.activePartyId) => g((S) => {
+      if (m.length < 1 || m.length > 3 || new Set(m).size !== m.length) throw new Error("A party requires 1-3 unique stones");
+      for (const w of m) b(S, w);
+      const M = S.parties.find((w) => w.id === p);
+      if (!M) throw new Error("Party not found");
+      M.slots = m.map((w, T) => ({ stoneId: w, position: T === 0 ? "FRONT" : "BACK" })), S.activePartyId = M.id;
     }),
-    startDungeonBattle: (p, f) => S((y, b) => {
-      const M = y.parties.find((G) => G.id === y.activePartyId), N = /* @__PURE__ */ new Set([
-        ...Object.values(y.expeditions.runs).filter((G) => G.status !== "CLAIMED").flatMap((G) => G.partySnapshot.map((H) => H.stoneId)),
-        ...y.training.assignment ? [y.training.assignment.stoneId] : [],
-        ...y.affinityGarden.assignment ? [y.affinityGarden.assignment.stoneId] : [],
-        ...y.endlessMine.status === "RUNNING" || y.endlessMine.status === "PAUSED" ? y.endlessMine.partyStoneIds : []
+    startDungeonBattle: (m, p) => g((S, M) => {
+      const w = S.parties.find(($) => $.id === S.activePartyId), T = /* @__PURE__ */ new Set([
+        ...Object.values(S.expeditions.runs).filter(($) => $.status !== "CLAIMED").flatMap(($) => $.partySnapshot.map((F) => F.stoneId)),
+        ...S.training.assignment ? [S.training.assignment.stoneId] : [],
+        ...S.affinityGarden.assignment ? [S.affinityGarden.assignment.stoneId] : [],
+        ...S.endlessMine.status === "RUNNING" || S.endlessMine.status === "PAUSED" ? S.endlessMine.partyStoneIds : []
       ]);
-      if (M?.slots.some((G) => N.has(G.stoneId))) throw new Error("A deployed Stone cannot enter a dungeon battle");
-      const L = Xa(y, p, f, b, r);
-      return y.activeBattle = L, L;
+      if (w?.slots.some(($) => T.has($.stoneId))) throw new Error("A deployed Stone cannot enter a dungeon battle");
+      const x = Ba(S, m, p, M, i);
+      return S.activeBattle = x, x;
     }),
-    advanceBattle: () => S((p, f) => {
+    advanceBattle: () => g((m, p) => {
+      if (!m.activeBattle) throw new Error("No active battle");
+      const S = Ka(m.activeBattle, p, i);
+      return R(m, m.activeBattle, p), S;
+    }),
+    issueBattleCommand: (m, p) => g((S, M, w) => {
+      if (!S.activeBattle) throw new Error("No active battle");
+      if (S.activeBattle.controlMode === "AUTO") throw new Error("Switch to MANUAL before issuing a command");
+      const T = za(S.activeBattle, m, p, M, w);
+      return R(S, S.activeBattle, M), T;
+    }),
+    setBattleAuto: (m) => g((p) => {
+      if (!p.activeBattle || p.activeBattle.winner) throw new Error("No active battle");
+      p.activeBattle.controlMode = m ? "AUTO" : "MANUAL";
+    }),
+    setBattleSpeed: (m) => g((p) => {
+      if (![1, 2, 4].includes(m)) throw new Error("Battle speed must be 1x, 2x, or 4x");
       if (!p.activeBattle) throw new Error("No active battle");
-      const y = rc(p.activeBattle, f, r);
-      return T(p, p.activeBattle, f), y;
+      p.activeBattle.speed = m;
     }),
-    issueBattleCommand: (p, f) => S((y, b, M) => {
-      if (!y.activeBattle) throw new Error("No active battle");
-      if (y.activeBattle.controlMode === "AUTO") throw new Error("Switch to MANUAL before issuing a command");
-      const N = ic(y.activeBattle, p, f, b, M);
-      return T(y, y.activeBattle, b), N;
+    runActiveBattle: () => g((m, p) => {
+      if (!m.activeBattle) throw new Error("No active battle");
+      return Ja(m.activeBattle, p, i), R(m, m.activeBattle, p), m.activeBattle;
     }),
-    setBattleAuto: (p) => S((f) => {
-      if (!f.activeBattle || f.activeBattle.winner) throw new Error("No active battle");
-      f.activeBattle.controlMode = p ? "AUTO" : "MANUAL";
+    abandonBattle: () => g((m) => {
+      m.activeBattle = null;
     }),
-    setBattleSpeed: (p) => S((f) => {
-      if (![1, 2, 4].includes(p)) throw new Error("Battle speed must be 1x, 2x, or 4x");
-      if (!f.activeBattle) throw new Error("No active battle");
-      f.activeBattle.speed = p;
-    }),
-    runActiveBattle: () => S((p, f) => {
-      if (!p.activeBattle) throw new Error("No active battle");
-      return sc(p.activeBattle, f, r), T(p, p.activeBattle, f), p.activeBattle;
-    }),
-    abandonBattle: () => S((p) => {
-      p.activeBattle = null;
-    }),
-    claimAchievement: (p) => S((f) => ha(f, p, r)),
-    processBackground: (p = "OFFLINE") => S((f, y, b, M) => M, { mode: p }),
+    claimAchievement: (m) => g((p) => aa(p, m, i)),
+    processBackground: (m = "OFFLINE") => g((p, S, M, w) => w, { mode: m }),
     nextBackgroundDueAtMs: () => {
-      const p = n().game.idle.scheduler.jobs.map((f) => f.dueAtMs).filter(Number.isSafeInteger);
-      return p.length ? Math.min(...p) : null;
+      const m = n().game.idle.scheduler.jobs.map((p) => p.dueAtMs).filter(Number.isSafeInteger);
+      return m.length ? Math.min(...m) : null;
     },
-    dismissWelcomeBack: (p) => S((f) => {
-      f.idle.lastWelcomeBack?.summaryId === p && (f.idle.lastWelcomeBack = null);
+    dismissWelcomeBack: (m) => g((p) => {
+      p.idle.lastWelcomeBack?.summaryId === m && (p.idle.lastWelcomeBack = null);
     }),
-    startExpedition: (p) => S((f, y, b) => {
-      const M = Ac(f, p, y, b);
-      return Ve(f), M;
+    startExpedition: (m) => g((p, S, M) => {
+      const w = pc(p, m, S, M);
+      return _e(p), w;
     }),
-    stopExpedition: (p) => S((f) => {
-      const y = Sc(f, p);
-      return Ve(f), y;
+    stopExpedition: (m) => g((p) => {
+      const S = mc(p, m);
+      return _e(p), S;
     }),
-    claimExpedition: (p) => S((f, y, b) => {
-      const M = f.expeditions.runs[p];
-      if (!M) throw new Error("Expedition not found");
-      const N = M.claimedCycles, L = _c(f, p, b), G = Object.entries(L.reward.items).filter(([F]) => F.startsWith("equipment_"));
-      for (const [F, z] of G) {
-        const se = Math.max(0, (f.inventory.items[F] ?? 0) - z);
-        se === 0 ? delete f.inventory.items[F] : f.inventory.items[F] = se;
+    claimExpedition: (m) => g((p, S, M) => {
+      const w = p.expeditions.runs[m];
+      if (!w) throw new Error("Expedition not found");
+      const T = w.claimedCycles, x = Ac(p, m, M), $ = Object.entries(x.reward.items).filter(([O]) => O.startsWith("equipment_"));
+      for (const [O, V] of $) {
+        const Q = Math.max(0, (p.inventory.items[O] ?? 0) - V);
+        Q === 0 ? delete p.inventory.items[O] : p.inventory.items[O] = Q;
       }
-      const H = { NORMAL: "COMMON", RARE: "UNCOMMON", SR: "RARE", SSR: "EPIC", UR: "LEGENDARY", LEGENDARY: "MYTHIC" }, q = (F) => F.endsWith("_charm") ? "CHARM" : F.endsWith("_rune") ? "RUNE" : F.endsWith("_relic") ? "RELIC" : "CORE", K = (F) => F.includes("abyssal") ? "ABYSSAL" : F.includes("meteor") ? "HUNTER" : F.includes("ancestor") ? "BASTION" : F.includes("resonance") || F.includes("celestial") ? "RESONANCE" : null;
-      let ue = 0;
-      for (const [F, z] of G) {
-        const se = Gi(F);
-        for (let _e = 0; _e < Math.min(1e4, z); _e += 1) {
-          const Ne = se?.itemId ?? F, Le = se?.seed ?? `${M.seed}:equipment-claim:${N}:${ue}`;
-          ue += 1;
-          const I = Ai({
-            level: Math.max(1, Math.max(...M.partySnapshot.map((x) => x.level))),
-            source: `expedition-${M.regionId}`,
-            ...se ? { rarity: H[se.rarity], slot: q(Ne), setId: K(Ne) } : {}
-          }, new Re(Le));
-          rn(f.endlessMine.equipment, I, f.endlessMine.lootFilter);
+      const F = { NORMAL: "COMMON", RARE: "UNCOMMON", SR: "RARE", SSR: "EPIC", UR: "LEGENDARY", LEGENDARY: "MYTHIC" }, q = (O) => O.endsWith("_charm") ? "CHARM" : O.endsWith("_rune") ? "RUNE" : O.endsWith("_relic") ? "RELIC" : "CORE", Y = (O) => O.includes("abyssal") ? "ABYSSAL" : O.includes("meteor") ? "HUNTER" : O.includes("ancestor") ? "BASTION" : O.includes("resonance") || O.includes("celestial") ? "RESONANCE" : null;
+      let oe = 0;
+      for (const [O, V] of $) {
+        const Q = Cr(O);
+        for (let qe = 0; qe < Math.min(1e4, V); qe += 1) {
+          const Oe = Q?.itemId ?? O, Ue = Q?.seed ?? `${w.seed}:equipment-claim:${T}:${oe}`;
+          oe += 1;
+          const E = ur({
+            level: Math.max(1, Math.max(...w.partySnapshot.map((k) => k.level))),
+            source: `expedition-${w.regionId}`,
+            ...Q ? { rarity: F[Q.rarity], slot: q(Oe), setId: Y(Oe) } : {}
+          }, new Ee(Ue));
+          Pt(p.endlessMine.equipment, E, p.endlessMine.lootFilter);
         }
       }
-      return L;
+      return x;
     }),
-    claimStoredExpeditionDiscovery: (p) => S((f, y, b) => kc(f, p, b)),
-    startTraining: (p) => S((f, y, b) => {
-      Dc(f, p, b.now()), Ve(f);
+    claimStoredExpeditionDiscovery: (m) => g((p, S, M) => wc(p, m, M)),
+    startTraining: (m) => g((p, S, M) => {
+      bc(p, m, M.now()), _e(p);
     }),
-    claimTraining: () => S((p, f, y) => $c(p, y.now())),
-    stopTraining: () => S((p) => {
-      Pc(p), Ve(p);
+    claimTraining: () => g((m, p, S) => Nc(m, S.now())),
+    stopTraining: () => g((m) => {
+      kc(m), _e(m);
     }),
-    startAffinityGarden: (p) => S((f, y, b) => {
-      Fc(f, p, b.now()), Ve(f);
+    startAffinityGarden: (m) => g((p, S, M) => {
+      _c(p, m, M.now()), _e(p);
     }),
-    claimAffinityGarden: () => S((p, f, y) => Bc(p, y.now())),
-    stopAffinityGarden: () => S((p) => {
-      qc(p), Ve(p);
+    claimAffinityGarden: () => g((m, p, S) => Cc(m, S.now())),
+    stopAffinityGarden: () => g((m) => {
+      xc(m), _e(m);
     }),
-    startResearch: (p) => S((f, y, b) => {
-      const M = Gc(f, p, y, b);
-      return Ve(f), M;
+    startResearch: (m) => g((p, S, M) => {
+      const w = Lc(p, m, S, M);
+      return _e(p), w;
     }),
-    claimResearch: (p) => S((f, y, b) => Uc(f, p, b.now())),
-    startEndlessMine: (p) => S((f, y, b) => {
-      const M = f.parties.find((H) => H.id === f.activePartyId), N = [...p ?? M?.slots.map((H) => H.stoneId) ?? []], L = /* @__PURE__ */ new Set();
-      for (const H of Object.values(f.expeditions.runs)) if (H.status !== "CLAIMED") for (const q of H.partySnapshot) L.add(q.stoneId);
-      if (f.training.assignment && L.add(f.training.assignment.stoneId), f.affinityGarden.assignment && L.add(f.affinityGarden.assignment.stoneId), f.activeBattle && !f.activeBattle.winner)
-        for (const H of f.activeBattle.units) H.team === "PLAYER" && L.add(H.stoneId);
-      if (N.some((H) => L.has(H))) throw new Error("A deployed Stone cannot enter Endless Mine");
-      const G = `endless:${f.account.accountId}:${b.now().getTime()}:${Math.floor(y.next() * 4294967296).toString(16)}`;
-      Do(f.endlessMine, f.stones, N, b.now(), G), Ve(f);
+    claimResearch: (m) => g((p, S, M) => Dc(p, m, M.now())),
+    startEndlessMine: (m) => g((p, S, M) => {
+      const w = p.parties.find((F) => F.id === p.activePartyId), T = [...m ?? w?.slots.map((F) => F.stoneId) ?? []], x = /* @__PURE__ */ new Set();
+      for (const F of Object.values(p.expeditions.runs)) if (F.status !== "CLAIMED") for (const q of F.partySnapshot) x.add(q.stoneId);
+      if (p.training.assignment && x.add(p.training.assignment.stoneId), p.affinityGarden.assignment && x.add(p.affinityGarden.assignment.stoneId), p.activeBattle && !p.activeBattle.winner)
+        for (const F of p.activeBattle.units) F.team === "PLAYER" && x.add(F.stoneId);
+      if (T.some((F) => x.has(F))) throw new Error("A deployed Stone cannot enter Endless Mine");
+      const $ = `endless:${p.account.accountId}:${M.now().getTime()}:${Math.floor(S.next() * 4294967296).toString(16)}`;
+      No(p.endlessMine, p.stones, T, M.now(), $), _e(p);
     }),
-    advanceEndlessMine: (p = 1) => S(
-      (f, y, b) => Ci(f.endlessMine, p, b.now()),
+    advanceEndlessMine: (m = 1) => g(
+      (p, S, M) => Ar(p.endlessMine, m, M.now()),
       { mode: "ACTIVE", skipEndless: !0 }
     ),
-    setEndlessManual: (p) => S((f) => $o(f.endlessMine, p)),
-    setEndlessStrategy: (p) => S((f) => {
-      if (!["BALANCED", "AGGRESSIVE", "DEFENSIVE", "BOSS_FOCUS", "RESOURCE_SAVE"].includes(p)) throw new Error("Unknown Endless AI strategy");
-      f.endlessMine.strategy = p;
+    setEndlessManual: (m) => g((p) => ko(p.endlessMine, m)),
+    setEndlessStrategy: (m) => g((p) => {
+      if (!["BALANCED", "AGGRESSIVE", "DEFENSIVE", "BOSS_FOCUS", "RESOURCE_SAVE"].includes(m)) throw new Error("Unknown Endless AI strategy");
+      p.endlessMine.strategy = m;
     }),
-    setEndlessSpeed: (p) => S((f) => {
-      if (![1, 2, 4].includes(p)) throw new Error("Unsupported battle speed");
-      f.endlessMine.speed = p;
+    setEndlessSpeed: (m) => g((p) => {
+      if (![1, 2, 4].includes(m)) throw new Error("Unsupported battle speed");
+      p.endlessMine.speed = m;
     }),
-    issueEndlessCommand: (p, f) => S((y) => Fo(y.endlessMine, p, f)),
-    pauseEndlessMine: () => S((p, f, y) => Go(p.endlessMine, y.now())),
-    resumeEndlessMine: () => S((p, f, y) => Uo(p.endlessMine, y.now())),
-    claimEndlessMine: () => S((p) => {
-      const f = jo(p.endlessMine);
-      return p.inventory.currencies.credits = Math.min(Number.MAX_SAFE_INTEGER, p.inventory.currencies.credits + f.credits), p.inventory.currencies.upgradeDust = Math.min(Number.MAX_SAFE_INTEGER, p.inventory.currencies.upgradeDust + f.upgradeDust), p.statistics.highestInfiniteFloor = Math.max(p.statistics.highestInfiniteFloor, f.highestFloor), f;
+    issueEndlessCommand: (m, p) => g((S) => Co(S.endlessMine, m, p)),
+    pauseEndlessMine: () => g((m, p, S) => Do(m.endlessMine, S.now())),
+    resumeEndlessMine: () => g((m, p, S) => Oo(m.endlessMine, S.now())),
+    claimEndlessMine: () => g((m) => {
+      const p = Po(m.endlessMine);
+      return m.inventory.currencies.credits = Math.min(Number.MAX_SAFE_INTEGER, m.inventory.currencies.credits + p.credits), m.inventory.currencies.upgradeDust = Math.min(Number.MAX_SAFE_INTEGER, m.inventory.currencies.upgradeDust + p.upgradeDust), m.statistics.highestInfiniteFloor = Math.max(m.statistics.highestInfiniteFloor, p.highestFloor), p;
     }),
-    updateEndlessLootFilter: (p) => S((f) => Ho(f.endlessMine, p)),
-    salvageEndlessEquipment: (p) => S((f) => bo(f.endlessMine.equipment, p).materialsGained),
-    equipEndlessEquipment: (p, f) => S((y) => {
-      const b = k(y, f), M = y.endlessMine.equipment.items.findIndex((q) => q.id === p), N = y.endlessMine.equipment.items[M];
-      if (!N) throw new Error("Endless equipment not found");
-      const L = b.equipment[N.slot], G = { COMMON: "NORMAL", UNCOMMON: "RARE", RARE: "SR", EPIC: "SSR", LEGENDARY: "UR", MYTHIC: "LEGENDARY" }, H = { maxHp: "maxHp", attack: "power", defense: "defense", speed: "speed", accuracy: "purity", resistance: "hardness", critChance: "resonance", critDamage: "power", breakPower: "resonance", ultimateStart: "resonance" };
-      if (b.equipment[N.slot] = {
-        instanceId: N.id,
-        definitionId: `${N.setId ?? "FIELD"}_${N.slot}`,
-        slot: N.slot,
-        level: N.level,
-        rarity: G[N.rarity],
-        setId: N.setId,
-        locked: N.locked,
-        affixes: N.affixes.map((q) => ({
-          stat: H[q.stat],
+    updateEndlessLootFilter: (m) => g((p) => $o(p.endlessMine, m)),
+    salvageEndlessEquipment: (m) => g((p) => So(p.endlessMine.equipment, m).materialsGained),
+    equipEndlessEquipment: (m, p) => g((S) => {
+      const M = b(S, p), w = S.endlessMine.equipment.items.findIndex((q) => q.id === m), T = S.endlessMine.equipment.items[w];
+      if (!T) throw new Error("Endless equipment not found");
+      const x = M.equipment[T.slot], $ = { COMMON: "NORMAL", UNCOMMON: "RARE", RARE: "SR", EPIC: "SSR", LEGENDARY: "UR", MYTHIC: "LEGENDARY" }, F = { maxHp: "maxHp", attack: "power", defense: "defense", speed: "speed", accuracy: "purity", resistance: "hardness", critChance: "resonance", critDamage: "power", breakPower: "resonance", ultimateStart: "resonance" };
+      if (M.equipment[T.slot] = {
+        instanceId: T.id,
+        definitionId: `${T.setId ?? "FIELD"}_${T.slot}`,
+        slot: T.slot,
+        level: T.level,
+        rarity: $[T.rarity],
+        setId: T.setId,
+        locked: T.locked,
+        affixes: T.affixes.map((q) => ({
+          stat: F[q.stat],
           operation: ["maxHp", "attack", "defense"].includes(q.stat) ? "FLAT" : "PERCENT",
           value: q.value,
           sourceStat: q.stat
         }))
-      }, y.endlessMine.equipment.items.splice(M, 1), L) {
-        const q = Qn(L);
-        rn(y.endlessMine.equipment, q, { autoSalvage: !1 }), delete y.inventory.equipment[L.instanceId];
+      }, S.endlessMine.equipment.items.splice(w, 1), x) {
+        const q = $n(x);
+        Pt(S.endlessMine.equipment, q, { autoSalvage: !1 }), delete S.inventory.equipment[x.instanceId];
       }
-      b.stats = Ke(b);
+      M.stats = Le(M);
     }),
-    unequipEndlessEquipment: (p, f) => S((y) => {
-      const b = k(y, f), M = Object.keys(b.equipment).find((L) => b.equipment[L]?.instanceId === p);
-      if (!M) throw new Error("Equipped item was not found on this Stone");
-      const N = b.equipment[M];
-      if (!N) throw new Error("Equipped item was not found on this Stone");
-      if (y.endlessMine.equipment.items.length >= y.endlessMine.equipment.capacity)
+    unequipEndlessEquipment: (m, p) => g((S) => {
+      const M = b(S, p), w = Object.keys(M.equipment).find((x) => M.equipment[x]?.instanceId === m);
+      if (!w) throw new Error("Equipped item was not found on this Stone");
+      const T = M.equipment[w];
+      if (!T) throw new Error("Equipped item was not found on this Stone");
+      if (S.endlessMine.equipment.items.length >= S.endlessMine.equipment.capacity)
         throw new Error("Equipment storage is full; salvage an item before unequipping");
-      rn(y.endlessMine.equipment, Qn(N), { autoSalvage: !1 }), delete b.equipment[M], delete y.inventory.equipment[N.instanceId], b.stats = Ke(b);
+      Pt(S.endlessMine.equipment, $n(T), { autoSalvage: !1 }), delete M.equipment[w], delete S.inventory.equipment[T.instanceId], M.stats = Le(M);
     }),
-    setEndlessEquipmentLocked: (p, f) => S((y) => {
-      const b = y.endlessMine.equipment.items.find((M) => M.id === p);
-      if (b) {
-        b.locked = f;
+    setEndlessEquipmentLocked: (m, p) => g((S) => {
+      const M = S.endlessMine.equipment.items.find((w) => w.id === m);
+      if (M) {
+        M.locked = p;
         return;
       }
-      for (const M of Object.values(y.stones)) {
-        const N = Object.values(M.equipment).find((L) => L?.instanceId === p);
-        if (N) {
-          N.locked = f;
+      for (const w of Object.values(S.stones)) {
+        const T = Object.values(w.equipment).find((x) => x?.instanceId === m);
+        if (T) {
+          T.locked = p;
           return;
         }
       }
       throw new Error("Equipment not found");
     }),
-    setShowcase: (p) => S((f) => {
-      if (p.length > 6 || new Set(p).size !== p.length) throw new Error("Showcase supports up to six unique stones");
-      for (const y of p) k(f, y);
-      f.profile.showcaseStoneIds = [...p];
+    setShowcase: (m) => g((p) => {
+      if (m.length > 6 || new Set(m).size !== m.length) throw new Error("Showcase supports up to six unique stones");
+      for (const S of m) b(p, S);
+      p.profile.showcaseStoneIds = [...m];
     }),
-    setRoute: (p, f = null) => t((y) => ({ ...y, route: p, selectedStoneId: f })),
-    setFarmSessionActive: (p) => t((f) => ({ ...f, farmSessionActive: p })),
-    updateSettings: (p) => S((f) => {
-      f.settings = {
-        ...f.settings,
-        ...p,
-        masterVolume: Math.max(0, Math.min(1, p.masterVolume ?? f.settings.masterVolume)),
-        musicVolume: Math.max(0, Math.min(1, p.musicVolume ?? f.settings.musicVolume)),
-        effectsVolume: Math.max(0, Math.min(1, p.effectsVolume ?? f.settings.effectsVolume)),
-        textScale: Math.max(0.8, Math.min(1.5, p.textScale ?? f.settings.textScale))
+    setRoute: (m, p = null) => t((S) => ({ ...S, route: m, selectedStoneId: p })),
+    setFarmSessionActive: (m) => t((p) => ({ ...p, farmSessionActive: m })),
+    updateSettings: (m) => g((p) => {
+      p.settings = {
+        ...p.settings,
+        ...m,
+        masterVolume: Math.max(0, Math.min(1, m.masterVolume ?? p.settings.masterVolume)),
+        musicVolume: Math.max(0, Math.min(1, m.musicVolume ?? p.settings.musicVolume)),
+        effectsVolume: Math.max(0, Math.min(1, m.effectsVolume ?? p.settings.effectsVolume)),
+        textScale: Math.max(0.8, Math.min(1.5, m.textScale ?? p.settings.textScale))
       };
     }),
-    addCurrency: (p, f) => S((y) => {
-      if (!y.settings.developerMode) throw new Error("Developer mode is disabled");
-      y.inventory.currencies[p] = Math.max(0, y.inventory.currencies[p] + Math.floor(f));
+    addCurrency: (m, p) => g((S) => {
+      if (!S.settings.developerMode) throw new Error("Developer mode is disabled");
+      S.inventory.currencies[m] = Math.max(0, S.inventory.currencies[m] + Math.floor(p));
     }),
-    createPerfectStone: (p) => S((f, y) => {
-      if (!f.settings.developerMode) throw new Error("Developer mode is disabled");
-      if (Object.keys(f.stones).length >= f.inventory.capacity) throw new Error("Stone storage is full");
-      const b = fe[p];
-      if (!b) throw new Error("Unknown species");
-      const M = Ct({ species: b, origin: "EVENT", owner: { accountId: f.account.accountId, username: f.account.username }, rng: y, clock: r, mutation: "PERFECT" });
-      return f.stones[M.instanceId] = M, hn(f, M), f.statistics.mutationCount += 1, At(f, "STONE_CREATED", { stoneId: M.instanceId, speciesId: M.speciesId, rarity: M.rarity, origin: M.origin }, y, r, `sync_stone_${M.instanceId}`), M.instanceId;
+    createPerfectStone: (m) => g((p, S) => {
+      if (!p.settings.developerMode) throw new Error("Developer mode is disabled");
+      if (Object.keys(p.stones).length >= p.inventory.capacity) throw new Error("Stone storage is full");
+      const M = re[m];
+      if (!M) throw new Error("Unknown species");
+      const w = ft({ species: M, origin: "EVENT", owner: { accountId: p.account.accountId, username: p.account.username }, rng: S, clock: i, mutation: "PERFECT" });
+      return p.stones[w.instanceId] = w, Wt(p, w), p.statistics.mutationCount += 1, rt(p, "STONE_CREATED", { stoneId: w.instanceId, speciesId: w.speciesId, rarity: w.rarity, origin: w.origin }, S, i, `sync_stone_${w.instanceId}`), w.instanceId;
     }),
-    queueOnlineEvent: (p, f, y) => S((b, M) => At(b, p, f, M, r, y)),
-    syncOnline: async (p) => {
-      const f = ac(n().game, r, 100);
-      if (f.length === 0) return { sent: 0, accepted: 0, rejected: 0, remaining: n().game.online.queue.length, connected: n().game.online.connected };
+    queueOnlineEvent: (m, p, S) => g((M, w) => rt(M, m, p, w, i, S)),
+    syncOnline: async (m) => {
+      const p = Za(n().game, i, 100);
+      if (p.length === 0) return { sent: 0, accepted: 0, rejected: 0, remaining: n().game.online.queue.length, connected: n().game.online.connected };
       try {
-        const y = await p.pushEvents(f);
-        return S((b) => {
-          const M = new Set(y.accepted.map((L) => L.eventId)), N = new Map(y.rejected.map((L) => [L.eventId, L]));
-          for (const L of y.accepted)
-            b.online.processedReceipts.some((G) => G.eventId === L.eventId) || b.online.processedReceipts.push(L);
-          return b.online.queue = b.online.queue.filter((L) => {
-            if (M.has(L.eventId)) return !1;
-            const G = N.get(L.eventId);
-            return G ? G.retryable ? (Yr(L, r), !0) : !1 : !0;
-          }), b.online.connected = !0, b.online.lastSyncedAt = r.now().toISOString(), b.online.processedReceipts.length > 2e3 && b.online.processedReceipts.splice(0, b.online.processedReceipts.length - 2e3), { sent: f.length, accepted: y.accepted.length, rejected: y.rejected.length, remaining: b.online.queue.length, connected: !0 };
+        const S = await m.pushEvents(p);
+        return g((M) => {
+          const w = new Set(S.accepted.map((x) => x.eventId)), T = new Map(S.rejected.map((x) => [x.eventId, x]));
+          for (const x of S.accepted)
+            M.online.processedReceipts.some(($) => $.eventId === x.eventId) || M.online.processedReceipts.push(x);
+          return M.online.queue = M.online.queue.filter((x) => {
+            if (w.has(x.eventId)) return !1;
+            const $ = T.get(x.eventId);
+            return $ ? $.retryable ? (Oi(x, i), !0) : !1 : !0;
+          }), M.online.connected = !0, M.online.lastSyncedAt = i.now().toISOString(), M.online.processedReceipts.length > 2e3 && M.online.processedReceipts.splice(0, M.online.processedReceipts.length - 2e3), { sent: p.length, accepted: S.accepted.length, rejected: S.rejected.length, remaining: M.online.queue.length, connected: !0 };
         });
       } catch {
-        return S((y) => {
-          const b = new Set(f.map((M) => M.eventId));
-          for (const M of y.online.queue) b.has(M.eventId) && Yr(M, r);
-          return y.online.connected = !1, { sent: f.length, accepted: 0, rejected: f.length, remaining: y.online.queue.length, connected: !1 };
+        return g((S) => {
+          const M = new Set(p.map((w) => w.eventId));
+          for (const w of S.online.queue) M.has(w.eventId) && Oi(w, i);
+          return S.online.connected = !1, { sent: p.length, accepted: 0, rejected: p.length, remaining: S.online.queue.length, connected: !1 };
         });
       }
     },
-    setOnlineConnected: (p) => S((f) => {
-      f.online.connected = p;
+    setOnlineConnected: (m) => g((p) => {
+      p.online.connected = m;
     }),
-    exportSave: () => os(n().game, r),
-    importSave: (p) => {
-      const f = st(on(p));
-      An(f, r), i && o(f), w = !1, t((y) => ({ ...y, game: f, persistenceAvailable: s, lastError: null }));
+    exportSave: () => zr(n().game, i),
+    importSave: (m) => {
+      const p = je(Bt(m));
+      Zt(p, i), r && o(p), y = !1, t((S) => ({ ...S, game: p, persistenceAvailable: s, lastError: null }));
     },
     save: () => {
       try {
-        if (w) throw new Error("Corrupt save recovery is write-protected; import a valid save or explicitly reset");
-        o(n().game), t((p) => ({ ...p, persistenceAvailable: s, lastError: null }));
-      } catch (p) {
-        throw t((f) => ({ ...f, persistenceAvailable: s, lastError: p instanceof Error ? p.message : String(p) })), p;
+        if (y) throw new Error("Corrupt save recovery is write-protected; import a valid save or explicitly reset");
+        o(n().game), t((m) => ({ ...m, persistenceAvailable: s, lastError: null }));
+      } catch (m) {
+        throw t((p) => ({ ...p, persistenceAvailable: s, lastError: m instanceof Error ? m.message : String(m) })), m;
       }
     },
     load: () => {
-      if (!i) return !1;
-      const p = nl(i);
-      if (!p) return !1;
-      const f = st(p);
-      return An(f, r), a && o(f), t((y) => ({ ...y, game: f, persistenceAvailable: s, lastError: null })), !0;
+      if (!r) return !1;
+      const m = Wc(r);
+      if (!m) return !1;
+      const p = je(m);
+      return Zt(p, i), a && o(p), t((S) => ({ ...S, game: p, persistenceAvailable: s, lastError: null })), !0;
     },
-    resetGame: (p = {}) => {
-      const f = Jn({ ...e.newGame, ...p, clock: r });
-      i && o(f), w = !1, t((y) => ({ ...y, game: f, persistenceAvailable: s, route: "HOME", selectedStoneId: null, lastError: null }));
+    resetGame: (m = {}) => {
+      const p = Pn({ ...e.newGame, ...m, clock: i });
+      r && o(p), y = !1, t((S) => ({ ...S, game: p, persistenceAvailable: s, route: "HOME", selectedStoneId: null, lastError: null }));
     },
-    clearError: () => t((p) => ({ ...p, lastError: null }))
+    clearError: () => t((m) => ({ ...m, lastError: null }))
   };
-}, il = ma(rl()), sl = il;
-ar.map((e) => e.id);
-const Qr = ["BRONZE", "SILVER", "GOLD", "PLATINUM", "DIAMOND", "MASTER", "LEGEND"], ol = [
+}, zc = ra(Kc()), Jc = zc;
+Vn.map((e) => e.id);
+const qi = ["BRONZE", "SILVER", "GOLD", "PLATINUM", "DIAMOND", "MASTER", "LEGEND"], Qc = [
   "ENDLESS_FASTEST_CLEAR",
   "ENDLESS_FEWEST_DAMAGE"
-], al = (e) => ol.includes(e), cl = (e) => typeof globalThis.structuredClone == "function" ? globalThis.structuredClone(e) : JSON.parse(JSON.stringify(e));
-class ll {
+], Zc = (e) => Qc.includes(e), el = (e) => typeof globalThis.structuredClone == "function" ? globalThis.structuredClone(e) : JSON.parse(JSON.stringify(e));
+class tl {
   receipts = /* @__PURE__ */ new Map();
   authority = /* @__PURE__ */ new Map();
   profiles = /* @__PURE__ */ new Map();
@@ -6323,47 +5471,47 @@ class ll {
   now;
   constructor(t = {}) {
     const n = Math.max(0, Math.min(1e4, Math.floor(t.fakeUserCount ?? 1e3)));
-    this.leaderboardSeed = t.seed ?? "stoneverse-mock-online", this.rng = new Re(this.leaderboardSeed), this.latencyMs = Math.max(0, t.latencyMs ?? 0), this.failureRate = Math.max(0, Math.min(1, t.failureRate ?? 0)), this.now = t.now ?? (() => /* @__PURE__ */ new Date()), this.seedProfiles(n);
+    this.leaderboardSeed = t.seed ?? "stoneverse-mock-online", this.rng = new Ee(this.leaderboardSeed), this.latencyMs = Math.max(0, t.latencyMs ?? 0), this.failureRate = Math.max(0, Math.min(1, t.failureRate ?? 0)), this.now = t.now ?? (() => /* @__PURE__ */ new Date()), this.seedProfiles(n);
   }
   seedProfiles(t) {
-    const n = ["Obsidian", "Quartz", "Magma", "Echo", "Prism", "Granite", "Aurora", "Void", "Solar", "Tidal"], r = ["Keeper", "Smith", "Seeker", "Sage", "Rider", "Warden", "Miner", "Pulse", "Core", "Rune"];
-    for (let i = 0; i < t; i += 1) {
-      const s = `mock_${i.toString().padStart(5, "0")}`, o = this.rng.int(2, 100), a = Math.min(100, Math.max(1, o + this.rng.int(-12, 15))), l = Math.min(Qr.length - 1, Math.floor(o / 16)), d = Math.round(o ** 2.35 * (4 + this.rng.next() * 5)), u = Math.min(100, Math.round(o * (0.65 + this.rng.next() * 0.42))), h = Math.min(100, Math.round(o * (0.52 + this.rng.next() * 0.45))), w = {
+    const n = ["Obsidian", "Quartz", "Magma", "Echo", "Prism", "Granite", "Aurora", "Void", "Solar", "Tidal"], i = ["Keeper", "Smith", "Seeker", "Sage", "Rider", "Warden", "Miner", "Pulse", "Core", "Rune"];
+    for (let r = 0; r < t; r += 1) {
+      const s = `mock_${r.toString().padStart(5, "0")}`, o = this.rng.int(2, 100), a = Math.min(100, Math.max(1, o + this.rng.int(-12, 15))), c = Math.min(qi.length - 1, Math.floor(o / 16)), l = Math.round(o ** 2.35 * (4 + this.rng.next() * 5)), d = Math.min(100, Math.round(o * (0.65 + this.rng.next() * 0.42))), f = Math.min(100, Math.round(o * (0.52 + this.rng.next() * 0.45))), y = {
         lifetimeDamage: Math.round(o ** 3 * (25 + this.rng.next() * 20)),
         bossesDefeated: Math.floor(o * this.rng.next()),
         bestContributionRank: this.rng.int(1, 500)
-      }, E = Array.from({ length: this.rng.int(3, 6) }, (G, H) => `${s}_stone_${H}`), m = Math.max(1, Math.round(o ** 1.42 * (1.1 + this.rng.next()))), A = Math.min(m, Math.max(1, Math.round(m * (0.35 + this.rng.next() * 0.62)))), S = this.rng.int(0, 3), k = Math.round(o * (2 + this.rng.next() * 9)), T = w.bossesDefeated + Math.floor(m / 10), p = Math.round(o ** 1.55 * (1 + this.rng.next() * 2)), f = Math.round(o ** 2.12 * (18 + this.rng.next() * 12)), y = this.rng.int(0, Math.min(3, E.length)), b = this.rng.int(0, Math.max(0, Math.floor(o / 18))), M = this.rng.int(0, Math.max(1, Math.floor(o / 5))), N = Math.max(8, Math.round(245 - o * 1.65 + this.rng.next() * 42)), L = Math.max(0, Math.round((105 - o) * 82 + this.rng.next() * 1200));
+      }, h = Array.from({ length: this.rng.int(3, 6) }, ($, F) => `${s}_stone_${F}`), u = Math.max(1, Math.round(o ** 1.42 * (1.1 + this.rng.next()))), I = Math.min(u, Math.max(1, Math.round(u * (0.35 + this.rng.next() * 0.62)))), g = this.rng.int(0, 3), b = Math.round(o * (2 + this.rng.next() * 9)), R = y.bossesDefeated + Math.floor(u / 10), m = Math.round(o ** 1.55 * (1 + this.rng.next() * 2)), p = Math.round(o ** 2.12 * (18 + this.rng.next() * 12)), S = this.rng.int(0, Math.min(3, h.length)), M = this.rng.int(0, Math.max(0, Math.floor(o / 18))), w = this.rng.int(0, Math.max(1, Math.floor(o / 5))), T = Math.max(8, Math.round(245 - o * 1.65 + this.rng.next() * 42)), x = Math.max(0, Math.round((105 - o) * 82 + this.rng.next() * 1200));
       this.profiles.set(s, {
         accountId: s,
-        username: `${this.rng.pick(n)}${this.rng.pick(r)}${i + 1}`,
+        username: `${this.rng.pick(n)}${this.rng.pick(i)}${r + 1}`,
         avatarId: `avatar_${this.rng.int(1, 12)}`,
-        frameId: `frame_${l}`,
+        frameId: `frame_${c}`,
         titleId: `title_${this.rng.int(1, 20)}`,
         accountLevel: o,
         miningLevel: a,
-        totalMined: d,
-        collectionPercent: u,
-        achievementPercent: h,
-        arenaTier: Qr[l] ?? "BRONZE",
-        arenaRating: 800 + l * 430 + this.rng.int(0, 420),
-        raidStats: w,
-        showcaseStoneIds: E,
+        totalMined: l,
+        collectionPercent: d,
+        achievementPercent: f,
+        arenaTier: qi[c] ?? "BRONZE",
+        arenaRating: 800 + c * 430 + this.rng.int(0, 420),
+        raidStats: y,
+        showcaseStoneIds: h,
         lastOnlineAt: new Date(this.now().getTime() - this.rng.int(0, 14 * 864e5)).toISOString(),
-        highestEndlessFloor: m,
-        weeklyHighestEndlessFloor: A,
-        currentExpeditionCount: S,
-        expeditionCount: k,
-        expeditionScore: k * 100 + A * 25,
-        bossKills: T,
-        battleWins: p,
-        battlePower: f,
-        bestTeamStoneIds: [...E],
-        favoriteStoneIds: E.slice(0, y),
-        favoriteStoneCount: y,
-        perfectStoneCount: b,
-        mutationCollectionCount: M,
-        fastestEndlessClearTurns: N,
-        fewestEndlessDamage: L
+        highestEndlessFloor: u,
+        weeklyHighestEndlessFloor: I,
+        currentExpeditionCount: g,
+        expeditionCount: b,
+        expeditionScore: b * 100 + I * 25,
+        bossKills: R,
+        battleWins: m,
+        battlePower: p,
+        bestTeamStoneIds: [...h],
+        favoriteStoneIds: h.slice(0, S),
+        favoriteStoneCount: S,
+        perfectStoneCount: M,
+        mutationCollectionCount: w,
+        fastestEndlessClearTurns: T,
+        fewestEndlessDamage: x
       });
     }
   }
@@ -6372,8 +5520,8 @@ class ll {
   }
   rejectReason(t) {
     if (!t.eventId || !t.sessionId || !t.accountId) return { reason: "Malformed event identity", retryable: !1 };
-    const n = new Date(t.timestamp).getTime(), r = n - this.now().getTime();
-    if (!Number.isFinite(n) || r > 5 * 6e4 || r < -30 * 864e5) return { reason: "Timestamp outside authority window", retryable: !1 };
+    const n = new Date(t.timestamp).getTime(), i = n - this.now().getTime();
+    if (!Number.isFinite(n) || i > 5 * 6e4 || i < -30 * 864e5) return { reason: "Timestamp outside authority window", retryable: !1 };
     const s = (this.authority.get(t.accountId) ?? { lastSequenceBySession: {} }).lastSequenceBySession[t.sessionId] ?? 0;
     if (t.sequence <= s) return { reason: "Non-monotonic session sequence", retryable: !1 };
     if (t.sequence > s + 1e4) return { reason: "Impossible session sequence jump", retryable: !1 };
@@ -6386,33 +5534,33 @@ class ll {
   }
   async pushEvents(t) {
     await this.delay();
-    const n = [], r = [];
-    for (const i of t) {
-      const s = this.receipts.get(i.eventId);
+    const n = [], i = [];
+    for (const r of t) {
+      const s = this.receipts.get(r.eventId);
       if (s) {
         n.push(s);
         continue;
       }
-      const o = this.rejectReason(i);
+      const o = this.rejectReason(r);
       if (o) {
-        r.push({ eventId: i.eventId, ...o });
+        i.push({ eventId: r.eventId, ...o });
         continue;
       }
-      const a = this.authority.get(i.accountId) ?? { lastSequenceBySession: {}, totalMining: 0, battleWins: 0, fusionCount: 0 };
-      a.lastSequenceBySession[i.sessionId] = i.sequence, i.kind === "MINING_RECORDED" && (a.totalMining += Number(i.payload.amount)), i.kind === "BATTLE_FINISHED" && i.payload.winner === "PLAYER" && (a.battleWins += 1), i.kind === "STONE_FUSED" && (a.fusionCount += 1), this.authority.set(i.accountId, a);
-      const l = { eventId: i.eventId, processedAt: this.now().toISOString(), checksum: Mn(i) };
-      this.receipts.set(i.eventId, l), n.push(l);
+      const a = this.authority.get(r.accountId) ?? { lastSequenceBySession: {}, totalMining: 0, battleWins: 0, fusionCount: 0 };
+      a.lastSequenceBySession[r.sessionId] = r.sequence, r.kind === "MINING_RECORDED" && (a.totalMining += Number(r.payload.amount)), r.kind === "BATTLE_FINISHED" && r.payload.winner === "PLAYER" && (a.battleWins += 1), r.kind === "STONE_FUSED" && (a.fusionCount += 1), this.authority.set(r.accountId, a);
+      const c = { eventId: r.eventId, processedAt: this.now().toISOString(), checksum: nn(r) };
+      this.receipts.set(r.eventId, c), n.push(c);
     }
-    return { accepted: n, rejected: r };
+    return { accepted: n, rejected: i };
   }
   async getPublicProfile(t) {
     await this.delay();
     const n = this.profiles.get(t);
-    return n ? cl(n) : null;
+    return n ? el(n) : null;
   }
   async getLeaderboard(t, n = 100) {
     await this.delay();
-    const r = (s) => {
+    const i = (s) => {
       switch (t) {
         case "TOTAL_MINING":
           return s.totalMined;
@@ -6447,9 +5595,9 @@ class ll {
         case "BATTLE_POWER":
           return s.battlePower ?? 0;
       }
-    }, i = al(t) ? 1 : -1;
-    return [...this.profiles.values()].sort((s, o) => (r(s) - r(o)) * i || s.accountId.localeCompare(o.accountId)).slice(0, Math.max(1, Math.min(1e3, n))).map((s, o) => {
-      const a = Number.parseInt(Mn([this.leaderboardSeed, t, s.accountId]), 16) % 7 - 3;
+    }, r = Zc(t) ? 1 : -1;
+    return [...this.profiles.values()].sort((s, o) => (i(s) - i(o)) * r || s.accountId.localeCompare(o.accountId)).slice(0, Math.max(1, Math.min(1e3, n))).map((s, o) => {
+      const a = Number.parseInt(nn([this.leaderboardSeed, t, s.accountId]), 16) % 7 - 3;
       return {
         rank: o + 1,
         previousRank: Math.max(1, o + 1 + a),
@@ -6458,45 +5606,45 @@ class ll {
         avatarId: s.avatarId,
         frameId: s.frameId,
         titleId: s.titleId,
-        value: r(s)
+        value: i(s)
       };
     });
   }
 }
-const dl = (e) => e == null || typeof e != "object" ? e : typeof globalThis.structuredClone == "function" ? globalThis.structuredClone(e) : JSON.parse(JSON.stringify(e));
-class ul {
+const nl = (e) => e == null || typeof e != "object" ? e : typeof globalThis.structuredClone == "function" ? globalThis.structuredClone(e) : JSON.parse(JSON.stringify(e));
+class il {
   listeners = /* @__PURE__ */ new Map();
   on(t, n) {
-    const r = this.listeners.get(t) ?? /* @__PURE__ */ new Set();
-    return r.add(n), this.listeners.set(t, r), () => this.off(t, n);
+    const i = this.listeners.get(t) ?? /* @__PURE__ */ new Set();
+    return i.add(n), this.listeners.set(t, i), () => this.off(t, n);
   }
   once(t, n) {
-    const r = this.on(t, (i) => {
-      r(), n(i);
+    const i = this.on(t, (r) => {
+      i(), n(r);
     });
-    return r;
+    return i;
   }
   off(t, n) {
-    const r = this.listeners.get(t);
-    r?.delete(n), r?.size === 0 && this.listeners.delete(t);
+    const i = this.listeners.get(t);
+    i?.delete(n), i?.size === 0 && this.listeners.delete(t);
   }
   emit(t, n) {
-    for (const r of [...this.listeners.get(t) ?? []])
+    for (const i of [...this.listeners.get(t) ?? []])
       try {
-        r(dl(n));
-      } catch (i) {
-        t !== "error" && this.emit("error", { operation: `event:${t}`, message: i instanceof Error ? i.message : String(i), cause: i });
+        i(nl(n));
+      } catch (r) {
+        t !== "error" && this.emit("error", { operation: `event:${t}`, message: r instanceof Error ? r.message : String(r), cause: r });
       }
   }
   clear() {
     this.listeners.clear();
   }
 }
-const ml = (e) => {
-  const t = Object.values(e.stones), r = (e.parties.find((d) => d.id === e.activePartyId) ?? e.parties[0])?.slots.map((d) => d.stoneId).filter((d) => !!e.stones[d]) ?? [], i = r.reduce((d, u) => {
-    const h = e.stones[u];
-    return h ? d + Math.round(h.stats.power * 1.9 + h.stats.defense * 1.45 + h.stats.speed * 1.15 + h.stats.resonance * 1.25 + h.stats.maxHp * 0.18) : d;
-  }, 0), s = Object.values(e.collection.mutationSpecies).reduce((d, u) => d + u.filter((h) => h !== "NONE").length, 0), o = Object.values(e.expeditions.runs).filter((d) => d.status === "ACTIVE").length, a = Math.max(e.endlessMine.highestFloor, e.statistics.highestInfiniteFloor), l = e.account.raidStats.bossesDefeated + Math.floor(a / 10);
+const rl = (e) => {
+  const t = Object.values(e.stones), i = (e.parties.find((l) => l.id === e.activePartyId) ?? e.parties[0])?.slots.map((l) => l.stoneId).filter((l) => !!e.stones[l]) ?? [], r = i.reduce((l, d) => {
+    const f = e.stones[d];
+    return f ? l + Math.round(f.stats.power * 1.9 + f.stats.defense * 1.45 + f.stats.speed * 1.15 + f.stats.resonance * 1.25 + f.stats.maxHp * 0.18) : l;
+  }, 0), s = Object.values(e.collection.mutationSpecies).reduce((l, d) => l + d.filter((f) => f !== "NONE").length, 0), o = Object.values(e.expeditions.runs).filter((l) => l.status === "ACTIVE").length, a = Math.max(e.endlessMine.highestFloor, e.statistics.highestInfiniteFloor), c = e.account.raidStats.bossesDefeated + Math.floor(a / 10);
   return {
     accountId: e.account.accountId,
     username: e.account.username,
@@ -6506,8 +5654,8 @@ const ml = (e) => {
     accountLevel: e.accountProgress.level,
     miningLevel: e.mining.level,
     totalMined: e.mining.totalMined,
-    collectionPercent: Bt.length === 0 ? 0 : Math.round(e.collection.discoveredSpeciesIds.length / Bt.length * 100),
-    achievementPercent: Object.values(e.achievements).length === 0 ? 0 : Math.round(Object.values(e.achievements).filter((d) => d.unlockedAt).length / Object.values(e.achievements).length * 100),
+    collectionPercent: wt.length === 0 ? 0 : Math.round(e.collection.discoveredSpeciesIds.length / wt.length * 100),
+    achievementPercent: Object.values(e.achievements).length === 0 ? 0 : Math.round(Object.values(e.achievements).filter((l) => l.unlockedAt).length / Object.values(e.achievements).length * 100),
     arenaTier: e.account.arenaTier,
     arenaRating: e.account.arenaRating,
     raidStats: { ...e.account.raidStats },
@@ -6518,360 +5666,360 @@ const ml = (e) => {
     currentExpeditionCount: o,
     expeditionCount: e.expeditions.totalCycles,
     expeditionScore: Math.min(Number.MAX_SAFE_INTEGER, e.expeditions.totalCycles * 100 + e.endlessMine.weeklyHighestFloor * 25),
-    bossKills: l,
+    bossKills: c,
     battleWins: e.statistics.battleWins,
-    battlePower: i,
-    bestTeamStoneIds: r,
+    battlePower: r,
+    bestTeamStoneIds: i,
     favoriteStoneIds: [...e.profile.favoriteStoneIds],
-    favoriteStoneCount: t.filter((d) => d.favorite).length,
-    perfectStoneCount: t.filter((d) => On(d.individualValues)).length,
+    favoriteStoneCount: t.filter((l) => l.favorite).length,
+    perfectStoneCount: t.filter((l) => mn(l.individualValues)).length,
     mutationCollectionCount: s,
     // The current save schema does not retain authoritative weekly Endless
     // clear-turn and damage totals, so own profiles explicitly remain unmeasured.
     fastestEndlessClearTurns: null,
     fewestEndlessDamage: null
   };
-}, Wn = (e) => e == null || typeof e != "object" ? e : typeof globalThis.structuredClone == "function" ? globalThis.structuredClone(e) : JSON.parse(JSON.stringify(e)), pl = (e = {}) => {
-  const t = e.store ?? sl, n = e.online === void 0 ? new ll() : e.online, r = e.events ?? new ul(), i = (E, m) => {
-    for (const [A, S] of Object.entries(m.achievements))
-      S.unlockedAt && !E.achievements[A]?.unlockedAt && r.emit("achievement:unlocked", { achievementId: A });
-  }, s = (E) => st(E).endlessMine, o = (E) => ({
-    xp: E.xp,
-    level: E.level,
-    unlockedRewardIds: [...E.unlockedRewardIds]
-  }), a = (E, m) => !E || E.xp !== m.xp || E.level !== m.level || E.unlockedRewardIds.length !== m.unlockedRewardIds.length || E.unlockedRewardIds.some((A, S) => A !== m.unlockedRewardIds[S]), l = (E, m) => E.minRarity === m.minRarity && E.minScore === m.minScore && E.autoSalvage === m.autoSalvage && (E.allowedSlots ?? []).join("|") === (m.allowedSlots ?? []).join("|") && (E.alwaysKeepSets ?? []).join("|") === (m.alwaysKeepSets ?? []).join("|"), d = (E, m, A) => {
-    for (const [N, L] of Object.entries(A.expeditions.runs)) {
-      const G = m.expeditions.runs[N];
-      G && L.completedCycles > G.completedCycles && r.emit("expedition:completed", {
-        expedition: L,
-        previousCompletedCycles: G.completedCycles,
-        cyclesCompleted: L.completedCycles - G.completedCycles
+}, Ln = (e) => e == null || typeof e != "object" ? e : typeof globalThis.structuredClone == "function" ? globalThis.structuredClone(e) : JSON.parse(JSON.stringify(e)), sl = (e = {}) => {
+  const t = e.store ?? Jc, n = e.online === void 0 ? new tl() : e.online, i = e.events ?? new il(), r = (h, u) => {
+    for (const [I, g] of Object.entries(u.achievements))
+      g.unlockedAt && !h.achievements[I]?.unlockedAt && i.emit("achievement:unlocked", { achievementId: I });
+  }, s = (h) => je(h).endlessMine, o = (h) => ({
+    xp: h.xp,
+    level: h.level,
+    unlockedRewardIds: [...h.unlockedRewardIds]
+  }), a = (h, u) => !h || h.xp !== u.xp || h.level !== u.level || h.unlockedRewardIds.length !== u.unlockedRewardIds.length || h.unlockedRewardIds.some((I, g) => I !== u.unlockedRewardIds[g]), c = (h, u) => h.minRarity === u.minRarity && h.minScore === u.minScore && h.autoSalvage === u.autoSalvage && (h.allowedSlots ?? []).join("|") === (u.allowedSlots ?? []).join("|") && (h.alwaysKeepSets ?? []).join("|") === (u.alwaysKeepSets ?? []).join("|"), l = (h, u, I) => {
+    for (const [T, x] of Object.entries(I.expeditions.runs)) {
+      const $ = u.expeditions.runs[T];
+      $ && x.completedCycles > $.completedCycles && i.emit("expedition:completed", {
+        expedition: x,
+        previousCompletedCycles: $.completedCycles,
+        cyclesCompleted: x.completedCycles - $.completedCycles
       });
-      const H = new Set(G?.expeditionStorage.rareDiscoveries.map((q) => q.discoveryId) ?? []);
-      for (const q of L.expeditionStorage.rareDiscoveries)
-        H.has(q.discoveryId) || r.emit("expedition:rareDiscovered", { expeditionId: N, discovery: q });
+      const F = new Set($?.expeditionStorage.rareDiscoveries.map((q) => q.discoveryId) ?? []);
+      for (const q of x.expeditionStorage.rareDiscoveries)
+        F.has(q.discoveryId) || i.emit("expedition:rareDiscovered", { expeditionId: T, discovery: q });
     }
-    const S = m.research.slot;
-    if (S?.status === "ACTIVE") {
-      const N = A.research.slot?.researchId === S.researchId ? A.research.slot : null;
-      N?.status === "READY" ? r.emit("research:completed", N) : A.research.claimLedger[S.researchId] && r.emit("research:completed", { ...S, status: "READY", claimedAt: null });
+    const g = u.research.slot;
+    if (g?.status === "ACTIVE") {
+      const T = I.research.slot?.researchId === g.researchId ? I.research.slot : null;
+      T?.status === "READY" ? i.emit("research:completed", T) : I.research.claimLedger[g.researchId] && i.emit("research:completed", { ...g, status: "READY", claimedAt: null });
     }
-    const k = A.idle.lastWelcomeBack;
-    k && k.summaryId !== m.idle.lastWelcomeBack?.summaryId && r.emit("idle:processed", k);
-    const T = m.endlessMine, p = A.endlessMine, f = T.run, y = p.run, b = !!(y && p.runId && p.runId === T.runId);
-    if (p.runId && p.runId !== T.runId && r.emit("endless:started", s(A)), b && y && f) {
-      const N = Math.max(0, y.battles - f.battles), L = Math.max(0, y.highestClearedFloor - f.highestClearedFloor), G = Math.max(0, p.pendingCredits - T.pendingCredits), H = new Set(T.equipment.items.map((K) => K.id)), q = p.equipment.items.filter((K) => !H.has(K.id)).map((K) => K.id);
-      if ((N > 0 || L > 0 || G > 0 || q.length > 0) && r.emit("endless:advanced", {
-        runId: p.runId,
-        previousFloor: f.currentFloor,
-        floor: y.currentFloor,
-        attemptedFloors: N,
-        clearedFloors: L,
-        creditsGained: G,
-        bossesCleared: Math.max(0, y.clearedBosses - f.clearedBosses),
+    const b = I.idle.lastWelcomeBack;
+    b && b.summaryId !== u.idle.lastWelcomeBack?.summaryId && i.emit("idle:processed", b);
+    const R = u.endlessMine, m = I.endlessMine, p = R.run, S = m.run, M = !!(S && m.runId && m.runId === R.runId);
+    if (m.runId && m.runId !== R.runId && i.emit("endless:started", s(I)), M && S && p) {
+      const T = Math.max(0, S.battles - p.battles), x = Math.max(0, S.highestClearedFloor - p.highestClearedFloor), $ = Math.max(0, m.pendingCredits - R.pendingCredits), F = new Set(R.equipment.items.map((Y) => Y.id)), q = m.equipment.items.filter((Y) => !F.has(Y.id)).map((Y) => Y.id);
+      if ((T > 0 || x > 0 || $ > 0 || q.length > 0) && i.emit("endless:advanced", {
+        runId: m.runId,
+        previousFloor: p.currentFloor,
+        floor: S.currentFloor,
+        attemptedFloors: T,
+        clearedFloors: x,
+        creditsGained: $,
+        bossesCleared: Math.max(0, S.clearedBosses - p.clearedBosses),
         equipmentAddedIds: q,
-        state: s(A)
-      }), T.status === "RUNNING" && p.status === "PAUSED" && r.emit("endless:paused", s(A)), (T.status === "PAUSED" || T.status === "ENDED") && p.status === "RUNNING" && r.emit("endless:resumed", s(A)), T.status !== "ENDED" && p.status === "ENDED") {
-        const K = y.status === "DEFEATED" ? "DEFEATED" : y.status === "COMPLETE" ? "COMPLETE" : "CLAIMED";
-        r.emit("endless:finished", { runId: p.runId, reason: K, state: s(A) });
+        state: s(I)
+      }), R.status === "RUNNING" && m.status === "PAUSED" && i.emit("endless:paused", s(I)), (R.status === "PAUSED" || R.status === "ENDED") && m.status === "RUNNING" && i.emit("endless:resumed", s(I)), R.status !== "ENDED" && m.status === "ENDED") {
+        const Y = S.status === "DEFEATED" ? "DEFEATED" : S.status === "COMPLETE" ? "COMPLETE" : "CLAIMED";
+        i.emit("endless:finished", { runId: m.runId, reason: Y, state: s(I) });
       }
     }
-    T.manualMode !== p.manualMode && r.emit("endless:manualChanged", { manual: p.manualMode, state: s(A) }), T.strategy !== p.strategy && r.emit("endless:strategyChanged", { strategy: p.strategy, state: s(A) }), T.speed !== p.speed && r.emit("endless:speedChanged", { speed: p.speed, state: s(A) }), l(T.lootFilter, p.lootFilter) || r.emit("endless:lootFilterChanged", { filter: { ...p.lootFilter }, state: s(A) });
-    const M = Math.max(0, A.mastery.totalXp - m.mastery.totalXp);
-    if (M > 0) {
-      const N = (L, G) => Object.entries(L).filter(([H, q]) => a(G[H], q)).map(([H, q]) => ({
-        id: H,
-        previous: G[H] ? o(G[H]) : null,
+    R.manualMode !== m.manualMode && i.emit("endless:manualChanged", { manual: m.manualMode, state: s(I) }), R.strategy !== m.strategy && i.emit("endless:strategyChanged", { strategy: m.strategy, state: s(I) }), R.speed !== m.speed && i.emit("endless:speedChanged", { speed: m.speed, state: s(I) }), c(R.lootFilter, m.lootFilter) || i.emit("endless:lootFilterChanged", { filter: { ...m.lootFilter }, state: s(I) });
+    const w = Math.max(0, I.mastery.totalXp - u.mastery.totalXp);
+    if (w > 0) {
+      const T = (x, $) => Object.entries(x).filter(([F, q]) => a($[F], q)).map(([F, q]) => ({
+        id: F,
+        previous: $[F] ? o($[F]) : null,
         current: o(q)
       }));
-      r.emit("mastery:gained", {
-        operation: E,
-        xpGained: M,
-        totalXp: A.mastery.totalXp,
-        stones: N(A.mastery.stones, m.mastery.stones),
-        species: N(A.mastery.species, m.mastery.species)
+      i.emit("mastery:gained", {
+        operation: h,
+        xpGained: w,
+        totalXp: I.mastery.totalXp,
+        stones: T(I.mastery.stones, u.mastery.stones),
+        species: T(I.mastery.species, u.mastery.species)
       });
     }
-  }, u = (E, m, A) => {
-    const S = st(t.getState().game);
+  }, d = (h, u, I) => {
+    const g = je(t.getState().game);
     try {
-      const k = Wn(m()), T = st(t.getState().game);
-      return i(S, T), d(E, S, T), A?.(k, S, T), k;
-    } catch (k) {
-      throw r.emit("error", { operation: E, message: k instanceof Error ? k.message : String(k), cause: k }), k;
+      const b = Ln(u()), R = je(t.getState().game);
+      return r(g, R), l(h, g, R), I?.(b, g, R), b;
+    } catch (b) {
+      throw i.emit("error", { operation: h, message: b instanceof Error ? b.message : String(b), cause: b }), b;
     }
-  }, h = (E, m = null) => {
-    t.getState().setRoute(E, m), r.emit("route:changed", { route: E, selectedStoneId: m });
-  }, w = {
-    events: r,
-    on: (E, m) => r.on(E, m),
-    onStoneMined: (E) => u("onStoneMined", () => {
-      const m = t.getState().game.mining.level, A = t.getState().mine(E, { farmSessionActive: t.getState().farmSessionActive });
-      r.emit("stone:mined", A);
-      const S = t.getState().game.mining.level;
-      return S > m && r.emit("mining:levelUp", { previousLevel: m, level: S }), A;
+  }, f = (h, u = null) => {
+    t.getState().setRoute(h, u), i.emit("route:changed", { route: h, selectedStoneId: u });
+  }, y = {
+    events: i,
+    on: (h, u) => i.on(h, u),
+    onStoneMined: (h) => d("onStoneMined", () => {
+      const u = t.getState().game.mining.level, I = t.getState().mine(h, { farmSessionActive: t.getState().farmSessionActive });
+      i.emit("stone:mined", I);
+      const g = t.getState().game.mining.level;
+      return g > u && i.emit("mining:levelUp", { previousLevel: u, level: g }), I;
     }),
     onFarmSessionStarted: () => {
-      const E = t.getState().game;
-      return t.getState().farmSessionActive !== !0 && (t.getState().setFarmSessionActive(!0), r.emit("session:started", { sessionId: E.online.sessionId, at: (/* @__PURE__ */ new Date()).toISOString() })), E.online.sessionId;
+      const h = t.getState().game;
+      return t.getState().farmSessionActive !== !0 && (t.getState().setFarmSessionActive(!0), i.emit("session:started", { sessionId: h.online.sessionId, at: (/* @__PURE__ */ new Date()).toISOString() })), h.online.sessionId;
     },
     onFarmSessionEnded: () => {
       if (t.getState().farmSessionActive !== !0) return;
-      const E = t.getState().game;
-      t.getState().setFarmSessionActive(!1), r.emit("session:ended", { sessionId: E.online.sessionId, at: (/* @__PURE__ */ new Date()).toISOString() }), t.getState().save();
+      const h = t.getState().game;
+      t.getState().setFarmSessionActive(!1), i.emit("session:ended", { sessionId: h.online.sessionId, at: (/* @__PURE__ */ new Date()).toISOString() }), t.getState().save();
     },
     syncFarmStatistics: async () => {
       if (!n) return { sent: 0, accepted: 0, rejected: 0, remaining: t.getState().game.online.queue.length, connected: !1 };
-      const E = w.getFarmStatistics();
-      t.getState().queueOnlineEvent("PROFILE_UPDATED", E, `sync_profile_${E.revision}`);
-      const m = await t.getState().syncOnline(n);
-      return r.emit("sync:completed", { accepted: m.accepted, rejected: m.rejected, remaining: m.remaining }), m;
+      const h = y.getFarmStatistics();
+      t.getState().queueOnlineEvent("PROFILE_UPDATED", h, `sync_profile_${h.revision}`);
+      const u = await t.getState().syncOnline(n);
+      return i.emit("sync:completed", { accepted: u.accepted, rejected: u.rejected, remaining: u.remaining }), u;
     },
-    openStoneverse: () => h("HOME"),
-    openProfile: () => h("PROFILE"),
-    openGacha: () => h("GACHA"),
-    openCollection: () => h("COLLECTION"),
-    openRanking: () => h("RANKING"),
-    openStoneDetail: (E) => {
-      if (!t.getState().game.stones[E]) throw new Error("Stone not found");
-      h("STONE_DETAIL", E);
+    openStoneverse: () => f("HOME"),
+    openProfile: () => f("PROFILE"),
+    openGacha: () => f("GACHA"),
+    openCollection: () => f("COLLECTION"),
+    openRanking: () => f("RANKING"),
+    openStoneDetail: (h) => {
+      if (!t.getState().game.stones[h]) throw new Error("Stone not found");
+      f("STONE_DETAIL", h);
     },
-    getStoneverseState: () => st(t.getState().game),
+    getStoneverseState: () => je(t.getState().game),
     getFarmStatistics: () => {
-      const E = t.getState().game;
+      const h = t.getState().game;
       return {
-        miningLevel: E.mining.level,
-        miningXp: E.mining.xp,
-        totalMined: E.mining.totalMined,
-        dailyMined: E.mining.dailyMined,
-        weeklyMined: E.mining.weeklyMined,
-        monthlyMined: E.mining.monthlyMined,
-        stoneCount: Object.keys(E.stones).length,
-        collectionCount: E.collection.discoveredSpeciesIds.length,
-        revision: E.revision
+        miningLevel: h.mining.level,
+        miningXp: h.mining.xp,
+        totalMined: h.mining.totalMined,
+        dailyMined: h.mining.dailyMined,
+        weeklyMined: h.mining.weeklyMined,
+        monthlyMined: h.mining.monthlyMined,
+        stoneCount: Object.keys(h.stones).length,
+        collectionCount: h.collection.discoveredSpeciesIds.length,
+        revision: h.revision
       };
     },
     exportStoneverseSave: () => t.getState().exportSave(),
-    importStoneverseSave: (E) => u("importStoneverseSave", () => {
-      t.getState().importSave(E), r.emit("save:imported", { schemaVersion: t.getState().game.schemaVersion });
+    importStoneverseSave: (h) => d("importStoneverseSave", () => {
+      t.getState().importSave(h), i.emit("save:imported", { schemaVersion: t.getState().game.schemaVersion });
     }),
-    appraiseStone: (E) => u("appraiseStone", () => {
-      const m = t.getState().appraise(E);
-      return r.emit("stone:discovered", m), m;
+    appraiseStone: (h) => d("appraiseStone", () => {
+      const u = t.getState().appraise(h);
+      return i.emit("stone:discovered", u), u;
     }),
-    pullGacha: (E, m) => u("pullGacha", () => {
-      const A = t.getState().pullGacha(E, m);
-      return r.emit("gacha:result", A), A;
+    pullGacha: (h, u) => d("pullGacha", () => {
+      const I = t.getState().pullGacha(h, u);
+      return i.emit("gacha:result", I), I;
     }),
-    fuseStones: (E, m) => u("fuseStones", () => {
-      const A = t.getState().fuse(E, m);
-      return r.emit("stone:fused", A), A;
+    fuseStones: (h, u) => d("fuseStones", () => {
+      const I = t.getState().fuse(h, u);
+      return i.emit("stone:fused", I), I;
     }),
-    trainStone: (E, m) => u("trainStone", () => {
-      const A = t.getState().addStoneXp(E, m);
-      return A.levelsGained > 0 && r.emit("stone:levelUp", { stone: t.getState().game.stones[E], previousLevel: A.previousLevel, level: A.level }), A;
+    trainStone: (h, u) => d("trainStone", () => {
+      const I = t.getState().addStoneXp(h, u);
+      return I.levelsGained > 0 && i.emit("stone:levelUp", { stone: t.getState().game.stones[h], previousLevel: I.previousLevel, level: I.level }), I;
     }),
-    evolveStone: (E, m, A) => u("evolveStone", () => {
-      const S = t.getState().evolve(E, m, A);
-      r.emit("stone:evolved", S);
+    evolveStone: (h, u, I) => d("evolveStone", () => {
+      const g = t.getState().evolve(h, u, I);
+      i.emit("stone:evolved", g);
     }),
-    awakenStone: (E) => u("awakenStone", () => {
-      t.getState().awaken(E);
-      const m = t.getState().game.stones[E];
-      r.emit("stone:awakened", { stone: m, stage: m.awakeningStage });
+    awakenStone: (h) => d("awakenStone", () => {
+      t.getState().awaken(h);
+      const u = t.getState().game.stones[h];
+      i.emit("stone:awakened", { stone: u, stage: u.awakeningStage });
     }),
-    startDungeonBattle: (E, m) => u("startDungeonBattle", () => {
-      const A = t.getState().startDungeonBattle(E, m);
-      return r.emit("battle:started", A), A;
+    startDungeonBattle: (h, u) => d("startDungeonBattle", () => {
+      const I = t.getState().startDungeonBattle(h, u);
+      return i.emit("battle:started", I), I;
     }),
-    advanceBattle: () => u("advanceBattle", () => {
-      const E = !!t.getState().game.activeBattle?.winner, m = t.getState().advanceBattle(), A = t.getState().game.activeBattle;
-      return r.emit("battle:turn", { battle: A, actionCount: m.length }), !E && A.winner && r.emit("battle:finished", A), m;
+    advanceBattle: () => d("advanceBattle", () => {
+      const h = !!t.getState().game.activeBattle?.winner, u = t.getState().advanceBattle(), I = t.getState().game.activeBattle;
+      return i.emit("battle:turn", { battle: I, actionCount: u.length }), !h && I.winner && i.emit("battle:finished", I), u;
     }),
-    issueBattleCommand: (E, m) => u("issueBattleCommand", () => {
-      const A = !!t.getState().game.activeBattle?.winner, S = t.getState().issueBattleCommand(E, m), k = t.getState().game.activeBattle;
-      return r.emit("battle:turn", { battle: k, actionCount: S.length }), !A && k.winner && r.emit("battle:finished", k), S;
+    issueBattleCommand: (h, u) => d("issueBattleCommand", () => {
+      const I = !!t.getState().game.activeBattle?.winner, g = t.getState().issueBattleCommand(h, u), b = t.getState().game.activeBattle;
+      return i.emit("battle:turn", { battle: b, actionCount: g.length }), !I && b.winner && i.emit("battle:finished", b), g;
     }),
-    setBattleAuto: (E) => u("setBattleAuto", () => (t.getState().setBattleAuto(E), t.getState().game.activeBattle)),
-    setBattleSpeed: (E) => u("setBattleSpeed", () => (t.getState().setBattleSpeed(E), t.getState().game.activeBattle)),
-    runBattle: () => u("runBattle", () => {
-      const E = !!t.getState().game.activeBattle?.winner, m = t.getState().runActiveBattle();
-      return !E && m.winner && r.emit("battle:finished", m), m;
+    setBattleAuto: (h) => d("setBattleAuto", () => (t.getState().setBattleAuto(h), t.getState().game.activeBattle)),
+    setBattleSpeed: (h) => d("setBattleSpeed", () => (t.getState().setBattleSpeed(h), t.getState().game.activeBattle)),
+    runBattle: () => d("runBattle", () => {
+      const h = !!t.getState().game.activeBattle?.winner, u = t.getState().runActiveBattle();
+      return !h && u.winner && i.emit("battle:finished", u), u;
     }),
-    abandonBattle: () => u("abandonBattle", () => t.getState().abandonBattle()),
-    processBackground: (E) => u("processBackground", () => t.getState().processBackground(E)),
-    startExpedition: (E) => u(
+    abandonBattle: () => d("abandonBattle", () => t.getState().abandonBattle()),
+    processBackground: (h) => d("processBackground", () => t.getState().processBackground(h)),
+    startExpedition: (h) => d(
       "startExpedition",
-      () => t.getState().startExpedition(E),
-      (m, A, S) => r.emit("expedition:started", S.expeditions.runs[m.expeditionId] ?? m)
+      () => t.getState().startExpedition(h),
+      (u, I, g) => i.emit("expedition:started", g.expeditions.runs[u.expeditionId] ?? u)
     ),
-    stopExpedition: (E) => u(
+    stopExpedition: (h) => d(
       "stopExpedition",
-      () => t.getState().stopExpedition(E)
+      () => t.getState().stopExpedition(h)
     ),
-    claimExpedition: (E) => u(
+    claimExpedition: (h) => d(
       "claimExpedition",
-      () => t.getState().claimExpedition(E),
-      (m, A) => {
-        const S = new Set(A.expeditions.runs[E]?.expeditionStorage.rareDiscoveries.map((k) => k.discoveryId) ?? []);
-        for (const k of m.reward.rareDiscoveries)
-          S.has(k.discoveryId) || r.emit("expedition:rareDiscovered", { expeditionId: E, discovery: k });
-        r.emit("expedition:claimed", m);
+      () => t.getState().claimExpedition(h),
+      (u, I) => {
+        const g = new Set(I.expeditions.runs[h]?.expeditionStorage.rareDiscoveries.map((b) => b.discoveryId) ?? []);
+        for (const b of u.reward.rareDiscoveries)
+          g.has(b.discoveryId) || i.emit("expedition:rareDiscovered", { expeditionId: h, discovery: b });
+        i.emit("expedition:claimed", u);
       }
     ),
-    claimStoredExpeditionDiscovery: (E) => u(
+    claimStoredExpeditionDiscovery: (h) => d(
       "claimStoredExpeditionDiscovery",
-      () => t.getState().claimStoredExpeditionDiscovery(E),
-      (m, A, S) => r.emit("expedition:discoveryClaimed", {
-        discoveryId: E,
-        stone: S.stones[m.instanceId] ?? m
+      () => t.getState().claimStoredExpeditionDiscovery(h),
+      (u, I, g) => i.emit("expedition:discoveryClaimed", {
+        discoveryId: h,
+        stone: g.stones[u.instanceId] ?? u
       })
     ),
-    startTraining: (E) => u(
+    startTraining: (h) => d(
       "startTraining",
-      () => t.getState().startTraining(E),
-      (m, A, S) => {
-        S.training.assignment && r.emit("training:started", S.training.assignment);
+      () => t.getState().startTraining(h),
+      (u, I, g) => {
+        g.training.assignment && i.emit("training:started", g.training.assignment);
       }
     ),
-    claimTraining: () => u(
+    claimTraining: () => d(
       "claimTraining",
       () => t.getState().claimTraining(),
-      (E, m, A) => {
-        const S = A.training.assignment ?? m.training.assignment;
-        S && r.emit("training:claimed", { stoneId: S.stoneId, xp: E, assignment: S });
+      (h, u, I) => {
+        const g = I.training.assignment ?? u.training.assignment;
+        g && i.emit("training:claimed", { stoneId: g.stoneId, xp: h, assignment: g });
       }
     ),
-    stopTraining: () => u(
+    stopTraining: () => d(
       "stopTraining",
       () => t.getState().stopTraining(),
-      (E, m) => {
-        m.training.assignment && r.emit("training:stopped", { stoneId: m.training.assignment.stoneId });
+      (h, u) => {
+        u.training.assignment && i.emit("training:stopped", { stoneId: u.training.assignment.stoneId });
       }
     ),
-    startAffinityGarden: (E) => u(
+    startAffinityGarden: (h) => d(
       "startAffinityGarden",
-      () => t.getState().startAffinityGarden(E),
-      (m, A, S) => {
-        S.affinityGarden.assignment && r.emit("affinityGarden:started", S.affinityGarden.assignment);
+      () => t.getState().startAffinityGarden(h),
+      (u, I, g) => {
+        g.affinityGarden.assignment && i.emit("affinityGarden:started", g.affinityGarden.assignment);
       }
     ),
-    claimAffinityGarden: () => u(
+    claimAffinityGarden: () => d(
       "claimAffinityGarden",
       () => t.getState().claimAffinityGarden(),
-      (E, m, A) => {
-        const S = A.affinityGarden.assignment ?? m.affinityGarden.assignment;
-        S && r.emit("affinityGarden:claimed", { stoneId: S.stoneId, affinity: E, assignment: S });
+      (h, u, I) => {
+        const g = I.affinityGarden.assignment ?? u.affinityGarden.assignment;
+        g && i.emit("affinityGarden:claimed", { stoneId: g.stoneId, affinity: h, assignment: g });
       }
     ),
-    stopAffinityGarden: () => u(
+    stopAffinityGarden: () => d(
       "stopAffinityGarden",
       () => t.getState().stopAffinityGarden(),
-      (E, m) => {
-        m.affinityGarden.assignment && r.emit("affinityGarden:stopped", { stoneId: m.affinityGarden.assignment.stoneId });
+      (h, u) => {
+        u.affinityGarden.assignment && i.emit("affinityGarden:stopped", { stoneId: u.affinityGarden.assignment.stoneId });
       }
     ),
-    startResearch: (E) => u(
+    startResearch: (h) => d(
       "startResearch",
-      () => t.getState().startResearch(E),
-      (m, A, S) => r.emit("research:started", S.research.slot ?? m)
+      () => t.getState().startResearch(h),
+      (u, I, g) => i.emit("research:started", g.research.slot ?? u)
     ),
-    claimResearch: (E) => u(
+    claimResearch: (h) => d(
       "claimResearch",
-      () => t.getState().claimResearch(E),
-      (m) => r.emit("research:claimed", { researchId: E, ...m })
+      () => t.getState().claimResearch(h),
+      (u) => i.emit("research:claimed", { researchId: h, ...u })
     ),
-    startEndlessMine: (E) => u("startEndlessMine", () => (t.getState().startEndlessMine(E), s(t.getState().game))),
-    advanceEndlessMine: (E) => u("advanceEndlessMine", () => t.getState().advanceEndlessMine(E)),
-    setEndlessManual: (E) => u("setEndlessManual", () => (t.getState().setEndlessManual(E), s(t.getState().game))),
-    setEndlessStrategy: (E) => u("setEndlessStrategy", () => (t.getState().setEndlessStrategy(E), s(t.getState().game))),
-    setEndlessSpeed: (E) => u("setEndlessSpeed", () => (t.getState().setEndlessSpeed(E), s(t.getState().game))),
-    issueEndlessCommand: (E, m) => u(
+    startEndlessMine: (h) => d("startEndlessMine", () => (t.getState().startEndlessMine(h), s(t.getState().game))),
+    advanceEndlessMine: (h) => d("advanceEndlessMine", () => t.getState().advanceEndlessMine(h)),
+    setEndlessManual: (h) => d("setEndlessManual", () => (t.getState().setEndlessManual(h), s(t.getState().game))),
+    setEndlessStrategy: (h) => d("setEndlessStrategy", () => (t.getState().setEndlessStrategy(h), s(t.getState().game))),
+    setEndlessSpeed: (h) => d("setEndlessSpeed", () => (t.getState().setEndlessSpeed(h), s(t.getState().game))),
+    issueEndlessCommand: (h, u) => d(
       "issueEndlessCommand",
-      () => t.getState().issueEndlessCommand(E, m),
-      (A, S, k) => r.emit("endless:command", {
-        skillId: E,
-        targetIds: [...m ?? []],
-        settled: A,
-        state: s(k)
+      () => t.getState().issueEndlessCommand(h, u),
+      (I, g, b) => i.emit("endless:command", {
+        skillId: h,
+        targetIds: [...u ?? []],
+        settled: I,
+        state: s(b)
       })
     ),
-    pauseEndlessMine: () => u("pauseEndlessMine", () => (t.getState().pauseEndlessMine(), s(t.getState().game))),
-    resumeEndlessMine: () => u("resumeEndlessMine", () => (t.getState().resumeEndlessMine(), s(t.getState().game))),
-    claimEndlessMine: () => u(
+    pauseEndlessMine: () => d("pauseEndlessMine", () => (t.getState().pauseEndlessMine(), s(t.getState().game))),
+    resumeEndlessMine: () => d("resumeEndlessMine", () => (t.getState().resumeEndlessMine(), s(t.getState().game))),
+    claimEndlessMine: () => d(
       "claimEndlessMine",
       () => t.getState().claimEndlessMine(),
-      (E) => r.emit("endless:claimed", E)
+      (h) => i.emit("endless:claimed", h)
     ),
-    updateEndlessLootFilter: (E) => u("updateEndlessLootFilter", () => (t.getState().updateEndlessLootFilter(E), s(t.getState().game))),
-    salvageEndlessEquipment: (E) => u(
+    updateEndlessLootFilter: (h) => d("updateEndlessLootFilter", () => (t.getState().updateEndlessLootFilter(h), s(t.getState().game))),
+    salvageEndlessEquipment: (h) => d(
       "salvageEndlessEquipment",
-      () => t.getState().salvageEndlessEquipment(E),
-      (m) => r.emit("endless:equipmentSalvaged", { equipmentId: E, materialsGained: m })
+      () => t.getState().salvageEndlessEquipment(h),
+      (u) => i.emit("endless:equipmentSalvaged", { equipmentId: h, materialsGained: u })
     ),
-    equipEndlessEquipment: (E, m) => u(
+    equipEndlessEquipment: (h, u) => d(
       "equipEndlessEquipment",
-      () => t.getState().equipEndlessEquipment(E, m),
-      (A, S, k) => {
-        const T = S.endlessMine.equipment.items.find((f) => f.id === E), p = k.stones[m];
-        T && p && r.emit("endless:equipmentEquipped", { equipment: T, stone: p });
+      () => t.getState().equipEndlessEquipment(h, u),
+      (I, g, b) => {
+        const R = g.endlessMine.equipment.items.find((p) => p.id === h), m = b.stones[u];
+        R && m && i.emit("endless:equipmentEquipped", { equipment: R, stone: m });
       }
     ),
-    unequipEndlessEquipment: (E, m) => u(
+    unequipEndlessEquipment: (h, u) => d(
       "unequipEndlessEquipment",
-      () => t.getState().unequipEndlessEquipment(E, m),
-      () => r.emit("endless:equipmentUnequipped", { equipmentId: E, stoneId: m })
+      () => t.getState().unequipEndlessEquipment(h, u),
+      () => i.emit("endless:equipmentUnequipped", { equipmentId: h, stoneId: u })
     ),
-    setEndlessEquipmentLocked: (E, m) => u(
+    setEndlessEquipmentLocked: (h, u) => d(
       "setEndlessEquipmentLocked",
-      () => t.getState().setEndlessEquipmentLocked(E, m),
-      () => r.emit("endless:equipmentLockChanged", { equipmentId: E, locked: m })
+      () => t.getState().setEndlessEquipmentLocked(h, u),
+      () => i.emit("endless:equipmentLockChanged", { equipmentId: h, locked: u })
     ),
-    getPublicProfile: async (E) => Wn(E === t.getState().game.account.accountId ? ml(t.getState().game) : await (n?.getPublicProfile(E) ?? null)),
-    getLeaderboard: async (E, m) => Wn(await (n?.getLeaderboard(E, m) ?? []))
+    getPublicProfile: async (h) => Ln(h === t.getState().game.account.accountId ? rl(t.getState().game) : await (n?.getPublicProfile(h) ?? null)),
+    getLeaderboard: async (h, u) => Ln(await (n?.getLeaderboard(h, u) ?? []))
   };
-  return w;
-}, fl = pl(), Nr = 1, Jr = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,255}$/, hl = (e) => {
+  return y;
+}, ol = sl(), pi = 1, Ui = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,255}$/, al = (e) => {
   if (!e || typeof e != "object" || Array.isArray(e)) return !1;
   const t = e;
-  if (t.type !== "stoneverse.command" || t.protocol !== Nr || !Jr.test(t.requestId ?? "") || !Jr.test(t.id ?? "") || !["SESSION_BEGIN", "MINING_SUCCESS", "SESSION_END"].includes(t.command ?? "") || typeof t.timestamp != "string" || !Number.isFinite(Date.parse(t.timestamp))) return !1;
+  if (t.type !== "stoneverse.command" || t.protocol !== pi || !Ui.test(t.requestId ?? "") || !Ui.test(t.id ?? "") || !["SESSION_BEGIN", "MINING_SUCCESS", "SESSION_END"].includes(t.command ?? "") || typeof t.timestamp != "string" || !Number.isFinite(Date.parse(t.timestamp))) return !1;
   if (t.command !== "MINING_SUCCESS") return !0;
-  const n = t.amount ?? 1, r = t.quality ?? 0.5;
-  return Number.isSafeInteger(n) && n >= 1 && n <= 100 && Number.isFinite(r) && r >= 0 && r <= 1 && (t.metadata === void 0 || !!t.metadata && typeof t.metadata == "object" && !Array.isArray(t.metadata) && JSON.stringify(t.metadata).length <= 4096);
-}, El = (e) => {
+  const n = t.amount ?? 1, i = t.quality ?? 0.5;
+  return Number.isSafeInteger(n) && n >= 1 && n <= 100 && Number.isFinite(i) && i >= 0 && i <= 1 && (t.metadata === void 0 || !!t.metadata && typeof t.metadata == "object" && !Array.isArray(t.metadata) && JSON.stringify(t.metadata).length <= 4096);
+}, cl = (e) => {
   let t = null, n = null;
-  return (r) => {
-    if (!hl(r)) return null;
-    const i = {
+  return (i) => {
+    if (!al(i)) return null;
+    const r = {
       type: "stoneverse.result",
-      protocol: Nr,
-      requestId: r.requestId,
-      command: r.command,
-      id: r.id
+      protocol: pi,
+      requestId: i.requestId,
+      command: i.command,
+      id: i.id
     };
     try {
-      if (r.command === "SESSION_BEGIN") {
-        if (t !== null && t !== r.id)
-          return { ...i, ok: !1, accepted: !1, duplicate: !1, error: "SESSION_ALREADY_ACTIVE" };
-        const o = t === r.id;
-        return o || (t = r.id, n = e.onFarmSessionStarted()), { ...i, ok: !0, accepted: !o, duplicate: o };
+      if (i.command === "SESSION_BEGIN") {
+        if (t !== null && t !== i.id)
+          return { ...r, ok: !1, accepted: !1, duplicate: !1, error: "SESSION_ALREADY_ACTIVE" };
+        const o = t === i.id;
+        return o || (t = i.id, n = e.onFarmSessionStarted()), { ...r, ok: !0, accepted: !o, duplicate: o };
       }
-      if (r.command === "SESSION_END")
-        return t === null ? { ...i, ok: !0, accepted: !1, duplicate: !0 } : t !== r.id ? { ...i, ok: !1, accepted: !1, duplicate: !1, error: "SESSION_MISMATCH" } : (e.onFarmSessionEnded(), t = null, n = null, { ...i, ok: !0, accepted: !0, duplicate: !1 });
+      if (i.command === "SESSION_END")
+        return t === null ? { ...r, ok: !0, accepted: !1, duplicate: !0 } : t !== i.id ? { ...r, ok: !1, accepted: !1, duplicate: !1, error: "SESSION_MISMATCH" } : (e.onFarmSessionEnded(), t = null, n = null, { ...r, ok: !0, accepted: !0, duplicate: !1 });
       if (t === null || n === null)
-        return { ...i, ok: !1, accepted: !1, duplicate: !1, error: "SESSION_NOT_ACTIVE" };
+        return { ...r, ok: !1, accepted: !1, duplicate: !1, error: "SESSION_NOT_ACTIVE" };
       const s = e.onStoneMined({
-        eventId: r.id,
+        eventId: i.id,
         sessionId: n,
-        timestamp: r.timestamp,
-        areaId: r.areaId,
-        veinId: r.veinId,
-        amount: r.amount ?? 1,
-        quality: r.quality ?? 0.5,
-        metadata: r.metadata
+        timestamp: i.timestamp,
+        areaId: i.areaId,
+        veinId: i.veinId,
+        amount: i.amount ?? 1,
+        quality: i.quality ?? 0.5,
+        metadata: i.metadata
       });
       return {
-        ...i,
+        ...r,
         ok: s.accepted || s.duplicate,
         accepted: s.accepted,
         duplicate: s.duplicate,
@@ -6879,7 +6027,7 @@ const ml = (e) => {
       };
     } catch (s) {
       return {
-        ...i,
+        ...r,
         ok: !1,
         accepted: !1,
         duplicate: !1,
@@ -6887,7 +6035,7 @@ const ml = (e) => {
       };
     }
   };
-}, Zr = () => {
+}, Hi = () => {
   if (new URLSearchParams(window.location.search).get("host") !== "ai-miner" || document.getElementById("ai-miner-return")) return;
   const e = document.createElement("button");
   e.id = "ai-miner-return", e.type = "button", e.textContent = "‹ AI採掘機へ戻る", e.setAttribute("aria-label", "AI採掘機へ戻る"), Object.assign(e.style, {
@@ -6905,20 +6053,20 @@ const ml = (e) => {
     font: "600 14px system-ui",
     cursor: "pointer"
   }), e.addEventListener("click", () => window.location.assign("../index.html")), document.body.append(e);
-}, gl = (e = fl) => {
+}, ll = (e = ol) => {
   const t = globalThis, n = t.chrome?.webview;
   if (!n || t.__stoneverseFarmBridgeInstalled) return;
   t.__stoneverseFarmBridgeInstalled = !0;
-  const r = El(e);
+  const i = cl(e);
   n.addEventListener("message", (s) => {
-    const o = r(s.data);
+    const o = i(s.data);
     o && n.postMessage(o);
   });
-  const i = e.getStoneverseState();
+  const r = e.getStoneverseState();
   n.postMessage({
     type: "stoneverse.ready",
-    protocol: Nr,
-    accountId: i.account.accountId
-  }), document.readyState === "loading" ? document.addEventListener("DOMContentLoaded", Zr, { once: !0 }) : Zr();
+    protocol: pi,
+    accountId: r.account.accountId
+  }), document.readyState === "loading" ? document.addEventListener("DOMContentLoaded", Hi, { once: !0 }) : Hi();
 };
-gl();
+ll();

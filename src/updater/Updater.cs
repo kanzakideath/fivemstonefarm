@@ -16,14 +16,18 @@ internal static class Updater
 {
     private const string Product = "kanzakideath/fivemstonefarm";
     private const string Channel = "stable";
-    private const string UpdaterVersion = "5.2.0";
+    private const string UpdaterVersion = "5.3.0";
+    private const string MinimumSelectableVersion = "9.1.15";
     private const string ArtifactName = "ai-miner-win-x64.exe";
     private const string LatestManifestUrl = "https://github.com/kanzakideath/fivemstonefarm/releases/latest/download/update-manifest.json";
     private const string LatestSignatureUrl = "https://github.com/kanzakideath/fivemstonefarm/releases/latest/download/update-manifest.sig";
+    private const string ReleasesApiUrl = "https://api.github.com/repos/kanzakideath/fivemstonefarm/releases?per_page=20&page=1";
     private const string PublicKeyBlobBase64 = "RUNTMSAAAADNPm0f29gN5/Z64LDW7PPhoHTASFEmisabIQLTSUGQB7/esquq63IysJ3zsy57FPrv/wDF6vFVUtjw6epa1nMz";
 
     private const int ManifestLimit = 64 * 1024;
     private const int SignatureLimit = 1024;
+    private const int CatalogDocumentLimit = 1024 * 1024;
+    private const int CatalogReleaseLimit = 20;
     private const long MinimumArtifactSize = 1;
     private const long MaximumArtifactSize = 30L * 1024L * 1024L;
     private const int NetworkTimeoutMilliseconds = 15000;
@@ -40,7 +44,17 @@ internal static class Updater
     private static readonly Regex SemVerRegex = new Regex(
         @"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-((?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$",
         RegexOptions.CultureInvariant);
+    private static readonly Regex StableSemVerRegex = new Regex(
+        @"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$",
+        RegexOptions.CultureInvariant);
     private static readonly Regex LowerHexSha256Regex = new Regex(@"^[0-9a-f]{64}$", RegexOptions.CultureInvariant);
+    private static readonly Dictionary<string, string> PinnedHistoricalManifestHashes =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            { "9.1.15", "baa6f49a8dfad11fc1de401f9d0bef7cf309378e4e1c02c8f67598c277ee5b54" },
+            { "9.1.16", "3f0ceace85d2c74af8dfbf5ebb8038714e5c3a5be245b31926558f051152a6d0" },
+            { "9.1.17", "51cee7fd9caea79e7755a4cd7e7bda8631d81693638f3ad274aecc72a18a1ac0" }
+        };
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -64,6 +78,10 @@ internal static class Updater
                 return RunCapabilities(args);
             if (command == "check")
                 return RunCheck(args);
+            if (command == "catalog")
+                return RunCatalog(args);
+            if (command == "select")
+                return RunSelect(args);
             if (command == "download")
                 return RunDownload(args);
             if (command == "apply")
@@ -86,7 +104,7 @@ internal static class Updater
 
         try
         {
-            AtomicWriteText(args[1], "UPDATE_CAPS 1 CHECK DOWNLOAD APPLY\r\n");
+            AtomicWriteText(args[1], "UPDATE_CAPS 1 CHECK CATALOG SELECT DOWNLOAD APPLY\r\n");
             return 0;
         }
         catch (Exception ex)
@@ -94,6 +112,264 @@ internal static class Updater
             Log("Capabilities result write failed: " + SafeForLog(ex.Message));
             return 1;
         }
+    }
+
+    private static int RunCatalog(string[] args)
+    {
+        if (args.Length != 4)
+        {
+            TryWriteCatalogError(args, "Invalid arguments.");
+            return 64;
+        }
+
+        string resultPath = args[1];
+        try
+        {
+            SemanticVersion currentVersion = SemanticVersion.ParseStable(args[2]);
+            // Validate the same caller-owned staging boundary used by check/select even though
+            // catalog itself deliberately does not persist untrusted GitHub API metadata.
+            EnsureSafeStagingDirectory(args[3]);
+            Log("Loading the verified stable release catalog for version " + currentVersion.Original + ".");
+
+            byte[] catalogBytes = DownloadBytes(ReleasesApiUrl, CatalogDocumentLimit, true);
+            List<SemanticVersion> candidates = ParseCatalogCandidates(catalogBytes);
+            List<UpdateManifest> verified = new List<UpdateManifest>();
+
+            foreach (SemanticVersion candidate in candidates)
+            {
+                try
+                {
+                    byte[] ignoredManifestBytes;
+                    byte[] ignoredSignatureBytes;
+                    UpdateManifest manifest = DownloadAndVerifyVersion(candidate, out ignoredManifestBytes, out ignoredSignatureBytes);
+                    verified.Add(manifest);
+                }
+                catch (HttpStatusException ex)
+                {
+                    if (ex.StatusCode != HttpStatusCode.NotFound)
+                        throw;
+                    Log("Catalog skipped release " + candidate.Original + " because signed metadata is incomplete.");
+                }
+                catch (CryptographicException ex)
+                {
+                    Log("Catalog rejected release " + candidate.Original + ": " + SafeForLog(ex.Message));
+                }
+                catch (InvalidDataException ex)
+                {
+                    Log("Catalog rejected release " + candidate.Original + ": " + SafeForLog(ex.Message));
+                }
+            }
+
+            verified.Sort(delegate(UpdateManifest left, UpdateManifest right)
+            {
+                return right.Version.CompareTo(left.Version);
+            });
+
+            string latestVersion = verified.Count == 0 ? "" : verified[0].Version.Original;
+            string message = verified.Count == 0
+                ? "No compatible signed releases are available."
+                : "Verified release versions are available.";
+            WriteCatalogResult(resultPath, "CATALOG_READY", latestVersion, verified, message);
+            Log("Verified release catalog ready with " + verified.Count.ToString(CultureInfo.InvariantCulture) + " entries.");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            WriteCatalogResultSafely(resultPath, "ERROR", "", new List<UpdateManifest>(), PublicError(ex));
+            Log("Release catalog failed: " + SafeForLog(ex.Message));
+            return 1;
+        }
+    }
+
+    private static int RunSelect(string[] args)
+    {
+        if (args.Length != 4)
+        {
+            TryWriteCheckError(args, "Invalid arguments.");
+            return 64;
+        }
+
+        string resultPath = args[1];
+        try
+        {
+            SemanticVersion requestedVersion = SemanticVersion.ParseStable(args[2]);
+            string stagingDirectory = EnsureSafeStagingDirectory(args[3]);
+            Log("Selecting signed stable release " + requestedVersion.Original + ".");
+
+            byte[] manifestBytes;
+            byte[] signatureBytes;
+            UpdateManifest manifest = DownloadAndVerifyVersion(requestedVersion, out manifestBytes, out signatureBytes);
+            string manifestPath = Path.Combine(stagingDirectory, "update-manifest.json");
+            string signaturePath = Path.Combine(stagingDirectory, "update-manifest.sig");
+            AtomicWriteBytes(manifestPath, manifestBytes);
+            AtomicWriteBytes(signaturePath, signatureBytes);
+
+            WriteCheckResult(resultPath, "VERSION_SELECTED", manifest.Version.Original, manifestPath,
+                signaturePath, manifest.ReleaseNotesUrl, "The selected signed version is ready to download.");
+            Log("VERSION_SELECTED: " + manifest.Version.Original + ".");
+            return 0;
+        }
+        catch (HttpStatusException ex)
+        {
+            string message = ex.StatusCode == HttpStatusCode.NotFound
+                ? "The selected signed release is not available."
+                : PublicError(ex);
+            WriteCheckResultSafely(resultPath, "ERROR", "", "", "", "", message);
+            Log("Version selection failed: " + SafeForLog(ex.Message));
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            WriteCheckResultSafely(resultPath, "ERROR", "", "", "", "", PublicError(ex));
+            Log("Version selection failed: " + SafeForLog(ex.Message));
+            return 1;
+        }
+    }
+
+    private static List<SemanticVersion> ParseCatalogCandidates(byte[] catalogBytes)
+    {
+        if (catalogBytes == null || catalogBytes.Length == 0 || catalogBytes.Length > CatalogDocumentLimit)
+            throw new InvalidDataException("The release catalog has an invalid size.");
+        if (catalogBytes.Length >= 3 && catalogBytes[0] == 0xEF && catalogBytes[1] == 0xBB && catalogBytes[2] == 0xBF)
+            throw new InvalidDataException("The release catalog must be UTF-8 without a byte-order mark.");
+
+        string json;
+        try
+        {
+            json = Utf8NoBom.GetString(catalogBytes);
+        }
+        catch (DecoderFallbackException)
+        {
+            throw new InvalidDataException("The release catalog is not valid UTF-8.");
+        }
+
+        object parsed;
+        try
+        {
+            parsed = new JavaScriptSerializer().DeserializeObject(json);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidDataException("The release catalog is not valid JSON.", ex);
+        }
+
+        object[] releases = parsed as object[];
+        if (releases == null)
+            throw new InvalidDataException("The release catalog root must be an array.");
+
+        Dictionary<string, SemanticVersion> unique = new Dictionary<string, SemanticVersion>(StringComparer.Ordinal);
+        foreach (object releaseObject in releases)
+        {
+            if (unique.Count >= CatalogReleaseLimit)
+                break;
+            Dictionary<string, object> release = releaseObject as Dictionary<string, object>;
+            if (release == null || CatalogBoolean(release, "draft", true) || CatalogBoolean(release, "prerelease", true))
+                continue;
+
+            object tagValue;
+            string tag = release.TryGetValue("tag_name", out tagValue) ? tagValue as string : null;
+            if (String.IsNullOrEmpty(tag) || tag.Length > 130 || tag[0] != 'v')
+                continue;
+
+            SemanticVersion version;
+            try
+            {
+                version = SemanticVersion.ParseStable(tag.Substring(1));
+            }
+            catch (InvalidDataException)
+            {
+                continue;
+            }
+
+            if (!HasCatalogAsset(release, "update-manifest.json") || !HasCatalogAsset(release, "update-manifest.sig"))
+                continue;
+            if (!unique.ContainsKey(version.Original))
+                unique.Add(version.Original, version);
+        }
+
+        List<SemanticVersion> result = new List<SemanticVersion>(unique.Values);
+        result.Sort(delegate(SemanticVersion left, SemanticVersion right)
+        {
+            return right.CompareTo(left);
+        });
+        return result;
+    }
+
+    private static bool CatalogBoolean(Dictionary<string, object> dictionary, string key, bool defaultValue)
+    {
+        object value;
+        if (!dictionary.TryGetValue(key, out value) || !(value is bool))
+            return defaultValue;
+        return (bool)value;
+    }
+
+    private static bool HasCatalogAsset(Dictionary<string, object> release, string requiredName)
+    {
+        object assetsValue;
+        object[] assets;
+        if (!release.TryGetValue("assets", out assetsValue) || (assets = assetsValue as object[]) == null)
+            return false;
+        foreach (object assetObject in assets)
+        {
+            Dictionary<string, object> asset = assetObject as Dictionary<string, object>;
+            object nameValue;
+            if (asset != null && asset.TryGetValue("name", out nameValue) &&
+                String.Equals(nameValue as string, requiredName, StringComparison.Ordinal))
+                return true;
+        }
+        return false;
+    }
+
+    private static UpdateManifest DownloadAndVerifyVersion(SemanticVersion requestedVersion,
+        out byte[] manifestBytes, out byte[] signatureBytes)
+    {
+        if (requestedVersion == null || !StableSemVerRegex.IsMatch(requestedVersion.Original))
+            throw new InvalidDataException("The selected version is not a stable release version.");
+        if (requestedVersion.CompareTo(SemanticVersion.ParseStable(MinimumSelectableVersion)) < 0)
+            throw new InvalidDataException("Versions older than " + MinimumSelectableVersion + " are not supported for safety.");
+
+        manifestBytes = DownloadBytes(GetVersionManifestUrl(requestedVersion), ManifestLimit, true);
+        string pinnedManifestHash;
+        if (PinnedHistoricalManifestHashes.TryGetValue(requestedVersion.Original, out pinnedManifestHash) &&
+            !FixedTimeHexEquals(ComputeSha256(manifestBytes), pinnedManifestHash))
+            throw new CryptographicException("The historical release manifest does not match its trusted fingerprint.");
+        signatureBytes = DownloadBytes(GetVersionSignatureUrl(requestedVersion), SignatureLimit, true);
+        UpdateManifest manifest = VerifyAndParseManifest(manifestBytes, signatureBytes);
+        if (!String.Equals(manifest.Version.Original, requestedVersion.Original, StringComparison.Ordinal))
+            throw new InvalidDataException("The signed manifest does not match the selected release version.");
+        return manifest;
+    }
+
+    private static string GetVersionManifestUrl(SemanticVersion version)
+    {
+        return "https://github.com/kanzakideath/fivemstonefarm/releases/download/v" + version.Original + "/update-manifest.json";
+    }
+
+    private static string GetVersionSignatureUrl(SemanticVersion version)
+    {
+        return "https://github.com/kanzakideath/fivemstonefarm/releases/download/v" + version.Original + "/update-manifest.sig";
+    }
+
+    private static bool IsAllowedVersionMetadataUrl(string url)
+    {
+        const string prefix = "https://github.com/kanzakideath/fivemstonefarm/releases/download/v";
+        if (String.IsNullOrEmpty(url) || !url.StartsWith(prefix, StringComparison.Ordinal))
+            return false;
+        int slash = url.IndexOf('/', prefix.Length);
+        if (slash <= prefix.Length)
+            return false;
+
+        SemanticVersion version;
+        try
+        {
+            version = SemanticVersion.ParseStable(url.Substring(prefix.Length, slash - prefix.Length));
+        }
+        catch (InvalidDataException)
+        {
+            return false;
+        }
+        return String.Equals(url, GetVersionManifestUrl(version), StringComparison.Ordinal) ||
+               String.Equals(url, GetVersionSignatureUrl(version), StringComparison.Ordinal);
     }
 
     private static int RunCheck(string[] args)
@@ -423,7 +699,15 @@ internal static class Updater
         request.UserAgent = "AI-Miner-Updater/" + UpdaterVersion;
         request.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
         request.Headers[HttpRequestHeader.AcceptEncoding] = "gzip, deflate";
-        request.Accept = metadataDownload ? "application/octet-stream, application/json;q=0.9, text/plain;q=0.8" : "application/octet-stream";
+        if (String.Equals(url, ReleasesApiUrl, StringComparison.Ordinal))
+        {
+            request.Accept = "application/vnd.github+json";
+            request.Headers["X-GitHub-Api-Version"] = "2022-11-28";
+        }
+        else
+        {
+            request.Accept = metadataDownload ? "application/octet-stream, application/json;q=0.9, text/plain;q=0.8" : "application/octet-stream";
+        }
 
         try
         {
@@ -469,9 +753,12 @@ internal static class Updater
 
     private static void ValidateInitialDownloadUrl(string url, bool metadataDownload)
     {
+        bool isCatalogApi = String.Equals(url, ReleasesApiUrl, StringComparison.Ordinal);
         if (metadataDownload)
         {
-            if (!String.Equals(url, LatestManifestUrl, StringComparison.Ordinal) && !String.Equals(url, LatestSignatureUrl, StringComparison.Ordinal))
+            if (!String.Equals(url, LatestManifestUrl, StringComparison.Ordinal) &&
+                !String.Equals(url, LatestSignatureUrl, StringComparison.Ordinal) &&
+                !isCatalogApi && !IsAllowedVersionMetadataUrl(url))
                 throw new InvalidDataException("The update metadata URL is not allowed.");
         }
         else if (!url.StartsWith("https://github.com/kanzakideath/fivemstonefarm/releases/download/v", StringComparison.Ordinal) || !url.EndsWith("/" + ArtifactName, StringComparison.Ordinal))
@@ -480,9 +767,10 @@ internal static class Updater
         }
 
         Uri uri;
+        string requiredHost = isCatalogApi ? "api.github.com" : "github.com";
         if (!Uri.TryCreate(url, UriKind.Absolute, out uri) || !String.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
-            !String.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase) || !uri.IsDefaultPort ||
-            !String.IsNullOrEmpty(uri.UserInfo) || !String.IsNullOrEmpty(uri.Query) || !String.IsNullOrEmpty(uri.Fragment))
+            !String.Equals(uri.Host, requiredHost, StringComparison.OrdinalIgnoreCase) || !uri.IsDefaultPort ||
+            !String.IsNullOrEmpty(uri.UserInfo) || (!isCatalogApi && !String.IsNullOrEmpty(uri.Query)) || !String.IsNullOrEmpty(uri.Fragment))
             throw new InvalidDataException("The update URL is invalid.");
     }
 
@@ -493,6 +781,7 @@ internal static class Updater
 
         string host = uri.Host;
         bool allowed = String.Equals(host, "github.com", StringComparison.OrdinalIgnoreCase) ||
+                       String.Equals(host, "api.github.com", StringComparison.OrdinalIgnoreCase) ||
                        String.Equals(host, "objects.githubusercontent.com", StringComparison.OrdinalIgnoreCase) ||
                        String.Equals(host, "release-assets.githubusercontent.com", StringComparison.OrdinalIgnoreCase) ||
                        String.Equals(host, "github-releases.githubusercontent.com", StringComparison.OrdinalIgnoreCase);
@@ -832,6 +1121,28 @@ internal static class Updater
         AtomicWriteText(path, text.ToString());
     }
 
+    private static void WriteCatalogResult(string path, string status, string latestVersion,
+        List<UpdateManifest> versions, string message)
+    {
+        if (versions == null)
+            versions = new List<UpdateManifest>();
+        if (versions.Count > CatalogReleaseLimit)
+            throw new InvalidDataException("The verified release catalog is too large.");
+
+        StringBuilder text = new StringBuilder();
+        AppendResult(text, "Status", status);
+        AppendResult(text, "LatestVersion", latestVersion);
+        AppendResult(text, "Count", versions.Count.ToString(CultureInfo.InvariantCulture));
+        for (int i = 0; i < versions.Count; i++)
+        {
+            string suffix = i.ToString(CultureInfo.InvariantCulture);
+            AppendResult(text, "Version" + suffix, versions[i].Version.Original);
+            AppendResult(text, "PublishedAt" + suffix, versions[i].PublishedAt);
+        }
+        AppendResult(text, "Message", message);
+        AtomicWriteText(path, text.ToString());
+    }
+
     private static void WriteDownloadResult(string path, string status, string version, string stagedPath, string message)
     {
         StringBuilder text = new StringBuilder();
@@ -869,6 +1180,13 @@ internal static class Updater
         catch (Exception ex) { Log("Check result write failed: " + SafeForLog(ex.Message)); }
     }
 
+    private static void WriteCatalogResultSafely(string path, string status, string latestVersion,
+        List<UpdateManifest> versions, string message)
+    {
+        try { WriteCatalogResult(path, status, latestVersion, versions, message); }
+        catch (Exception ex) { Log("Catalog result write failed: " + SafeForLog(ex.Message)); }
+    }
+
     private static void WriteDownloadResultSafely(string path, string status, string version, string stagedPath, string message)
     {
         try { WriteDownloadResult(path, status, version, stagedPath, message); }
@@ -879,6 +1197,12 @@ internal static class Updater
     {
         if (args != null && args.Length > 1)
             WriteCheckResultSafely(args[1], "ERROR", "", "", "", "", message);
+    }
+
+    private static void TryWriteCatalogError(string[] args, string message)
+    {
+        if (args != null && args.Length > 1)
+            WriteCatalogResultSafely(args[1], "ERROR", "", new List<UpdateManifest>(), message);
     }
 
     private static void TryWriteDownloadError(string[] args, string message)
@@ -1071,6 +1395,13 @@ internal static class Updater
                 throw new InvalidDataException("A version value is outside the supported range.");
 
             return new SemanticVersion(text, majorValue, minorValue, patchValue, match.Groups[4].Success ? match.Groups[4].Value : null);
+        }
+
+        public static SemanticVersion ParseStable(string text)
+        {
+            if (String.IsNullOrEmpty(text) || text.Length > 128 || !StableSemVerRegex.IsMatch(text))
+                throw new InvalidDataException("A version value must be a stable x.y.z release version.");
+            return Parse(text);
         }
 
         public int CompareTo(SemanticVersion other)

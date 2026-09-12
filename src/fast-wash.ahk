@@ -16,22 +16,18 @@ ConfigureFastWashStart(startToken) {
     if !wasCritical
         Critical "On"
     oldMode := Config.actionMode
-    oldFast := Config.fastWashMode
     try {
         if !IsStartOperationCurrent(startToken)
             return false
         Config.actionMode := "washing"
-        Config.fastWashMode := 1
         try SaveAllSettingsAtomically()
         catch as err {
             Config.actionMode := oldMode
-            Config.fastWashMode := oldFast
             State.statusLabel.Text := "高速石洗いの設定を保存できませんでした"
             WriteDiagnostic("FAST_WASH_START_SAVE_FAILED " err.Message)
             return false
         }
         State.actionControl.Choose(2)
-        State.fastWashControl.Value := 1
         UpdateActionUi()
         RefreshVehicleUi()
         SupportWriteEvent("FAST_WASH_QUICK_START", "mode=washing fast=1 storage_setting_preserved=1")

@@ -366,10 +366,6 @@
                       <span class="row-label">作業位置と視点を自動復旧</span>
                       <span class="toggle color-green"><input id="setting-correction" type="checkbox" disabled><span class="toggle-icon"></span></span>
                     </label>
-                    <label class="setting-row switch-row" for="setting-fast-wash">
-                      <span class="row-label">最速石洗い（ストレージ表示を待たない）</span>
-                      <span class="toggle color-green"><input id="setting-fast-wash" type="checkbox" checked><span class="toggle-icon"></span></span>
-                    </label>
                     <label class="setting-row switch-row" for="setting-auto-eat">
                       <span class="row-label">自動で食事</span>
                       <span class="toggle color-green"><input id="setting-auto-eat" type="checkbox"><span class="toggle-icon"></span></span>
@@ -383,7 +379,6 @@
                       <span class="toggle color-green"><input id="setting-auto-update" type="checkbox"><span class="toggle-icon"></span></span>
                     </label>
                   </div>
-                  <p class="group-footnote">「最速石洗い」ONでは通常洗浄時にストレージ表示を待たず、洗浄対象だけを待って即開始します。収納・補充が必要な瞬間だけ登録荷台を確認します。</p>
                 </section>
 
                 <section class="section-block" aria-labelledby="recovery-heading">
@@ -461,6 +456,10 @@
                       <span id="current-version" class="row-value">—</span>
                     </div>
                     <div class="setting-row">
+                      <span class="row-label">最新の公開バージョン</span>
+                      <span id="latest-version" class="row-value">未確認</span>
+                    </div>
+                    <div class="setting-row">
                       <span class="row-label">更新状態</span>
                       <span id="update-status" class="row-value status-value tone-neutral">未確認</span>
                     </div>
@@ -471,10 +470,23 @@
                   </div>
                 </section>
 
-                <button id="update-check" class="primary-action pressable" type="button">
+                <section class="section-block" aria-labelledby="update-version-heading">
+                  <h2 id="update-version-heading" class="section-label">インストールするバージョン</h2>
+                  <div id="update-version-list" class="grouped-list update-version-list" role="radiogroup" aria-labelledby="update-version-heading" aria-busy="false">
+                    <p id="update-version-empty" class="update-version-empty" role="status" aria-live="polite">公開バージョンを読み込んでいます…</p>
+                  </div>
+                  <p class="group-footnote">署名を確認できた公式リリースだけを表示します。手入力や未確認ファイルは使用しません。</p>
+                </section>
+
+                <button id="update-check" class="support-button update-refresh" type="button">
+                  <svg class="support-icon" aria-hidden="true"><use href="#icon-update"></use></svg>
+                  <span id="update-check-label">公開バージョンを再読み込み</span>
+                </button>
+
+                <button id="update-install" class="primary-action pressable" type="button" disabled>
                   <span class="press-surface" aria-hidden="true"></span>
                   <svg class="action-icon" aria-hidden="true"><use href="#icon-update"></use></svg>
-                  <span id="update-check-label">アップデートを確認</span>
+                  <span id="update-install-label">バージョンを選択してください</span>
                   <span class="button-spinner preloader preloader-white" aria-hidden="true"></span>
                 </button>
                 <p id="update-feedback" class="persistent-feedback" role="status" aria-live="polite"></p>
