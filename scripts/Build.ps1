@@ -715,6 +715,9 @@ finally {
     Remove-Item -LiteralPath $smokeDiagnosticPath -Force -ErrorAction SilentlyContinue
 }
 
+# Match the installed GUI updater, not only CI with redirected streams.
+& (Join-Path $PSScriptRoot 'Test-UpdateStartup.ps1') -ExecutablePath $outputExe
+
 Assert-X64PortableExecutable -Path $outputExe
 $expectedPeVersion = [Version]::Parse($Version)
 $peVersionInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo($outputExe)

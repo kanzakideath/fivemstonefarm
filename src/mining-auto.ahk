@@ -9,7 +9,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "9.1.10"
+global AppVersion := "9.1.11"
 ;@Ahk2Exe-SetVersion %A_PriorLine~U)^.*"([^"]+)".*$~$1%
 processId := DllCall("GetCurrentProcessId")
 global LocalNav := {busy: false, pid: 0, cancel: "", taskId: 0, dialog: 0, guide: 0, feedback: "", requestActive: false, cycle: 0, lastBatchKey: "", lastActionKey: ""}
@@ -20,8 +20,9 @@ isValidationRun := HasCommandLineArgument("--validate")
 isHistoryImportTestRun := HasCommandLineArgument("--history-import-self-test")
 if isValidationRun || isUiTestRun
     OnError(ValidationFatalError)
+; GUI updaters may have no stderr handle. Logging must not fail validation.
 if isValidationRun
-    FileAppend "VALIDATION_PHASE entry " A_Args.Length "`n", "**", "UTF-8-RAW"
+    try FileAppend "VALIDATION_PHASE entry " A_Args.Length "`n", "**", "UTF-8-RAW"
 ; Windows reuses process IDs. Validation artifacts keyed only by PID could be
 ; mistaken for the current run after an earlier test left a receipt behind.
 testRunId := processId "-" (A_TickCount & 0xFFFFFFFF) "-" Random(100000, 999999)
@@ -46,11 +47,12 @@ FileInstall "AI採掘機_Updater.exe", updaterHelperPath, true
 #Include exe-route-navigation.ahk
 #Include wash-position.ahk
 InitExeRouteAssets()
-settingsPath := isUiTestRun
+settingsPath := isUiTestRun || isValidationRun
     ? A_Temp "\ai-miner-ui-test-" testRunId ".ini"
     : A_ScriptDir "\AI採掘機.ini"
 legacySettingsPath := A_ScriptDir "\自動採掘マクロ.ini"
-if !FileExist(settingsPath) && FileExist(legacySettingsPath) {
+if !isUiTestRun && !isValidationRun
+    && !FileExist(settingsPath) && FileExist(legacySettingsPath) {
     try FileCopy legacySettingsPath, settingsPath, false
     catch
         settingsPath := legacySettingsPath
@@ -438,12 +440,12 @@ if HasCommandLineArgument("--history-import-self-test") {
 
 ; コンパイル前後の構文・埋め込み画像チェック用です。
 if isValidationRun {
-    FileAppend "VALIDATION_PHASE proofs " A_TickCount "`n", "**", "UTF-8-RAW"
+    try FileAppend "VALIDATION_PHASE proofs " A_TickCount "`n", "**", "UTF-8-RAW"
     if !ValidateStorageCycleProof() || !ValidateStationaryWorkflow() {
         DeleteExtractedTemplates()
         ExitApp(145)
     }
-    FileAppend "VALIDATION_PHASE updater " A_TickCount "`n", "**", "UTF-8-RAW"
+    try FileAppend "VALIDATION_PHASE updater " A_TickCount "`n", "**", "UTF-8-RAW"
     updaterCapabilities := RunUpdaterCapabilities()
     testRegistrationId := "YW12X2FhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYQ=="
     testCompanionResult := "COMPANION 1 1.0.0 ame_aaaaaaaaaaaaaaaa 42 ready 1 "
@@ -720,7 +722,7 @@ if isValidationRun {
         "0001.tool.eyJxIjoxfQ=1", &testMetadataMutationAdded)
         && testMetadataMutationAdded = 0
         && !FarmOutputLedgerHasPending(testMetadataMutationLedger)
-    FileAppend "VALIDATION_PHASE inventory-tests " A_TickCount "`n", "**", "UTF-8-RAW"
+    try FileAppend "VALIDATION_PHASE inventory-tests " A_TickCount "`n", "**", "UTF-8-RAW"
     testWashOutputLedger := NewExactInventoryCountMap()
     testWashOutputOnlyOk := AccumulateVerifiedFarmOutputLedger(
         testWashOutputLedger, "0001.raw_stone.e30=2",
@@ -1199,7 +1201,7 @@ if isValidationRun {
     ; process must atomically restore BEGIN + reward + END and tombstone the intent.
     State.metagameOutboxPath := testRewardRetryPath
     State.metagameJournalReady := false
-    FileAppend "VALIDATION_PHASE reward-wal " A_TickCount "`n", "**", "UTF-8-RAW"
+    try FileAppend "VALIDATION_PHASE reward-wal " A_TickCount "`n", "**", "UTF-8-RAW"
     testRewardReloadedWalOk := LoadVerifiedRewardWal(testRewardWalPath,
         &testRewardReloadedPending, &testRewardReloadedOps)
     State.verifiedRewardWalPending := testRewardReloadedPending
@@ -1594,7 +1596,7 @@ if isValidationRun {
             "0001.raw_stone.e30=2", "0001.raw_stone.e30=1", "raw_stone")
         && !WashingBatchWasCompleted(
             "0002.food.e30=2", "0002.food.e30=2", "raw_stone")
-    FileAppend "VALIDATION_PHASE mode-workflows " A_TickCount "`n", "**", "UTF-8-RAW"
+    try FileAppend "VALIDATION_PHASE mode-workflows " A_TickCount "`n", "**", "UTF-8-RAW"
     testMiningWorkflowOk := RunFarmStorageResumeModeMockTest("mining", 100,
         &testMiningWorkflowStats)
     testGoldWorkflowOk := RunFarmStorageResumeModeMockTest("gold", 100,
@@ -1665,7 +1667,7 @@ if isValidationRun {
         false) && StorageReturnAllowed("washing", true, true)
         && StorageReturnAllowed("washing", false, false)
         && StorageReturnAllowed("mining", true, false)
-    FileAppend "VALIDATION_PHASE final-checks " A_TickCount "`n", "**", "UTF-8-RAW"
+    try FileAppend "VALIDATION_PHASE final-checks " A_TickCount "`n", "**", "UTF-8-RAW"
     exitCode := !FileExist(State.buttonTemplates[1].path) ? 11
         : !FileExist(State.buttonTemplates[2].path) ? 12
         : !FileExist(State.hungerTemplatePath) ? 13
@@ -1866,7 +1868,7 @@ if isValidationRun {
         : !testWashingRewardEvidenceOk ? 172
         : !testAmbiguousTransferNoRetryOk ? 173
         : !testWashingBatchCompleteOk ? 174 : 0
-    FileAppend "VALIDATION_PHASE final-result " A_TickCount "`n", "**", "UTF-8-RAW"
+    try FileAppend "VALIDATION_PHASE final-result " A_TickCount "`n", "**", "UTF-8-RAW"
     if exitCode = 0 && (CompletionPhrase("mining") != "石掘りが終わったよ"
         || CompletionPhrase("washing") != "石洗いが終わったよ"
         || CompletionPhrase("gold") != "砂金取りが終わりました")
