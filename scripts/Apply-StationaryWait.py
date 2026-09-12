@@ -27,8 +27,7 @@ for path, value in prepared:
     path.write_bytes(value)
 print(f'Applied {len(prepared)} files after verifying all base and result hashes.')
 
-# Preserve the real, long-lived migration contract while changing user-facing
-# workflow documentation. Version validation itself remains unchanged.
+# Preserve the real migration contract; version validation remains unchanged.
 for name in ['README.md', 'docs/AI採掘機_使い方.txt']:
     p = root / name
     s = p.read_text(encoding='utf-8-sig')
@@ -44,4 +43,16 @@ s = p.read_text(encoding='utf-8-sig')
 s = s.replace('ForwardCorrection=1', 'ForwardCorrection=0').replace('RecoveryEnabled=1', 'RecoveryEnabled=0')
 s = s.replace('[ViewLock]\nEnabled=1', '[ViewLock]\nEnabled=0')
 s = s.replace('; AI採掘機 v9.1.15 設定テンプレート', '; AI採掘機 v9.1.15 設定テンプレート\n; 移動・視点補正の旧設定はこの版では使用しません。ゲームの物理座標を固定する設定ではありません。')
+p.write_text(s, encoding='utf-8-sig')
+
+# AutoHotkey identifiers are case-insensitive. Avoid test parameters shadowing
+# the scripted adapter globals; still include/run the actual production module.
+p = root / 'scripts/ui-tests/StationaryWaitHarness.ahk'
+s = p.read_text(encoding='utf-8-sig')
+for old, new in [('Reset(name, responses) {', 'Reset(name, scriptedResponses) {'),
+                 ('Responses := responses,', 'Responses := scriptedResponses,'),
+                 ('TransitionFarmState(state, message, generation, task) {', 'TransitionFarmState(nextState, message, generation, task) {'),
+                 ('State.farmState := state', 'State.farmState := nextState')]:
+    assert s.count(old) == 1, old
+    s = s.replace(old, new, 1)
 p.write_text(s, encoding='utf-8-sig')
