@@ -57,16 +57,16 @@ def main():
                 s.routes = {hasVehicle:true,recorded:false,trialSaved:false,busy:false,feedback:'テスト：荷台登録済み'};
                 window.aiMinerTest.setState(s);
             }''')
-            assert page.locator('#route-teach').is_enabled()
+            assert page.locator('#route-teach').is_hidden()
+            assert page.locator('#route-teach').is_disabled()
             assert page.locator('#route-stationary').is_enabled()
             assert page.locator('#route-trial').is_disabled()
             page.locator('[data-route-mode="washing"]').click()
             page.wait_for_function('window.aiMinerTest.getState().actionMode === "washing"')
-            page.locator('#route-teach').click()
-            assert page.evaluate("window.__sent.some(m => m.action === 'route.teach' && m.payload.mode === 'washing')")
+            assert not page.evaluate("window.__sent.some(m => m.action === 'route.teach')")
             page.evaluate('''() => {
                 const s = window.aiMinerTest.getState(); s.revision += 10;
-                s.routes = {hasVehicle:true,recorded:true,trialSaved:false,busy:false,feedback:'テスト：往復記録あり'};
+                s.routes = {hasVehicle:true,recorded:true,trialSaved:false,busy:false,method:'stationary',feedback:'テスト：往復記録あり'};
                 window.aiMinerTest.setState(s);
             }''')
             assert page.locator('#route-trial').is_enabled()
@@ -75,7 +75,7 @@ def main():
             assert page.evaluate("window.__sent.some(m => m.action === 'route.trial' && m.payload.mode === 'washing')")
             page.evaluate('''() => {
                 const s = window.aiMinerTest.getState(); s.revision += 10;
-                s.routes = {hasVehicle:true,recorded:true,trialSaved:true,busy:false,feedback:'テスト：前回の試走記録あり。接続は開始時に再確認。'};
+                s.routes = {hasVehicle:true,recorded:true,trialSaved:true,busy:false,method:'stationary',feedback:'テスト：前回の試走記録あり。接続は開始時に再確認。'};
                 window.aiMinerTest.setState(s);
             }''')
             assert page.locator('#route-enable').is_enabled()
@@ -100,10 +100,12 @@ def main():
             }''')
             page.evaluate("""() => {
                 const s = window.aiMinerTest.getState(); s.revision += 1;
-                s.routes.washFeedback = '補正確認 / W入力 2回・計80ms / ずれ 0.1px';
+                s.routes.washFeedback = '移動・視点入力なし / 操作範囲: READY WORK_STORAGE';
                 window.aiMinerTest.setState(s);
             }""")
-            assert '80ms' in page.locator('#route-wash-position').inner_text()
+            assert '移動・視点入力なし' in page.locator('#route-wash-position').inner_text()
+            assert page.locator('#route-teach').is_hidden()
+            assert '物理を固定する機能ではありません' in page.locator('#stationary-policy').inner_text()
             assert '近接' in page.locator('#route-trial').inner_text()
             assert '近接モード' in page.locator('#route-record-badge').inner_text()
             assert page.locator('#route-enable').is_enabled()
@@ -139,7 +141,7 @@ def main():
             results.append({'width':width,'height':height,'passed':True,'pageErrors':errors,'pageOverflow':overflow})
             page.close()
         browser.close()
-    (output/'results.json').write_text(json.dumps({'kind':'offline UI fixture, not game navigation','results':results},ensure_ascii=False,indent=2), encoding='utf-8')
+    (output/'results.json').write_text(json.dumps({'kind':'offline stationary-only UI fixture, not FiveM','results':results},ensure_ascii=False,indent=2), encoding='utf-8')
     print('ROUTE_UI_BROWSER_PASS: four viewports, three entries, guarded setup stages and actual action payloads')
 
 if __name__ == '__main__': main()

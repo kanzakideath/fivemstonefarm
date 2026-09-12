@@ -349,3 +349,23 @@ console.log('Paired nearby wash/storage DOM probes passed (no clicks or item tra
   idle.body.id = '';
   assert(evaluate(expressions.idle, idle) === 'UNKNOWN', 'A missing progress root is not idle.');
 }
+
+// Same-turn storage guard wraps the production work click; no cargo means no click.
+{
+ const f=targetFixture();
+ assert(evaluate(expressions.stationaryClick,f.document)===false,'Missing cargo must prevent wash dispatch');
+ assert(f.first.hit.clicked===0 && f.second.hit.clicked===0,'No wash click outside paired zone');
+ const cargo=washOption('ストレージを開く',300); f.root.append(cargo.hit);
+ assert(evaluate(expressions.stationaryClick,f.document)===true,'Work and cargo allow one work click');
+ assert(cargo.hit.clicked===0 && f.first.hit.clicked+f.second.hit.clicked===1,'Only work gets clicked');
+ cargo.hit.attributes['aria-disabled']='true';
+ assert(evaluate(expressions.stationaryClick,f.document)===false,'Disabled cargo blocks later dispatch');
+}
+for (const [expression,label] of [[expressions.stationaryMine,'鉱石を採掘する'],[expressions.stationaryGold,'砂金採りトレイ']]) {
+ const f=targetFixture(); f.first.hit.style.display=f.second.hit.style.display='none';
+ f.root.append(washOption(label,240).hit, washOption('ストレージを開く',360).hit);
+ assert(evaluate(expression,f.document)==='PRESENT WASH_STORAGE','Each mode requires its work label and cargo');
+ f.root.append(washOption('ストレージを開く',400).hit);
+ assert(evaluate(expression,f.document)==='AMBIGUOUS WASH_STORAGE','Ambiguous cargo must not authorize work');
+}
+console.log('STATIONARY_DOM_PASS: three modes, same-turn cargo guard, no unintended clicks');

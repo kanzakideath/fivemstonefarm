@@ -41,6 +41,8 @@ RunObservedWashHelper(operation, generation) {
 }
 
 EnsureObservedWashAnchor(generation) {
+    if StationaryOnlyEnabled()
+        return IsCurrentRun(generation)
     global LocalNav, State, Config
     if !Config.washForwardCorrection
         return true

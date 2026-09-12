@@ -12,10 +12,10 @@ Assert-Check ($main.Contains('#Include exe-route-navigation.ahk')) 'EXE route mo
 $start=$main.IndexOf('FindRegisteredStorageNearby(expectedGeneration, &movementHistory,')
 $end=$main.IndexOf('TryRegisteredStorageViews(', $start)
 $navigation=$main.Substring($start,$end-$start)
-Assert-Check ($navigation.Contains('ExecuteExeRouteLeg(expectedGeneration, "outbound")')) 'No outward route execution.'
+Assert-Check ($navigation.Contains('WaitStationaryCargo(expectedGeneration') -and $navigation.Contains('if StationaryOnlyEnabled()')) 'Stationary storage must verify live cargo without route playback.'
 Assert-Check ($navigation.Contains('ProbeExeRouteCargo(')) 'No registered cargo verification.'
 Assert-Check (-not $navigation.Contains('PlayLocalRoute') -and -not $navigation.Contains('movementSteps')) 'Blind wandering remained in storage navigation.'
-Assert-Check ($main.Contains('poseRestored := ExecuteExeRouteLeg(expectedGeneration, "return")')) 'Return is not independently recorded.'
+Assert-Check ($module.Contains('if StationaryOnlyEnabled() && ExeStorageMethod(mode) != "stationary"')) 'Legacy walking routes must never be accepted by the runtime.'
 Assert-Check ($module.Contains('ProbeWorkTarget(mode, generation)')) 'No semantic work-target proof.'
 Assert-Check ($module.Contains('id != Config.vehicleStorageId') -and $module.Contains('type != Config.vehicleStorageType')) 'Cargo identity proof lost.'
 Assert-Check ($module.Contains('"Verified", "0") = "1"') -and $module.Contains('outbound.verified')) 'Route trial/integrity gate is missing.'
@@ -66,3 +66,12 @@ Assert-Check ($start -ge 0 -and $end -gt $start) 'Endpoint boundary missing.'
 $endpoints = $module.Substring($start, $end - $start)
 Assert-Check (-not $endpoints.Contains('ExeRouteCameraStep(')) 'Endpoint check must not change the recorded view.'
 Write-Host 'Passive recording and stationary source contracts passed. Live game checks are separate.'
+
+$policy = [IO.File]::ReadAllText((Join-Path $root 'src/stationary-only.ahk'))
+Assert-Check ($main.Contains('#Include stationary-only.ahk') -and $main.Contains('ValidateStationaryOnlyPolicy()')) 'Production no-motion policy/selftest missing.'
+Assert-Check ($policy.Contains('STATIONARY_AUTO_RESUME') -and $policy.Contains('StationaryWaitDecision')) 'Missing-target auto-resume is not observable.'
+Assert-Check ($module.Contains('return StationaryMotionDenied(operation)')) 'Runtime helper launch is not motion-blocked.'
+foreach($gateway in @('RunBackgroundBridgeArgs','RunBackgroundBridgeCancelable')) {
+  Assert-Check ([regex]::IsMatch($main,'(?s)'+$gateway+'\([^)]*\)\s*\{\s*if StationaryOnlyEnabled\(\) && StationaryBridgeMotionBlocked\(mode\)')) ('Motion gateway unguarded: '+$gateway)
+}
+Write-Host 'Stationary runtime: motion gateways blocked, no walking route accepted, observation-only waits with explicit resume events.'

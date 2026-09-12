@@ -268,6 +268,7 @@ $stagedMain = Join-Path $stageRoot 'mining-auto.ahk'
 Copy-Item -LiteralPath $mainSource -Destination $stagedMain -Force
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'exe-route-navigation.ahk') -Destination $stageRoot -Force
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'wash-position.ahk') -Destination $stageRoot -Force
+Copy-Item -LiteralPath (Join-Path $sourceRoot 'stationary-only.ahk') -Destination $stageRoot -Force
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'nearby-wash.ahk') -Destination $stageRoot -Force
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'diagnostics.ahk') -Destination $stageRoot -Force
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'audio') -Destination $stageRoot -Recurse -Force
@@ -356,6 +357,7 @@ Invoke-CapabilitySmokeTest -Executable $localNavOutput -Expected 'SELFTEST OK' -
 & (Join-Path $PSScriptRoot 'Test-ExeRoutes.ps1') -SourcePath $mainSource
 & (Join-Path $PSScriptRoot 'Test-CameraRecoveryContract.ps1') -SourcePath $mainSource
 & (Join-Path $PSScriptRoot 'Test-WashRecoveryContract.ps1') -SourcePath $mainSource
+& (Join-Path $PSScriptRoot 'Test-StationaryWait.ps1')
 & (Join-Path $PSScriptRoot 'Test-FarmRecoverySafetyContract.ps1') -SourcePath $mainSource
 & (Join-Path $PSScriptRoot 'Test-StorageClosedLoopContract.ps1') `
     -SourcePath $mainSource -BridgeSourcePath $bridgeSource

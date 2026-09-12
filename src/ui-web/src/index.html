@@ -96,7 +96,7 @@
                 <svg aria-hidden="true"><use href="#icon-vehicle"></use></svg><span>車両</span>
               </button>
               <button id="tab-routes" class="sidebar-item" type="button" role="tab" aria-selected="false" aria-controls="screen-routes" data-page="routes">
-                <svg aria-hidden="true"><use href="#icon-link"></use></svg><span>ルート設定</span>
+                <svg aria-hidden="true"><use href="#icon-link"></use></svg><span>荷台前の設定</span>
               </button>
               <button id="tab-settings" class="sidebar-item" type="button" role="tab" aria-selected="false" aria-controls="screen-settings" data-page="settings">
                 <svg aria-hidden="true"><use href="#icon-settings"></use></svg><span>設定</span>
@@ -264,29 +264,29 @@
               <div class="content-column route-column">
                 <header class="page-heading">
                   <span class="route-eyebrow">EXE ONLY · サーバーへの追加導入なし</span>
-                  <h1>ルート設定</h1>
-                  <p>「どの現場から、どの荷台へ、どう戻るか」を画面で確認しながら登録します。</p>
+                  <h1>荷台前の設定</h1>
+                  <p>同じ位置で作業・収納・補充。一時的に操作できない間は自動再開を待ちます。</p>
                 </header>
-                <div class="route-mode-picker" role="group" aria-label="ルートを設定する作業">
+                <div class="route-mode-picker" role="group" aria-label="荷台前で行う作業">
                   <button type="button" data-route-mode="mining" aria-pressed="false">石掘り</button>
                   <button type="button" data-route-mode="washing" aria-pressed="false">石洗い</button>
                   <button type="button" data-route-mode="gold" aria-pressed="false">砂金取り</button>
                 </div>
                 <p id="route-mode-hint" class="route-hint"></p>
-                <div class="route-journey" aria-label="登録する往復の流れ。実際の地図ではありません">
-                  <span>作業現場</span><span class="route-journey-line">往路 →</span><strong>登録した荷台</strong><span class="route-journey-line">← 復路</span><span>同じ現場</span>
+                <div class="route-journey" aria-label="同じ場所で行う作業と収納の流れ">
+                  <span>作業</span><span class="route-journey-line">→</span><strong>同じ位置で収納・補充</strong><span class="route-journey-line">→</span><span>自動再開</span>
                 </div>
-                <p class="route-hint">これは手順図です。画面だけから実際の地図・車両座標は表示しません。</p>
-                <div id="route-feedback" class="route-feedback" role="status" aria-live="polite">上から順番に設定してください。記録や試走だけではアイテムを移動しません。</div>
+                <p class="route-hint">移動ルートの記録は不要です。作業と荷台が両方使える位置で開始してください。</p>
+                <div id="route-feedback" class="route-feedback" role="status" aria-live="polite">上から順番に設定してください。接続確認だけではアイテムを移動しません。</div>
                 <section class="route-feedback" aria-live="polite" aria-label="実行結果の確認">
                   <strong>直近の収納サイクル</strong>
-                  <p id="route-cycle-status">まだ実行記録はありません。試走では収納しません。</p>
+                  <p id="route-cycle-status">まだ実行記録はありません。接続確認だけでは収納しません。</p>
                 </section>
-                <section class="route-feedback" aria-live="polite" aria-label="石洗いの位置補正">
-                  <strong>石洗いの位置補正 · 入力と継続判定</strong>
-                  <p id="route-wash-position">未計測。FiveMを前面にして石洗いを開始してください。</p>
+                <section class="route-feedback" aria-live="polite" aria-label="移動なしと自動再開の状態">
+                  <strong>移動なし · 自動再開の確認</strong>
+                  <p id="route-wash-position">ツールから移動・視点入力は送りません。</p>
                   <button id="route-diagnostics" class="support-button" type="button">不具合の診断ZIP・ログを開く</button>
-                  <p>後退補正は維持します。近接モードでは画像が完全一致しなくても、洗浄・荷台の両ボタンを連続確認できれば追加前進せず続行します。「画像補正の確認」と「作業できる範囲の確認」は別表示です。石0では荷台を確認して収納・補充へ進みます。</p>
+                  <p id="stationary-policy">移動・視点入力は0です。ゲームの物理を固定する機能ではありません。両ボタンが一時的に消えた場合は監視を続け、戻ればF8を押し直さず自動再開します。ゲーム側の移動で範囲外に出た場合は、その場で待機します。</p>
                 </section>
                 <div class="route-steps">
                   <article class="route-step" id="route-step-vehicle">
@@ -295,21 +295,19 @@
                     <button id="route-register" type="button" class="route-button">車両登録を開始</button></div>
                   </article>
                   <article class="route-step" id="route-step-record">
-                    <span class="route-step-number">2</span><div class="route-step-body"><div class="route-step-heading"><h2>収納方法を選ぶ</h2><span id="route-record-badge" class="route-badge">未記録</span></div>
+                    <span class="route-step-number">2</span><div class="route-step-body"><div class="route-step-heading"><h2>荷台前の操作範囲を確認</h2><span id="route-record-badge" class="route-badge">未設定</span></div>
                     <div class="route-nearby-option">
                       <strong>作業と荷台のボタンが同じ場所で出る場合はこちら</strong>
-                      <p>立ち位置・視点を変えずに、作業 → 登録荷台 → 作業を確認します。徒歩記録は不要です。収納ONで石洗いを開始した時も、徒歩記録がない場合はこの実確認を自動で試みます。確認ではアイテムを動かしません。</p>
+                      <p>立ち位置・視点を変えずに、作業 → 登録荷台 → 作業を確認します。徒歩記録は不要です。作業開始時にも登録荷台をその場で確認します。確認ではアイテムを動かしません。</p>
                       <button id="route-stationary" type="button" class="route-button">この位置で近接収納を確認（歩かない）</button>
                     </div>
-                    <p><strong>荷台まで歩く必要がある場合：</strong>現場から往復を記録します。視点を勝手に下へ動かしません。各片道の準備画面で、向きを整えて <kbd>F6</kbd> を押すと記録開始。石洗いは手持ち石を用意してください。</p>
-                    <div class="route-key-guide"><span><kbd>W A S D</kbd> 徒歩</span><span><kbd>F6</kbd> 開始／照合点</span><span><kbd>F7</kbd> 片道の終点</span><span><kbd>F9</kbd> 中止</span></div>
-                    <p>4秒以内ごとに立ち止まると、景色を照合点として保存します。往路・復路はそれぞれ記録します。</p>
-                    <button id="route-teach" type="button" class="route-button">画面ガイド付きで往復を記録</button></div>
+                    <p>作業前に荷台のIDを確認します。一時不在時も作業セッションと未収納の結果を保持します。</p>
+                    <button id="route-teach" type="button" hidden disabled>徒歩記録（廃止）</button></div>
                   </article>
                   <article class="route-step" id="route-step-trial">
-                    <span class="route-step-number">3</span><div class="route-step-body"><div class="route-step-heading"><h2>実際の接続・終点を確認</h2><span id="route-trial-badge" class="route-badge">未試走</span></div>
-                    <p>徒歩モードは元の現場から自動で往復。近接モードは移動せず再確認します。登録荷台と作業ボタンの実確認に成功した場合だけ利用可能になります。</p>
-                    <button id="route-trial" type="button" class="route-button">自動試走を開始（収納なし）</button></div>
+                    <span class="route-step-number">3</span><div class="route-step-body"><div class="route-step-heading"><h2>同じ位置で接続と操作を確認</h2><span id="route-trial-badge" class="route-badge">未確認</span></div>
+                    <p>登録荷台と作業ボタンを、その場で再確認します。アイテムを動かさずに確認できます。</p>
+                    <button id="route-trial" type="button" class="route-button">近接状態を再確認（収納なし）</button></div>
                   </article>
                   <article class="route-step" id="route-step-enable">
                     <span class="route-step-number">4</span><div class="route-step-body"><div class="route-step-heading"><h2>自動収納・補充を有効にする</h2><span id="route-enabled-badge" class="route-badge">OFF</span></div>
@@ -318,7 +316,7 @@
                     <button id="route-return-home" type="button" class="route-button route-button-quiet">作業画面へ戻る</button></div>
                   </article>
                 </div>
-                <aside class="route-notice"><strong>記録中・試走中はFiveMを前面にしてください。</strong><p>F9で中止できます。車両や現場を変えたときは再記録、再接続時は再確認が必要です。試走記録があっても接続とルートの一致を開始時に再確認します。実ゲームの全状況での到達保証はありません。</p></aside>
+                <aside class="route-notice"><strong>一時不在は自動再開待ち。中止はF9です。</strong><p>登録先不一致・接続変更・未確定転送など安全性を判断できない状態は通知します。結果不明の収納は再送しません。ログは診断ZIPで共有できます。</p></aside>
                 <button id="route-voice" class="route-button route-button-quiet" type="button">音声・別ウィンドウの設定を開く</button>
                 <p class="route-hint">画面の入口が使えない場合：Ctrl + Alt + R ／ 完了ボイス：VOICEVOX:四国めたん</p>
               </div>
@@ -356,9 +354,9 @@
                       <span class="row-label">開始後に画面を隠す</span>
                       <span class="toggle color-green"><input id="setting-hide" type="checkbox"><span class="toggle-icon"></span></span>
                     </label>
-                    <label class="setting-row switch-row" for="setting-correction">
+                    <label class="setting-row switch-row" for="setting-correction" hidden>
                       <span class="row-label">作業位置と視点を自動復旧</span>
-                      <span class="toggle color-green"><input id="setting-correction" type="checkbox"><span class="toggle-icon"></span></span>
+                      <span class="toggle color-green"><input id="setting-correction" type="checkbox" disabled><span class="toggle-icon"></span></span>
                     </label>
                     <label class="setting-row switch-row" for="setting-auto-eat">
                       <span class="row-label">自動で食事</span>
@@ -373,7 +371,7 @@
                       <span class="toggle color-green"><input id="setting-auto-update" type="checkbox"><span class="toggle-icon"></span></span>
                     </label>
                   </div>
-                  <p class="group-footnote">石洗いの自動補正はFiveM前面で画面を確認しながら行います。補正OFFでは位置保持を行いません。石洗い以外の視点復旧と食事の確認は従来どおりです。</p>
+                  <p class="group-footnote">荷台前専用です。移動・視点の自動補正は廃止しました。一時的に作業ボタンが消えても、監視を続けて自動再開します。</p>
                 </section>
 
                 <section class="section-block" aria-labelledby="recovery-heading">

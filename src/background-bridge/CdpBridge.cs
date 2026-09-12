@@ -72,6 +72,7 @@ internal static class CdpBridge
             || mode == "try-probe-mining"
             || mode == "activate" || mode == "deactivate"
             || mode == "deactivate-29200" || mode == "deactivate-29300");
+        bool stationaryReadyMode = args.Length == 5 && mode == "stationary-task-ready";
         bool actionTryMode = (args.Length == 3 || (args.Length == 4 && mode == "try-washing")) && (mode == "try-mining"
             || mode == "try-washing" || mode == "try-gold");
         bool nearbyWashProbeMode = args.Length == 3 && mode == "probe-wash-storage";
@@ -90,7 +91,7 @@ internal static class CdpBridge
         bool cancelOperationMode = args.Length == 3 && mode == "cancel-operation";
         bool companionCommandMode = (args.Length == 3 || args.Length == 4)
             && mode == "companion-command";
-        if (!washReadyMode && !twoArgumentMode && !actionTryMode && !nearbyWashProbeMode && !actionCompletionMode && !washCompletionMode
+        if (!stationaryReadyMode && !washReadyMode && !twoArgumentMode && !actionTryMode && !nearbyWashProbeMode && !actionCompletionMode && !washCompletionMode
             && !nudgeMode && !routeMode && !routeHealthMode && !viewMode
             && !hotbarMode && !inventoryKeyMode
             && !testDeactivateMode && !depositMode && !withdrawMode && !cancelOperationMode
@@ -106,7 +107,14 @@ internal static class CdpBridge
         int exitCode;
         try
         {
-            if (mode == "capabilities")
+            if (stationaryReadyMode)
+            {
+                WorkAction action; int preferred;
+                if (!IsValidServerEpoch(args[2]) || !TryParseWorkAction(args[3], out action)
+                    || !Int32.TryParse(args[4], out preferred) || (preferred!=0 && preferred!=29200 && preferred!=29300)) return 64;
+                result = ProbeStationaryTaskReadyAsync(args[2], preferred, action).GetAwaiter().GetResult().Replace("WASH_STORAGE", "WORK_STORAGE");
+            }
+            else if (mode == "capabilities")
             {
                 result = Capabilities;
             }
@@ -342,7 +350,7 @@ internal static class CdpBridge
     {
         return result == Capabilities
             || result == "SELFTEST OK"
-            || Regex.IsMatch(result, @"^READY (WASH_STORAGE|STORAGE_ONLY) (29200|29300) [0-9]+$")
+            || Regex.IsMatch(result, @"^READY (WASH_STORAGE|WORK_STORAGE|STORAGE_ONLY) (29200|29300) [0-9]+$")
             || result.StartsWith("PRESENT ", StringComparison.Ordinal)
             || result.StartsWith("CLICKED ", StringComparison.Ordinal)
             || result.StartsWith("ACTIVATED ", StringComparison.Ordinal)
@@ -1142,6 +1150,7 @@ internal static class CdpBridge
                             return "ERROR SERVER_SESSION_CHANGED";
                         expression = washingMode
                             ? WashTargetExpression(true) : ClickExpression(targetLabel, exactOnly);
+                        expression = StationaryWorkClickExpression(expression);
                         bool clicked;
                         clickMayHaveBeenDispatched = true;
                         if (clickDispatchObserver != null)
@@ -3119,9 +3128,21 @@ internal static class CdpBridge
 
     // Non-mutating functional-area proof. The two labels are read in the same
     // JS turn; stale/alternating single-label samples cannot become a pair.
+    private static string StationaryWorkClickExpression(string workClick)
+    {
+        return "(() => {if(" + StorageTargetExpression(false) + "!=='PRESENT')return false;return " + workClick + ";})()";
+    }
+
     private static string NearbyWashControlsExpression()
     {
-        return "(() => {const wash=" + WashTargetExpression(false)
+        return StationaryControlsExpression(WorkAction.Wash);
+    }
+
+    private static string StationaryControlsExpression(WorkAction action)
+    {
+        string work = action==WorkAction.Wash ? WashTargetExpression(false)
+            : ProbeExpression(action==WorkAction.Gold ? "砂金採りトレイ" : "鉱石を採掘する", action==WorkAction.Gold);
+        return "(() => {const wash=" + work
             + ",storage=" + StorageTargetExpression(false) + ";"
             + "if(storage==='AMBIGUOUS')return 'AMBIGUOUS WASH_STORAGE';"
             + "if(storage!=='PRESENT')return 'MISSING WASH_STORAGE';"
@@ -3137,9 +3158,13 @@ internal static class CdpBridge
 
     private static string WashIdleStateExpression()
     {
+        return StationaryIdleStateExpression(WorkAction.Wash);
+    }
+    private static string StationaryIdleStateExpression(WorkAction action)
+    {
         // Unknown/unmounted progress UI is NOT equivalent to idle.
         return "(() => {const root=document.querySelector('#root');if(!root||!root.isConnected)return 'UNKNOWN';"
-            + "return " + WorkProgressExpression(WorkAction.Wash) + "?'BUSY':'IDLE';})()";
+            + "return " + WorkProgressExpression(action) + "?'BUSY':'IDLE';})()";
     }
 
     private static string ClosedInventoryStateExpression()
@@ -3159,7 +3184,10 @@ internal static class CdpBridge
     // Activation, all observations and release share one short-lived owner.
     // Never click, refill, or start another wash here. The existing action path
     // still captures inventory, arms progress, clicks once and verifies reward.
-    private static async Task<string> ProbeWashTaskReadyAsync(string expectedEpoch,int preferredPort)
+    private static Task<string> ProbeWashTaskReadyAsync(string expectedEpoch,int preferredPort)
+    { return ProbeStationaryTaskReadyAsync(expectedEpoch, preferredPort, WorkAction.Wash); }
+
+    private static async Task<string> ProbeStationaryTaskReadyAsync(string expectedEpoch,int preferredPort,WorkAction action)
     {
         string[] frames;
         if(!TryDecodeServerEpoch(expectedEpoch,out frames))return "ERROR SERVER_SESSION_CHANGED";
@@ -3176,10 +3204,10 @@ internal static class CdpBridge
                 while(timer.ElapsedMilliseconds<1800)
                 {
                     if(!await targetSession.MatchesServerEpochAsync().ConfigureAwait(false))return "ERROR SERVER_SESSION_CHANGED";
-                    string progressBefore=await progressSession.EvaluateStringAsync(WashIdleStateExpression(),false).ConfigureAwait(false);
+                    string progressBefore=await progressSession.EvaluateStringAsync(StationaryIdleStateExpression(action),false).ConfigureAwait(false);
                     string inventory=await inventorySession.EvaluateStringAsync(ClosedInventoryStateExpression(),false).ConfigureAwait(false);
-                    string controls=await targetSession.EvaluateStringAsync(NearbyWashControlsExpression(),false).ConfigureAwait(false);
-                    string progressAfter=await progressSession.EvaluateStringAsync(WashIdleStateExpression(),false).ConfigureAwait(false);
+                    string controls=await targetSession.EvaluateStringAsync(StationaryControlsExpression(action),false).ConfigureAwait(false);
+                    string progressAfter=await progressSession.EvaluateStringAsync(StationaryIdleStateExpression(action),false).ConfigureAwait(false);
                     string value=progressBefore==progressAfter ? WashTaskReadiness(controls,progressAfter,inventory) : "WAIT";
                     stable=value!="WAIT" && value==last ? stable+1 : value!="WAIT" ? 1 : 0;
                     last=value;

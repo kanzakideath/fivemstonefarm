@@ -28,6 +28,7 @@ if (-not $mainMethod -or -not $targetMethod -or -not $progressMethod -or -not $n
 # Every mutating work operation and completion monitor must be tied to the
 # captured target/inventory/progress three-frame epoch.
 foreach ($invalidCall in @(
+    [string[]]@('stationary-task-ready', 'unused-result.txt', 'invalid-epoch', 'wash', '29200'),
     [string[]]@('wash-task-ready', 'unused-result.txt', 'invalid-epoch', '29200'),
     [string[]]@('wash-task-ready', 'unused-result.txt', 'invalid-epoch', '42'),
     [string[]]@('try-washing', 'unused-result.txt', 'invalid-epoch', '29200'),
@@ -57,6 +58,9 @@ $payloadPath = Join-Path ([IO.Path]::GetTempPath()) `
     ('ai-miner-wash-dom-' + [Guid]::NewGuid().ToString('N') + '.json')
 try {
     $payload = [ordered]@{
+        stationaryMine = [string]$bridgeType.GetMethod('StationaryControlsExpression', $bindingFlags).Invoke($null, [object[]]@([Enum]::Parse($actionType, 'Mine')))
+        stationaryGold = [string]$bridgeType.GetMethod('StationaryControlsExpression', $bindingFlags).Invoke($null, [object[]]@([Enum]::Parse($actionType, 'Gold')))
+        stationaryClick = [string]$bridgeType.GetMethod('StationaryWorkClickExpression', $bindingFlags).Invoke($null, [object[]]@([string]$targetMethod.Invoke($null,[object[]]@($true))))
         idle = [string]$bridgeType.GetMethod('WashIdleStateExpression', $bindingFlags).Invoke($null, [object[]]@())
         nearby = [string]$nearbyMethod.Invoke($null, [object[]]@())
         probe = [string]$targetMethod.Invoke($null, [object[]]@($false))
