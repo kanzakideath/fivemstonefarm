@@ -1,0 +1,87 @@
+name: Validate completed-wash forward cycle
+on:
+  push:
+    branches: [fix/wash-forward-cycle-9.1.16]
+    paths: [.github/workflows/forward-cycle-repair.yml, scripts/Apply-ForwardCycle.py]
+permissions:
+  contents: write
+concurrency:
+  group: forward-cycle-9.1.16
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Apply verified source delta
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          git merge-base --is-ancestor 1040416ad4edac2d1643e8b4d29a5d00fae70d8b HEAD
+          if($LASTEXITCODE -ne 0){throw 'Baseline changed.'}
+          python scripts/Apply-ForwardCycle.py
+          if($LASTEXITCODE -ne 0){throw 'Source delta failed.'}
+          git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --check
+          if($LASTEXITCODE -ne 0){throw 'Diff validation failed.'}
+      - name: Full build with real controller and detached updater tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          Start-Transcript artifacts/forward-cycle/build.txt
+          try { ./scripts/Build.ps1 -Version 9.1.16 } finally { Stop-Transcript }
+      - name: Real Windows native W, cancellation and replay tests
+        shell: pwsh
+        run: ./scripts/Test-DockWashReturn.ps1 -Native -OutputDirectory artifacts/forward-cycle/native
+      - name: Diagnostic export and four-viewport UI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          ./scripts/Test-SupportExport.ps1 -OutputDirectory artifacts/forward-cycle/export
+          python -m pip install playwright==1.57.0
+          if($LASTEXITCODE -ne 0){throw 'Browser tooling failed.'}
+          $edge='C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+          if(-not(Test-Path $edge)){$edge='C:\Program Files\Microsoft\Edge\Application\msedge.exe'}
+          if(Test-Path $edge){python scripts/ui-tests/Test-RouteSetupBrowser.py --browser $edge --output artifacts/forward-cycle/ui}
+          else {python -m playwright install chromium; if($LASTEXITCODE -ne 0){throw 'Browser install failed.'}; python scripts/ui-tests/Test-RouteSetupBrowser.py --output artifacts/forward-cycle/ui}
+          if($LASTEXITCODE -ne 0){throw 'UI regression failed.'}
+      - name: Retain tested source without generated bundles
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $paths=@(Get-Content artifacts/forward-cycle/changed-paths.json -Raw -Encoding utf8 | ConvertFrom-Json)
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- @paths
+          if($LASTEXITCODE -ne 0){throw 'Could not stage source.'}
+          $temporary=@('scripts/Apply-ForwardCycle.py','.github/workflows/forward-cycle-repair.yml','scripts/forward-cycle-0.b64','scripts/forward-cycle-1.b64','scripts/forward-cycle-2.b64')
+          foreach($file in $temporary){Remove-Item -LiteralPath $file; git add -- $file}
+          git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --cached --check
+          if($LASTEXITCODE -ne 0){throw 'Staged diff failed.'}
+          git commit -m 'Return forward after every verified wash and resume from actual task state'
+          if($LASTEXITCODE -ne 0){throw 'Commit failed.'}
+          git push origin HEAD:fix/wash-forward-cycle-9.1.16
+          if($LASTEXITCODE -ne 0){throw 'Push failed; never force overwriting.'}
+          git rev-parse HEAD | Set-Content artifacts/forward-cycle/SOURCE.txt
+          git archive --format=zip -o artifacts/forward-cycle/tested-source.zip HEAD
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: forward-cycle-evidence
+          path: |
+            artifacts/forward-cycle/
+            artifacts/dock-return/
+            artifacts/update-startup/
+            build/staging/*.txt
+            build/staging/*.log
+          retention-days: 14
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: success()
+        with:
+          name: forward-cycle-candidate
+          path: dist/ai-miner-win-x64.exe
+          retention-days: 14
+          if-no-files-found: error
