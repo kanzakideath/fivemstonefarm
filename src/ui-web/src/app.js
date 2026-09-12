@@ -5,6 +5,7 @@
   const FRAMEWORK7_VERSION = '9.1.3';
   const VALID_PAGES = new Set(['overview', 'stone', 'vehicle', 'routes', 'settings', 'update']);
   const VALID_MODES = new Set(['mining', 'washing', 'gold']);
+  const STABLE_VERSION_PATTERN = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
   const VALID_TONES = new Set([
     'neutral', 'muted', 'success', 'warning', 'error', 'danger', 'accent', 'progress',
   ]);
@@ -43,6 +44,13 @@
     running: false,
     registrationActive: false,
     actionMode: 'mining',
+    fastWashActive: false,
+    updateCatalog: {
+      phase: 'idle',
+      currentVersion: '',
+      latestVersion: '',
+      versions: [],
+    },
     windowVisible: true,
     controls: {},
   };
@@ -50,7 +58,18 @@
   const fixtureState = {
     ...baseState,
     revision: 1,
-    version: '9.1.17',
+    version: '9.1.18',
+    updateCatalog: {
+      phase: 'ready',
+      currentVersion: '9.1.18',
+      latestVersion: '9.1.18',
+      versions: [
+        { version: '9.1.18', publishedAt: '2026-09-13T08:30:00Z' },
+        { version: '9.1.17', publishedAt: '2026-09-12T12:00:00Z' },
+        { version: '9.1.16', publishedAt: '2026-09-11T12:00:00Z' },
+        { version: '9.1.15', publishedAt: '2026-09-10T12:00:00Z' },
+      ],
+    },
     controls: {
       overviewSubtitle: { text: modeDetails.gold.subtitle },
       runStatus: { text: '停止中', tone: 'neutral' },
@@ -76,7 +95,6 @@
       backgroundMode: { value: true, enabled: true },
       hideWhileRunning: { value: true, enabled: true },
       correctionEnabled: { value: true, enabled: true },
-      fastWashMode: { value: true, enabled: true },
       autoEat: { value: true, enabled: true },
       foodKey: { value: 1, enabled: true },
       autoCheckUpdates: { value: true, enabled: true },
@@ -90,7 +108,7 @@
       debugOverlay: { value: false, enabled: true },
       settingsSave: { text: '設定を保存', enabled: true },
       settingsFeedback: { text: '', tone: 'neutral' },
-      updateStatus: { text: '最新です', tone: 'success' },
+      updateStatus: { text: '公開バージョンを選択できます', tone: 'success' },
       updateIntegrity: { text: 'ECDSA署名とSHA-256を確認してから適用します。' },
       updateButton: { text: 'アップデートを確認', enabled: true },
       updateFeedback: { text: '', tone: 'neutral' },
@@ -114,7 +132,10 @@
   let fastWashPendingRevision = null;
   let settingsPendingRevision = null;
   let updatePendingRevision = null;
+  let updateInstallPendingRevision = null;
   let vehiclePendingRevision = null;
+  let selectedUpdateVersion = '';
+  let updateCatalogSignature = '';
   let pendingTimeouts = new Map();
   let settingsDirty = new Set();
   let lastFeedback = { settings: '', update: '' };
@@ -153,12 +174,13 @@
     'vehicle-delete', 'vehicle-route', 'overview-route', 'overview-route-summary',
     'route-mode-hint', 'route-feedback', 'route-register', 'route-teach', 'route-trial', 'route-stationary',
     'route-enable', 'route-return-home', 'route-voice', 'start-hotkey', 'stop-hotkey', 'setting-background', 'setting-hide',
-    'setting-correction', 'setting-fast-wash', 'setting-auto-eat', 'food-key', 'setting-auto-update',
+    'setting-correction', 'setting-auto-eat', 'food-key', 'setting-auto-update',
     'minimum-free-weight', 'storage-trigger-percent', 'estimated-reward-weight',
     'minimum-free-slots', 'storage-max-retries', 'farm-watchdog-seconds',
     'target-lost-recovery-seconds', 'setting-debug-overlay', 'settings-save',
-    'settings-save-label', 'settings-feedback', 'current-version', 'update-status',
-    'update-integrity', 'update-check', 'update-check-label', 'update-feedback',
+    'settings-save-label', 'settings-feedback', 'current-version', 'latest-version', 'update-status',
+    'update-integrity', 'update-version-list', 'update-version-empty',
+    'update-check', 'update-check-label', 'update-install', 'update-install-label', 'update-feedback',
     'update-badge', 'sidebar-connection', 'sidebar-connection-dot', 'stoneverse-launch', 'action-popover',
     'action-sheet', 'live-region', 'stone-return-button', 'stone-meta-root',
   ].map((id) => [toCamel(id), document.getElementById(id)]));
@@ -392,6 +414,10 @@
       updatePendingRevision = null;
       clearPending(elements.updateCheck, 'update');
     }
+    if (updateInstallPendingRevision !== null && revision > updateInstallPendingRevision) {
+      updateInstallPendingRevision = null;
+      clearPending(elements.updateInstall, 'update-install');
+    }
     if (vehiclePendingRevision !== null && revision > vehiclePendingRevision) {
       vehiclePendingRevision = null;
       clearPending(elements.vehicleRegister, 'vehicle');
@@ -460,7 +486,7 @@
       && enabledOf(runButton);
     elements.fastWashStart.disabled = !fastAvailable;
     setText(elements.fastWashStartLabel,
-      state.running && state.actionMode === 'washing' && booleanOf(control('fastWashMode'))
+      state.running && state.actionMode === 'washing' && state.fastWashActive === true
         ? '高速石洗い 実行中（上のボタンで停止）' : '高速石洗いを開始', false);
     actionButton.disabled = !enabledOf(control('actionPicker', 'actionControl'), !state.running);
 
@@ -606,7 +632,6 @@
       control('correctionEnabled', 'washCorrectionControl'),
       'correctionEnabled',
     );
-    updateSwitch(elements.settingFastWash, control('fastWashMode'), 'fastWashMode');
     updateSwitch(elements.settingAutoEat, control('autoEat', 'autoEatControl'), 'autoEat');
     updateInput(elements.foodKey, control('foodKey', 'foodKeyControl'), 'foodKey');
     updateSwitch(elements.settingAutoUpdate, control('autoCheckUpdates', 'autoUpdateControl'), 'autoCheckUpdates');
@@ -653,15 +678,257 @@
       state.version ? `v${state.version}` : textOf(currentVersion, '—'),
       animate,
     );
+    const catalog = normalizeUpdateCatalog();
+    const catalogSignature = JSON.stringify({
+      phase: catalog.phase,
+      currentVersion: catalog.currentVersion,
+      latestVersion: catalog.latestVersion,
+      versions: catalog.versions.map((entry) => [entry.version, entry.publishedAt]),
+    });
+    if (catalogSignature !== updateCatalogSignature) {
+      updateCatalogSignature = catalogSignature;
+      const selectionStillExists = catalog.versions.some((entry) => entry.version === selectedUpdateVersion);
+      if (!selectionStillExists) {
+        selectedUpdateVersion = catalog.versions.find(
+          (entry) => compareStableVersions(entry.version, catalog.currentVersion) > 0,
+        )?.version || catalog.versions.find(
+          (entry) => entry.version === catalog.currentVersion,
+        )?.version || '';
+      }
+    }
+    setText(elements.latestVersion, catalog.latestVersion ? `v${catalog.latestVersion}` : '未確認', animate);
     setText(elements.updateStatus, textOf(status, '未確認'), animate);
     setTone(elements.updateStatus, effectiveTone(status, elements.updateStatus.textContent));
     setText(elements.updateIntegrity, textOf(integrity, 'ECDSA署名とSHA-256を確認してから適用します。'), animate);
-    setText(elements.updateCheckLabel, textOf(button, 'アップデートを確認'), animate);
-    elements.updateCheck.disabled = !enabledOf(button);
+    renderUpdateVersionList(catalog);
+
+    const busy = ['checking', 'selecting', 'downloading', 'applying'].includes(catalog.phase);
+    setText(
+      elements.updateCheckLabel,
+      catalog.phase === 'checking' ? '公開バージョンを確認中…' : '公開バージョンを再読み込み',
+      animate,
+    );
+    elements.updateCheck.disabled = busy || state.running || state.startInProgress
+      || state.registrationActive || !enabledOf(button);
+
+    const selected = catalog.versions.find((entry) => entry.version === selectedUpdateVersion);
+    const comparison = selected ? compareStableVersions(selected.version, catalog.currentVersion) : 0;
+    const installLabel = !selected
+      ? 'バージョンを選択してください'
+      : comparison === 0
+        ? '現在のバージョンです'
+        : comparison < 0
+          ? `v${selected.version} へ戻す`
+          : `v${selected.version} へ更新`;
+    setText(elements.updateInstallLabel,
+      catalog.phase === 'selecting' ? '署名を再確認中…'
+        : catalog.phase === 'downloading' ? '検証しながらダウンロード中…'
+          : catalog.phase === 'applying' ? '適用して再起動中…' : installLabel,
+      animate);
+    elements.updateInstall.disabled = busy || !selected || comparison === 0
+      || state.running || state.registrationActive || state.startInProgress;
+    elements.updateInstall.setAttribute('aria-busy',
+      elements.updateInstall.classList.contains('is-pending') || busy ? 'true' : 'false');
     setText(elements.updateFeedback, textOf(feedback), animate);
     setTone(elements.updateFeedback, effectiveTone(feedback, elements.updateFeedback.textContent));
     elements.updateBadge.hidden = !(booleanOf(available) || /[•●]/.test(textOf(legacyNav)));
     announceFeedback('update', feedback);
+  }
+
+  function parseStableVersion(value) {
+    const text = String(value || '');
+    const match = STABLE_VERSION_PATTERN.exec(text);
+    if (!match) return null;
+    const parts = match.slice(1, 4).map(Number);
+    return parts.every(Number.isSafeInteger) ? parts : null;
+  }
+
+  function compareStableVersions(left, right) {
+    const a = parseStableVersion(left);
+    const b = parseStableVersion(right);
+    if (!a || !b) return 0;
+    for (let index = 0; index < 3; index += 1) {
+      if (a[index] !== b[index]) return a[index] > b[index] ? 1 : -1;
+    }
+    return 0;
+  }
+
+  function normalizeUpdateCatalog() {
+    const raw = state.updateCatalog && typeof state.updateCatalog === 'object'
+      ? state.updateCatalog : {};
+    const currentVersion = STABLE_VERSION_PATTERN.test(String(raw.currentVersion || ''))
+      ? String(raw.currentVersion) : STABLE_VERSION_PATTERN.test(String(state.version || ''))
+        ? String(state.version) : '';
+    const seen = new Set();
+    const versions = (Array.isArray(raw.versions) ? raw.versions : [])
+      .filter((entry) => entry && typeof entry === 'object'
+        && STABLE_VERSION_PATTERN.test(String(entry.version || '')))
+      .map((entry) => ({
+        version: String(entry.version),
+        publishedAt: typeof entry.publishedAt === 'string' ? entry.publishedAt.slice(0, 40) : '',
+      }))
+      .filter((entry) => !seen.has(entry.version) && seen.add(entry.version))
+      .sort((left, right) => compareStableVersions(right.version, left.version))
+      .slice(0, 20);
+    const requestedLatest = String(raw.latestVersion || '');
+    const latestVersion = versions.some((entry) => entry.version === requestedLatest)
+      ? requestedLatest : versions[0]?.version || '';
+    const allowedPhases = new Set(['idle', 'checking', 'ready', 'selecting', 'downloading', 'applying', 'error']);
+    return {
+      phase: allowedPhases.has(raw.phase) ? raw.phase : 'idle',
+      currentVersion,
+      latestVersion,
+      versions,
+    };
+  }
+
+  function formatReleaseDate(value) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})T/.exec(String(value || ''));
+    return match ? `${match[1]}/${match[2]}/${match[3]} 公開` : '署名確認済み';
+  }
+
+  function versionSummary(version, catalog) {
+    if (version === catalog.currentVersion) return '現在インストール済み';
+    if (version === '9.1.17') return '高速石洗いの専用開始ボタンを追加';
+    if (version === '9.1.16') return '既知の問題：洗浄中も所持品確認へ入る場合があります';
+    if (version === '9.1.15') return '高速石洗い機能なし';
+    if (version === catalog.latestVersion) return '最新の安定版';
+    return '署名確認済みの安定版';
+  }
+
+  function renderUpdateVersionList(catalog) {
+    const busy = ['checking', 'selecting', 'downloading', 'applying'].includes(catalog.phase);
+    const focusedVersion = document.activeElement?.classList?.contains('update-version-option')
+      ? document.activeElement.dataset.version : '';
+    elements.updateVersionList.setAttribute('aria-busy', busy ? 'true' : 'false');
+    if (!catalog.versions.length) {
+      setText(
+        elements.updateVersionEmpty,
+        catalog.phase === 'checking' ? '公開バージョンを確認しています…'
+          : catalog.phase === 'error' ? '公開バージョンを読み込めませんでした。再読み込みしてください。'
+            : '「公開バージョンを再読み込み」を押してください。',
+        false,
+      );
+      elements.updateVersionEmpty.hidden = false;
+      elements.updateVersionList.replaceChildren(elements.updateVersionEmpty);
+      return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    for (const entry of catalog.versions) {
+      const comparison = compareStableVersions(entry.version, catalog.currentVersion);
+      const option = document.createElement('button');
+      option.type = 'button';
+      option.className = 'update-version-option';
+      option.dataset.version = entry.version;
+      option.setAttribute('role', 'radio');
+      option.setAttribute('aria-checked', entry.version === selectedUpdateVersion ? 'true' : 'false');
+      option.classList.toggle('is-selected', entry.version === selectedUpdateVersion);
+      option.tabIndex = entry.version === selectedUpdateVersion ? 0 : -1;
+      option.disabled = busy;
+
+      const body = document.createElement('span');
+      body.className = 'update-version-body';
+      const heading = document.createElement('span');
+      heading.className = 'update-version-heading';
+      const name = document.createElement('span');
+      name.className = 'update-version-name';
+      name.textContent = `v${entry.version}`;
+      const badges = document.createElement('span');
+      badges.className = 'update-version-badges';
+      const badgeLabels = [];
+      if (entry.version === catalog.currentVersion) badgeLabels.push(['現在', 'current']);
+      if (entry.version === catalog.latestVersion) badgeLabels.push(['最新', 'latest']);
+      if (comparison < 0) badgeLabels.push(['旧バージョン', 'older']);
+      for (const [label, kind] of badgeLabels) {
+        const badge = document.createElement('span');
+        badge.className = `update-version-badge is-${kind}`;
+        badge.textContent = label;
+        badges.append(badge);
+      }
+      heading.append(name, badges);
+      const date = document.createElement('span');
+      date.className = 'update-version-date';
+      date.textContent = `${versionSummary(entry.version, catalog)} · ${formatReleaseDate(entry.publishedAt)}`;
+      body.append(heading, date);
+
+      const check = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      check.classList.add('update-version-check');
+      check.setAttribute('aria-hidden', 'true');
+      const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+      use.setAttribute('href', '#icon-check');
+      check.append(use);
+      option.append(body, check);
+      const accessibleBadges = badgeLabels.map(([label]) => label).join('、');
+      option.setAttribute('aria-label', `バージョン ${entry.version}${accessibleBadges ? `、${accessibleBadges}` : ''}、${date.textContent}`);
+      option.addEventListener('click', () => selectUpdateVersion(entry.version));
+      option.addEventListener('keydown', handleUpdateVersionKeydown);
+      fragment.append(option);
+    }
+    elements.updateVersionEmpty.hidden = true;
+    elements.updateVersionList.replaceChildren(fragment);
+    if (focusedVersion && !busy) {
+      elements.updateVersionList.querySelector(`[data-version="${focusedVersion}"]`)
+        ?.focus({ preventScroll: true });
+    }
+  }
+
+  function selectUpdateVersion(version, focus = true) {
+    const catalog = normalizeUpdateCatalog();
+    if (!catalog.versions.some((entry) => entry.version === version)) return;
+    selectedUpdateVersion = version;
+    renderUpdate(false);
+    if (focus) {
+      [...elements.updateVersionList.querySelectorAll('.update-version-option')]
+        .find((option) => option.dataset.version === version)?.focus({ preventScroll: true });
+    }
+  }
+
+  function handleUpdateVersionKeydown(event) {
+    if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    const options = [...elements.updateVersionList.querySelectorAll('.update-version-option:not(:disabled)')];
+    if (!options.length) return;
+    event.preventDefault();
+    const index = options.indexOf(event.currentTarget);
+    const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1
+      : (index + (event.key === 'ArrowUp' || event.key === 'ArrowLeft' ? -1 : 1) + options.length) % options.length;
+    selectUpdateVersion(options[nextIndex].dataset.version, true);
+  }
+
+  function confirmVersionInstall() {
+    const catalog = normalizeUpdateCatalog();
+    const selected = catalog.versions.find((entry) => entry.version === selectedUpdateVersion);
+    if (!selected || elements.updateInstall.disabled) return;
+    const comparison = compareStableVersions(selected.version, catalog.currentVersion);
+    if (comparison === 0) return;
+    const downgrade = comparison < 0;
+    const knownWarning = selected.version === '9.1.16'
+      ? '<br><br>この版には、高速石洗い中も所持品確認へ入る既知の問題があります。'
+      : selected.version === '9.1.15'
+        ? '<br><br>この版には高速石洗い機能がありません。' : '';
+    const title = downgrade ? `旧バージョン v${selected.version} へ戻しますか？`
+      : `v${selected.version} へ更新しますか？`;
+    const text = `現在の v${catalog.currentVersion} から v${selected.version} へ変更します。署名とSHA-256をもう一度確認してから再起動します。${downgrade ? '<br><br>旧版では新しい設定項目を利用できない場合があります。保存データは削除しません。' : ''}${knownWarning}`;
+    const dialog = app.dialog.create({
+      title,
+      text,
+      buttons: [
+        { text: 'キャンセル' },
+        {
+          text: downgrade ? '旧バージョンへ戻す' : '更新する',
+          bold: true,
+          onClick: () => {
+            setPending(elements.updateInstall, 'update-install', state.revision);
+            sendAction('update.install', { version: selected.version });
+          },
+        },
+      ],
+      on: {
+        opened: (instance) => instance.el.querySelector('.dialog-button')?.focus({ preventScroll: true }),
+        closed: () => requestAnimationFrame(() => elements.updateInstall.focus({ preventScroll: true })),
+      },
+    });
+    dialog.open();
   }
 
   function formatCount(item) {
@@ -883,6 +1150,7 @@
     if (key === 'fast-wash') fastWashPendingRevision = revision;
     if (key === 'settings') settingsPendingRevision = revision;
     if (key === 'update') updatePendingRevision = revision;
+    if (key === 'update-install') updateInstallPendingRevision = revision;
     if (key === 'vehicle') vehiclePendingRevision = revision;
   }
 
@@ -930,7 +1198,7 @@
     }
     if (action === 'washing.fast.start' && !next.running && !next.registrationActive) {
       next.actionMode = 'washing';
-      next.controls.fastWashMode = { value: true, enabled: true };
+      next.fastWashActive = true;
       next.running = true;
       next.controls.overviewSubtitle = { text: '高速石洗い：収納・補充時のみ荷台を確認' };
       next.controls.runStatus = { text: '高速石洗い 実行中', tone: 'success' };
@@ -938,6 +1206,7 @@
     }
     if (action === 'run.toggle') {
       next.running = !next.running;
+      next.fastWashActive = false;
       next.controls.runStatus = {
         text: next.running ? '実行中' : '停止中',
         tone: next.running ? 'success' : 'neutral',
@@ -960,15 +1229,6 @@
     if (action === 'vehicle.delete') {
       next.controls.vehicleStatus = { text: '未登録', tone: 'neutral' };
       next.controls.vehicleDelete = { text: '登録を削除', enabled: false };
-    }
-    if (action === 'washing.fast.toggle') {
-      next.controls.fastWashMode = { value: Boolean(payload.enabled), enabled: true };
-      next.controls.settingsFeedback = {
-        text: payload.enabled
-          ? '最速石洗いON：通常洗浄はストレージ表示を待ちません'
-          : '最速石洗いOFF：両操作を確認してから洗浄します',
-        tone: 'success',
-      };
     }
     if (action === 'settings.save') {
       Object.assign(next.controls, {
@@ -995,8 +1255,14 @@
       next.diagnostics = { ...(next.diagnostics || {}), feedback: '画面プレビューです。実際の診断ZIPはWindows版EXEで保存します。外部送信なし。' };
     }
     if (action === 'update.check') {
-      next.controls.updateStatus = { text: '最新です', tone: 'success' };
-      next.controls.updateFeedback = { text: '最新バージョンを使用しています', tone: 'success' };
+      next.updateCatalog.phase = 'ready';
+      next.controls.updateStatus = { text: '公開バージョンを選択できます', tone: 'success' };
+      next.controls.updateFeedback = { text: '署名を確認できた公開版を読み込みました', tone: 'success' };
+    }
+    if (action === 'update.install' && STABLE_VERSION_PATTERN.test(String(payload.version || ''))) {
+      next.updateCatalog.phase = 'selecting';
+      next.controls.updateStatus = { text: `v${payload.version} の署名を再確認中`, tone: 'progress' };
+      next.controls.updateFeedback = { text: '画面プレビューでは実際のEXEを置き換えません', tone: 'neutral' };
     }
     applyState(next);
   }
@@ -1035,13 +1301,6 @@
       if (elements.fastWashStart.disabled || elements.fastWashStart.classList.contains('is-pending')) return;
       setPending(elements.fastWashStart, 'fast-wash', state.revision);
       sendAction('washing.fast.start');
-    });
-    elements.settingFastWash.addEventListener('change', () => {
-      const previous = booleanOf(control('fastWashMode'), true);
-      const desired = elements.settingFastWash.checked;
-      elements.settingFastWash.checked = previous;
-      elements.settingFastWash.disabled = true;
-      sendAction('washing.fast.toggle', { enabled: desired });
     });
     elements.vehicleEnabled.addEventListener('change', () => {
       const previous = booleanOf(control('vehicleEnabled'));
@@ -1173,6 +1432,7 @@
       setPending(elements.updateCheck, 'update', state.revision);
       sendAction('update.check');
     });
+    elements.updateInstall.addEventListener('click', confirmVersionInstall);
 
     document.addEventListener('keydown', (event) => {
       const escape = event.key === 'Escape';

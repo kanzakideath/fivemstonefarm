@@ -5,8 +5,9 @@ StationaryOnlyEnabled() {
 }
 
 FastWashModeEnabled() {
-    global Config, State
-    return StationaryOnlyEnabled() && Config.fastWashMode && State.runMode = "washing"
+    global State
+    return StationaryOnlyEnabled() && State.running && State.runFastWash
+        && State.runMode = "washing"
 }
 
 StationaryBridgeMotionBlocked(mode) {

@@ -9,7 +9,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "9.1.17"
+global AppVersion := "9.1.18"
 ;@Ahk2Exe-SetVersion %A_PriorLine~U)^.*"([^"]+)".*$~$1%
 processId := DllCall("GetCurrentProcessId")
 global LocalNav := {busy: false, pid: 0, cancel: "", taskId: 0, dialog: 0, guide: 0, feedback: "", requestActive: false, cycle: 0, lastBatchKey: "", lastActionKey: ""}
@@ -183,6 +183,7 @@ global State := {
     ; old recovery/storage finally block.
     activeFarmCallbacks: 0,
     runMode: "mining",
+    runFastWash: false,
     generation: 0,
     timerFn: 0,
     pendingFarmTimerGeneration: 0,
@@ -206,6 +207,9 @@ global State := {
     updateManifestPath: "",
     updateSignaturePath: "",
     updateVersion: "",
+    updateCatalog: [],
+    updateCatalogPhase: "idle",
+    updateCatalogLatestVersion: "",
     updateNotesUrl: "",
     updateSilent: false,
     updateProcessId: 0,
@@ -1685,7 +1689,7 @@ if isValidationRun {
         : !FileExist(State.updaterPath) ? 16
         : MonotonicMs() <= 0 ? 17
         : RunBackgroundBridge("capabilities") != "CAPS 12 MINE WASH GOLD NUDGE STORAGE INVENTORY ROUTE TRY VIEW HOTBAR INVENTORYKEY HEALTH COMPANION ACTIONWAIT REFILL" ? 18
-        : updaterCapabilities != "UPDATE_CAPS 1 CHECK DOWNLOAD APPLY" ? 19
+        : updaterCapabilities != "UPDATE_CAPS 1 CHECK CATALOG SELECT DOWNLOAD APPLY" ? 19
         : !IsSafeConfiguredHotkey("F8") ? 20
         : IsSafeConfiguredHotkey("A") ? 21
         : !IsSafeConfiguredHotkey("^A") ? 22
@@ -2364,7 +2368,10 @@ ProcessWebUiActions(*) {
         action := parts[3]
         try {
             if action = "nav" && parts.Length = 4 {
-                ShowPage(parts[4])
+                if parts[4] = "update"
+                    OpenUpdatePage()
+                else
+                    ShowPage(parts[4])
             } else if action = "action.select" && parts.Length = 4 {
                 if LocalNav.busy || LocalNav.requestActive || State.registrationActive
                     continue
@@ -2374,16 +2381,17 @@ ProcessWebUiActions(*) {
                     ChangeActionMode(State.actionControl)
                 }
             } else if action = "run.toggle" && parts.Length = 3 {
-                if State.visualTest
+                if State.visualTest {
+                    if !State.running
+                        State.runFastWash := false
                     ToggleVisualTestRun()
-                else
+                } else
                     ToggleMining()
             } else if action = "washing.fast.start" && parts.Length = 3 {
                 if State.visualTest {
                     if !State.running && !State.registrationActive {
                         Config.actionMode := "washing"
-                        Config.fastWashMode := 1
-                        State.fastWashControl.Value := 1
+                        State.runFastWash := true
                         State.actionControl.Choose(2)
                         ToggleVisualTestRun()
                     }
@@ -2430,12 +2438,16 @@ ProcessWebUiActions(*) {
                 ApplyWebUiSettings(parts)
             } else if action = "update.check" && parts.Length = 3 {
                 if State.visualTest {
-                    State.updatePageStatus.Text := "新しいバージョン v"
-                        . VisualFixtureNewerVersion(AppVersion) . " があります"
-                    State.updateButton.Text := "ダウンロードして更新"
-                    State.ui.navUpdate.Text := "アップデート •"
+                    PopulateVisualUpdateCatalog()
+                    State.updatePageStatus.Text := "署名を確認できた公開版を選択できます"
                 } else
-                    CheckForUpdates()
+                    BeginUpdateCatalog(false)
+            } else if action = "update.install" && parts.Length = 4 {
+                if State.visualTest {
+                    State.updateCatalogPhase := "selecting"
+                    State.updatePageStatus.Text := "v" parts[4] " の署名を再確認中（表示テスト）"
+                } else
+                    BeginSelectedVersionInstall(parts[4])
             } else if action = "diagnostics.mark" && parts.Length = 3 {
                 SupportMarkProblem()
             } else if action = "diagnostics.export" && parts.Length = 3 {
@@ -2549,6 +2561,8 @@ ApplyWebUiSettings(parts) {
 ToggleVisualTestRun() {
     global State
     State.running := !State.running
+    if !State.running
+        State.runFastWash := false
     State.mainButton.Text := State.running ? "自動操作を停止" : "自動操作を開始"
     State.actionControl.Enabled := !State.running
     State.statusLabel.Text := State.running ? "●  砂金を採っています" : "●  停止中"
@@ -2570,6 +2584,18 @@ VisualFixtureNewerVersion(version) {
     return parts[1] "." parts[2] "." nextPatch
 }
 
+PopulateVisualUpdateCatalog() {
+    global State, AppVersion
+    State.updateCatalog := [
+        {version: AppVersion, publishedAt: "2026-09-13T08:30:00Z"},
+        {version: "9.1.17", publishedAt: "2026-09-12T12:00:00Z"},
+        {version: "9.1.16", publishedAt: "2026-09-11T12:00:00Z"},
+        {version: "9.1.15", publishedAt: "2026-09-10T12:00:00Z"}
+    ]
+    State.updateCatalogLatestVersion := AppVersion
+    State.updateCatalogPhase := "ready"
+}
+
 ApplyVisualTestFixture() {
     global State, Config
     Config.actionMode := "gold"
@@ -2582,6 +2608,7 @@ ApplyVisualTestFixture() {
     State.mealLabel.Text := "位置補正`n0"
     State.vehicleTripLabel.Text := "自動収納`n0"
     State.vehicleStatusLabel.Text := "登録済み　作業用トラック"
+    PopulateVisualUpdateCatalog()
     State.vehicleNameEdit.Value := "作業用トラック"
     State.vehicleEnabledControl.Enabled := true
     State.routeStatusLabel.Text := "ローカル登録　準備完了"
@@ -2636,6 +2663,7 @@ BuildWebUiStateJson() {
         . ',"registrationActive":' (State.registrationActive ? "true" : "false")
         . ',"startInProgress":' (State.startInProgress ? "true" : "false")
         . ',"fastWashStartAvailable":' (FastWashStartAvailable() ? "true" : "false")
+        . ',"fastWashActive":' (State.running && State.runFastWash ? "true" : "false")
         . ',"actionMode":' JsonQuote(actionMode)
         . ',"farmState":' JsonQuote(State.farmState)
         . ',"farmStateReason":' JsonQuote(State.farmStateReason)
@@ -2645,8 +2673,24 @@ BuildWebUiStateJson() {
         . ',"windowVisible":' (State.uiWindowVisible ? "true" : "false")
         . ',"visualTest":' (State.visualTest ? "true" : "false")
         . ',"diagnostics":' SupportUiJson()
+        . ',"updateCatalog":' UpdateCatalogUiJson()
         . ',"routes":' ExeRouteSetupStateJson(actionMode)
         . ',"controls":{' controlsJson '}}'
+}
+
+UpdateCatalogUiJson() {
+    global State, AppVersion
+    versionsJson := ""
+    for entry in State.updateCatalog {
+        if versionsJson
+            versionsJson .= ","
+        versionsJson .= '{"version":' JsonQuote(entry.version)
+            . ',"publishedAt":' JsonQuote(entry.publishedAt) '}'
+    }
+    return '{"phase":' JsonQuote(State.updateCatalogPhase)
+        . ',"currentVersion":' JsonQuote(AppVersion)
+        . ',"latestVersion":' JsonQuote(State.updateCatalogLatestVersion)
+        . ',"versions":[' versionsJson ']}'
 }
 
 JsonScalar(value) {
@@ -6387,7 +6431,7 @@ UpdateActionUi() {
         State.taglineLabel.Text := "画面を奪わず、石の再出現を見て採掘します"
     }
     if StationaryOnlyEnabled() {
-        State.taglineLabel.Text := actionMode = "washing" && Config.fastWashMode
+        State.taglineLabel.Text := actionMode = "washing" && FastWashModeEnabled()
             ? "高速石洗い：洗浄対象だけで開始。収納・補充時のみ荷台を確認します"
             : "荷台前の両操作を確認し、移動・視点入力なしで続けます"
         if actionMode != "mining"
@@ -7480,12 +7524,33 @@ RefreshUpdateUi(*) {
     global State
     if !IsObject(State.updatePageStatus)
         return
-    if State.updateOperation = "check" {
+    if State.updateApplying {
+        State.updateCatalogPhase := "applying"
+        State.updatePageStatus.Text := "v" State.updateVersion " を適用して再起動中…"
+        State.updateButton.Text := "適用中…"
+    } else if State.updateOperation = "catalog" {
+        State.updateCatalogPhase := "checking"
+        State.updatePageStatus.Text := "署名付き公開バージョンを確認中…"
+        State.updateButton.Text := "確認中…"
+    } else if State.updateOperation = "select" {
+        State.updateCatalogPhase := "selecting"
+        State.updatePageStatus.Text := "v" State.updateVersion " の署名を再確認中…"
+        State.updateButton.Text := "確認中…"
+    } else if State.updateOperation = "check" {
         State.updatePageStatus.Text := "新しいバージョンを確認中…"
         State.updateButton.Text := "確認中…"
     } else if State.updateOperation = "download" {
+        State.updateCatalogPhase := "downloading"
         State.updatePageStatus.Text := "v" State.updateVersion " を検証しながらダウンロード中…"
         State.updateButton.Text := "ダウンロード中…"
+    } else if State.updateCatalogPhase = "error" {
+        if !State.updatePageStatus.Text
+            State.updatePageStatus.Text := "更新処理に失敗しました"
+        State.updateButton.Text := "公開バージョンをもう一度読み込む"
+    } else if State.updateCatalog.Length {
+        State.updateCatalogPhase := "ready"
+        State.updatePageStatus.Text := "署名を確認できた公開版を選択できます"
+        State.updateButton.Text := "公開バージョンを再読み込み"
     } else if State.updateVersion {
         State.updatePageStatus.Text := "新しいバージョン v" State.updateVersion " があります"
         State.updateButton.Text := "ダウンロードして更新"
@@ -7496,7 +7561,8 @@ RefreshUpdateUi(*) {
         State.updateButton.Text := "アップデートを確認"
         State.ui.navUpdate.Text := "アップデート"
     }
-    State.updateButton.Enabled := !State.updateOperation
+    State.updateButton.Enabled := !State.updateOperation && !State.updateApplying
+        && !State.running && !State.startInProgress && !State.registrationActive
     if State.running && !State.updateOperation
         State.updateButton.Text := State.updateVersion ? "停止して更新" : "停止して確認"
 }
@@ -8255,10 +8321,10 @@ OpenUpdatePage(*) {
         QueueWebUiFlush()
         return
     }
-    ; 起動時の静かな確認で見つかった更新も、利用者が画面の
-    ; 「ダウンロードして更新」を押すまでは適用しません。
-    if !State.updateVersion && !State.updateOperation
-        BeginUpdateCheck(false)
+    ; The page owns a verified version catalog. Loading it never installs or
+    ; persists a downgrade choice; the user must choose and confirm every switch.
+    if !State.updateCatalog.Length && !State.updateOperation
+        BeginUpdateCatalog(false)
 }
 
 BeginUpdateCheck(silent := false) {
@@ -8330,6 +8396,208 @@ BeginUpdateCheck(silent := false) {
     }
 }
 
+IsSelectableAppVersion(version) {
+    if !RegExMatch(String(version),
+        "^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$", &parts)
+        return false
+    try {
+        major := Integer(parts[1])
+        minor := Integer(parts[2])
+        patch := Integer(parts[3])
+    } catch
+        return false
+    return major > 9 || (major = 9 && (minor > 1 || (minor = 1 && patch >= 15)))
+}
+
+UpdateCatalogHasVersion(version) {
+    global State
+    for entry in State.updateCatalog {
+        if entry.version = version
+            return true
+    }
+    return false
+}
+
+BeginUpdateCatalog(silent := false) {
+    global State, AppVersion
+    if State.registrationActive || State.running || State.startInProgress
+        return
+    if State.updateOperation {
+        if !silent
+            State.updatePageStatus.Text := "別の更新処理が完了するまでお待ちください"
+        return
+    }
+    if !A_IsCompiled {
+        State.updateCatalogPhase := "error"
+        State.updatePageStatus.Text := "バージョン選択は配布版EXEで利用できます"
+        QueueWebUiFlush(true)
+        return
+    }
+    if !FileExist(State.updaterPath) {
+        State.updateCatalogPhase := "error"
+        State.updatePageStatus.Text := "更新コンポーネントが見つかりません"
+        QueueWebUiFlush(true)
+        return
+    }
+    try {
+        CleanupUpdateStage()
+        DirCreate State.updateRoot
+        stageName := FormatTime(, "yyyyMMdd-HHmmss") "-catalog-"
+            . DllCall("GetCurrentProcessId") "-" A_TickCount
+        State.updateStageDir := State.updateRoot "\" stageName
+        DirCreate State.updateStageDir
+        State.updateResultPath := State.updateStageDir "\catalog-result.txt"
+        try FileDelete State.updateResultPath
+        commandLine := QuoteCommandArg(State.updaterPath) . " catalog "
+            . QuoteCommandArg(State.updateResultPath) . " "
+            . QuoteCommandArg(AppVersion) . " " . QuoteCommandArg(State.updateStageDir)
+        Run commandLine,, "Hide", &childPid
+        State.updateOperation := "catalog"
+        State.updateCatalogPhase := "checking"
+        State.updateSilent := silent
+        State.updateProcessId := childPid
+        State.updateDeadline := MonotonicMs() + 120000
+        State.updatePollFn := PollUpdateOperation
+        SetTimer State.updatePollFn, 250
+        State.statusLabel.Text := "●  署名付き公開バージョンを確認中"
+        RefreshUpdateUi()
+        QueueWebUiFlush(true)
+    } catch as err {
+        State.updateOperation := ""
+        State.updateCatalogPhase := "error"
+        State.updatePageStatus.Text := "公開バージョンの確認を開始できませんでした"
+        WriteDiagnostic("UPDATE_CATALOG_START_ERROR=" err.Message)
+        CleanupUpdateStage()
+        QueueWebUiFlush(true)
+    }
+}
+
+HandleUpdateCatalogResult(result, silent) {
+    global State
+    status := UpdaterValue(result, "Status")
+    message := UpdaterValue(result, "Message")
+    if status != "CATALOG_READY" {
+        State.updateCatalogPhase := "error"
+        State.updatePageStatus.Text := "公開バージョンを確認できませんでした"
+        State.statusLabel.Text := "●  公開バージョンを確認できません"
+        WriteDiagnostic("UPDATE_CATALOG_ERROR=" message)
+        CleanupUpdateStage()
+        RefreshUpdateUi()
+        QueueWebUiFlush(true)
+        return
+    }
+    try count := Integer(UpdaterValue(result, "Count", "-1"))
+    catch
+        count := -1
+    if count < 0 || count > 20 {
+        State.updateCatalogPhase := "error"
+        State.updatePageStatus.Text := "更新一覧が不正なため拒否しました"
+        WriteDiagnostic("UPDATE_CATALOG_INVALID_COUNT=" count)
+        CleanupUpdateStage()
+        QueueWebUiFlush(true)
+        return
+    }
+    catalog := []
+    seen := Map()
+    loop count {
+        index := A_Index - 1
+        version := UpdaterValue(result, "Version" index)
+        publishedAt := UpdaterValue(result, "PublishedAt" index)
+        if !IsSelectableAppVersion(version) || seen.Has(version)
+            continue
+        if !RegExMatch(publishedAt,
+            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.+-]{5,24}Z?$")
+            continue
+        seen[version] := true
+        catalog.Push({version: version, publishedAt: publishedAt})
+    }
+    latestVersion := UpdaterValue(result, "LatestVersion")
+    latestVerified := false
+    for entry in catalog {
+        if entry.version = latestVersion {
+            latestVerified := true
+            break
+        }
+    }
+    if catalog.Length && !latestVerified {
+        State.updateCatalogPhase := "error"
+        State.updatePageStatus.Text := "更新一覧の整合性を確認できないため拒否しました"
+        WriteDiagnostic("UPDATE_CATALOG_LATEST_MISMATCH=" latestVersion)
+        CleanupUpdateStage()
+        QueueWebUiFlush(true)
+        return
+    }
+    CleanupUpdateStage()
+    State.updateCatalog := catalog
+    State.updateCatalogLatestVersion := catalog.Length ? latestVersion : ""
+    State.updateCatalogPhase := "ready"
+    State.updatePageStatus.Text := catalog.Length
+        ? "署名を確認できた公開版を選択できます"
+        : "切り替え可能な公開版はありません"
+    if !silent
+        State.statusLabel.Text := catalog.Length
+            ? "●  公開バージョン一覧を確認しました"
+            : "●  切り替え可能な公開版はありません"
+    RefreshUpdateUi()
+    QueueWebUiFlush(true)
+}
+
+BeginSelectedVersionInstall(version) {
+    global State, AppVersion
+    version := String(version)
+    if !IsSelectableAppVersion(version) || !UpdateCatalogHasVersion(version) {
+        State.updateCatalogPhase := "error"
+        State.updatePageStatus.Text := "確認済み一覧にないバージョンを拒否しました"
+        WriteDiagnostic("UPDATE_SELECT_NOT_VERIFIED=" version)
+        QueueWebUiFlush(true)
+        return false
+    }
+    if version = AppVersion {
+        State.updatePageStatus.Text := "v" version " は現在使用中です"
+        QueueWebUiFlush(true)
+        return false
+    }
+    if State.running || State.startInProgress || State.registrationActive
+        || State.updateOperation || State.updateApplying
+        return false
+    if !A_IsCompiled || !FileExist(State.updaterPath)
+        return false
+    try {
+        CleanupUpdateStage()
+        DirCreate State.updateRoot
+        stageName := FormatTime(, "yyyyMMdd-HHmmss") "-select-"
+            . DllCall("GetCurrentProcessId") "-" A_TickCount
+        State.updateStageDir := State.updateRoot "\" stageName
+        DirCreate State.updateStageDir
+        State.updateResultPath := State.updateStageDir "\select-result.txt"
+        State.updateVersion := version
+        try FileDelete State.updateResultPath
+        commandLine := QuoteCommandArg(State.updaterPath) . " select "
+            . QuoteCommandArg(State.updateResultPath) . " "
+            . QuoteCommandArg(version) . " " . QuoteCommandArg(State.updateStageDir)
+        Run commandLine,, "Hide", &childPid
+        State.updateOperation := "select"
+        State.updateCatalogPhase := "selecting"
+        State.updateSilent := false
+        State.updateProcessId := childPid
+        State.updateDeadline := MonotonicMs() + 60000
+        State.updatePollFn := PollUpdateOperation
+        SetTimer State.updatePollFn, 250
+        State.statusLabel.Text := "●  v" version " の署名を再確認中"
+        RefreshUpdateUi()
+        QueueWebUiFlush(true)
+        return true
+    } catch as err {
+        State.updateOperation := ""
+        State.updateCatalogPhase := "error"
+        State.updatePageStatus.Text := "バージョン切り替えを開始できませんでした"
+        WriteDiagnostic("UPDATE_SELECT_START_ERROR=" err.Message)
+        CleanupUpdateStage()
+        QueueWebUiFlush(true)
+        return false
+    }
+}
+
 PollUpdateOperation(*) {
     global State
 
@@ -8345,15 +8613,31 @@ PollUpdateOperation(*) {
         catch as err {
             FinishUpdateOperation()
             CleanupUpdateStage()
+            if operation = "catalog" || operation = "select" || operation = "download" {
+                State.updateCatalogPhase := "error"
+                State.updatePageStatus.Text := "更新結果を安全に読み取れませんでした"
+                RefreshUpdateUi()
+            }
             WriteDiagnostic("UPDATE_RESULT_ERROR=" err.Message)
             if !silent
                 MsgBox "更新結果を読み取れませんでした。", "アップデート", "Iconx"
+            QueueWebUiFlush(true)
             return
         }
-        FinishUpdateOperation()
+        ; select -> download and download -> apply are one transaction. Keep the
+        ; updateOperation lock while their result handler advances the pipeline,
+        ; so F8/UI Start cannot enter between two verified stages.
+        if operation = "select" || operation = "download"
+            FinishUpdateProcessKeepLock()
+        else
+            FinishUpdateOperation()
         try FileDelete State.updateResultPath
         if operation = "check"
             HandleUpdateCheckResult(result, silent)
+        else if operation = "catalog"
+            HandleUpdateCatalogResult(result, silent)
+        else if operation = "select"
+            HandleUpdateSelectResult(result)
         else if operation = "download"
             HandleUpdateDownloadResult(result)
         return
@@ -8371,6 +8655,12 @@ PollUpdateOperation(*) {
             MsgBox "更新サーバーから応答がありませんでした。`n時間をおいて再試行してください。",
                 "アップデート", "Icon!"
         }
+        if operation = "catalog" || operation = "select" || operation = "download" {
+            State.updateCatalogPhase := "error"
+            State.updatePageStatus.Text := "更新サーバーから応答がありませんでした"
+            RefreshUpdateUi()
+        }
+        QueueWebUiFlush(true)
     }
 }
 
@@ -8383,6 +8673,13 @@ FinishUpdateOperation() {
     if !State.running
         State.updateButton.Enabled := true
     RefreshUpdateUi()
+}
+
+FinishUpdateProcessKeepLock() {
+    global State
+    StopUpdatePollTimer()
+    State.updateProcessId := 0
+    State.updateDeadline := 0
 }
 
 StopUpdatePollTimer() {
@@ -8446,10 +8743,44 @@ HandleUpdateCheckResult(result, silent) {
     RefreshUpdateUi()
 }
 
-BeginUpdateDownload() {
+HandleUpdateSelectResult(result) {
+    global State
+    status := UpdaterValue(result, "Status")
+    message := UpdaterValue(result, "Message")
+    selectedVersion := UpdaterValue(result, "Version")
+    manifestPath := UpdaterValue(result, "ManifestPath")
+    signaturePath := UpdaterValue(result, "SignaturePath")
+    if status != "VERSION_SELECTED" || selectedVersion != State.updateVersion
+        || !FileExist(manifestPath) || !FileExist(signaturePath) {
+        FinishUpdateOperation()
+        State.updateCatalogPhase := "error"
+        State.updatePageStatus.Text := "選択したバージョンの署名を確認できませんでした"
+        State.statusLabel.Text := "●  バージョン切り替えを安全のため中止しました"
+        WriteDiagnostic("UPDATE_SELECT_ERROR requested=" State.updateVersion
+            " returned=" selectedVersion " status=" status " message=" message)
+        CleanupUpdateStage()
+        RefreshUpdateUi()
+        QueueWebUiFlush(true)
+        return
+    }
+    State.updateManifestPath := manifestPath
+    State.updateSignaturePath := signaturePath
+    State.updateNotesUrl := UpdaterValue(result, "NotesUrl")
+    State.updatePageStatus.Text := "v" State.updateVersion " の署名を確認しました"
+    WriteDiagnostic("UPDATE_SELECT_VERIFIED version=" State.updateVersion)
+    BeginUpdateDownload(true)
+}
+
+BeginUpdateDownload(fromSelection := false) {
     global State
 
-    if State.running || State.startInProgress || State.updateOperation
+    if State.running || State.startInProgress || State.registrationActive
+        || State.updateApplying
+        return
+    if fromSelection {
+        if State.updateOperation != "select"
+            return
+    } else if State.updateOperation
         return
     try {
         State.updateResultPath := State.updateStageDir "\download-result.txt"
@@ -8463,6 +8794,7 @@ BeginUpdateDownload() {
             . QuoteCommandArg(stagedExePath)
         Run commandLine,, "Hide", &childPid
         State.updateOperation := "download"
+        State.updateCatalogPhase := "downloading"
         State.updateSilent := false
         State.updateProcessId := childPid
         State.updateDeadline := MonotonicMs() + 180000
@@ -8486,8 +8818,12 @@ HandleUpdateDownloadResult(result) {
     global State
     status := UpdaterValue(result, "Status")
     message := UpdaterValue(result, "Message")
+    downloadedVersion := UpdaterValue(result, "Version")
     stagedPath := UpdaterValue(result, "StagedPath")
-    if status != "DOWNLOADED" || !stagedPath || !FileExist(stagedPath) {
+    if status != "DOWNLOADED" || downloadedVersion != State.updateVersion
+        || !stagedPath || !FileExist(stagedPath) {
+        FinishUpdateOperation()
+        State.updateCatalogPhase := "error"
         State.statusLabel.Text := "●  更新ファイルを検証できません"
         State.updatePageStatus.Text := "更新ファイルの検証に失敗しました"
         WriteDiagnostic("UPDATE_DOWNLOAD_ERROR=" message)
@@ -8496,6 +8832,7 @@ HandleUpdateDownloadResult(result) {
         return
     }
     if State.running {
+        FinishUpdateOperation()
         State.statusLabel.Text := "●  停止後にもう一度アップデートしてください"
         CleanupUpdateStage()
         return
@@ -8509,15 +8846,21 @@ HandleUpdateDownloadResult(result) {
             . QuoteCommandArg(stagedPath) . " " . QuoteCommandArg(A_ScriptFullPath)
         Run commandLine,, "Hide"
         State.updateApplying := true
+        State.updateOperation := "apply"
+        State.updateCatalogPhase := "applying"
         State.statusLabel.Text := "●  更新を適用して再起動します"
         Sleep 150
         ExitApp 0
     } catch as err {
         State.updateApplying := false
+        FinishUpdateOperation()
         CleanupUpdateStage()
+        State.updateCatalogPhase := "error"
         State.statusLabel.Text := "●  更新を適用できません"
         State.updatePageStatus.Text := "更新を適用できませんでした"
         WriteDiagnostic("UPDATE_APPLY_START_ERROR=" err.Message)
+        RefreshUpdateUi()
+        QueueWebUiFlush(true)
         MsgBox "更新を適用できませんでした。`n`n" err.Message,
             "アップデート", "Iconx"
     }
@@ -8565,6 +8908,8 @@ CleanupUpdateStage() {
     if StrLen(stagePath) <= StrLen(rootPath) + 8
         return
     knownFiles.Push(stagePath "\check-result.txt")
+    knownFiles.Push(stagePath "\catalog-result.txt")
+    knownFiles.Push(stagePath "\select-result.txt")
     knownFiles.Push(stagePath "\download-result.txt")
     knownFiles.Push(stagePath "\update-manifest.json")
     knownFiles.Push(stagePath "\update-manifest.sig")
@@ -8618,6 +8963,9 @@ StartMining(startMode := "", *) {
     ; 最初の開始がまだrunning=falseの間も必ず拒否されます。
     if !TryClaimStartOperation(&startToken)
         return
+    ; Fast washing is a launch choice, not a sticky setting. Normal Start/F8
+    ; always enters the ordinary path even if an older INI contains FastMode=1.
+    State.runFastWash := startMode = "fast-washing"
     if IsObject(LocalNav.dialog)
         try LocalNav.dialog.Hide()
     runInitializationOwned := false
@@ -8995,6 +9343,8 @@ StartMining(startMode := "", *) {
         FinishStartPreparation(startToken)
         if runInitializationOwned
             ReleaseFarmCallback()
+        if !State.running
+            State.runFastWash := false
     }
 }
 
@@ -9098,6 +9448,7 @@ StopMining(faultContext := 0, *) {
     State.workViewNoEffectCount := 0
     State.workViewDirection := Config.workViewMouseDirection
     State.targetPid := 0
+    State.runFastWash := false
     HideRuntimeStatusOverlay()
 
     if IsObject(State.timerFn) {

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Web.Script.Serialization;
 
 namespace AiMiner.UiHost
@@ -84,6 +85,11 @@ namespace AiMiner.UiHost
                     case "vehicle.toggle":
                         EnsureOnlyKeys(payload, "enabled");
                         values.Add(GetBoolean(payload, "enabled") ? "1" : "0");
+                        break;
+
+                    case "update.install":
+                        EnsureOnlyKeys(payload, "version");
+                        values.Add(GetStableVersion(payload, "version"));
                         break;
 
                     case "settings.save":
@@ -254,6 +260,11 @@ namespace AiMiner.UiHost
                     "washing.fast.toggle", new[] { "0" });
                 AssertRejected(@"{""type"":""action"",""action"":""washing.fast.start"",""payload"":{""enabled"":true}}");
                 AssertRejected(@"{""type"":""action"",""action"":""washing.fast.toggle"",""payload"":{}}");
+                AssertAction(@"{""type"":""action"",""action"":""update.install"",""payload"":{""version"":""9.1.15""}}",
+                    "update.install", new[] { "9.1.15" });
+                AssertRejected(@"{""type"":""action"",""action"":""update.install"",""payload"":{""version"":""9.1.15-beta""}}");
+                AssertRejected(@"{""type"":""action"",""action"":""update.install"",""payload"":{""version"":""../9.1.15""}}");
+                AssertRejected(@"{""type"":""action"",""action"":""update.install"",""payload"":{""version"":""9.1.15"",""url"":""https://example.invalid""}}");
                 const string settingsFixture = @"{""type"":""action"",""action"":""settings.save"",""payload"":{""startHotkey"":""F8"",""stopHotkey"":""F9"",""backgroundMode"":true,""hideWhileRunning"":false,""correctionEnabled"":true,""autoEat"":true,""foodKey"":1,""autoCheckUpdates"":true,""minimumFreeWeight"":2000,""storageTriggerPercent"":90,""estimatedRewardWeight"":2000,""minimumFreeSlots"":1,""storageMaxRetries"":3,""farmWatchdogMs"":45000,""targetLostRecoveryMs"":12000,""debugOverlay"":false}}";
                 AssertAction(settingsFixture,
                     "settings.save", new[] { "F8", "F9", "1", "0", "1", "1", "1", "1", "2000",
@@ -362,6 +373,16 @@ namespace AiMiner.UiHost
             for (int i = 0; i < allowed.Length; i++)
                 if (String.Equals(value, allowed[i], StringComparison.Ordinal)) return value;
             throw new FormatException("Field is outside its allowlist: " + key);
+        }
+
+        private static string GetStableVersion(Dictionary<string, object> values, string key)
+        {
+            string value = GetSafeString(values, key, 32);
+            if (!Regex.IsMatch(value,
+                @"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$",
+                RegexOptions.CultureInvariant))
+                throw new FormatException("Version must be a stable semantic version.");
+            return value;
         }
 
         private static bool GetBoolean(Dictionary<string, object> values, string key)

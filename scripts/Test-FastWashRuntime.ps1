@@ -11,7 +11,9 @@ $result = Join-Path $out 'fast-result.txt'
 if (Test-Path -LiteralPath $result) { Remove-Item -LiteralPath $result }
 $fixture = Join-Path $root 'scripts/ui-tests/FastWashHarness.ahk'
 $p = Start-Process -FilePath $ahk -ArgumentList @('/ErrorStdOut',('"'+$fixture+'"'),('"'+$result+'"')) -PassThru -RedirectStandardError (Join-Path $out 'stderr.txt') -RedirectStandardOutput (Join-Path $out 'stdout.txt')
+[void]$p.Handle
 if (-not $p.WaitForExit(15000)) { $p.Kill(); throw 'Production fast wash helper did not cancel or finish within the test budget.' }
+$p.WaitForExit()
 $p.Refresh()
 if (-not (Test-Path -LiteralPath $result)) {
     Get-Content (Join-Path $out 'stderr.txt'), (Join-Path $out 'stdout.txt') -ErrorAction SilentlyContinue
@@ -19,4 +21,6 @@ if (-not (Test-Path -LiteralPath $result)) {
 }
 $text = Get-Content -LiteralPath $result -Raw -Encoding UTF8
 Write-Output $text
-if ($p.ExitCode -ne 0 -or $text -notmatch '^FAST_WASH_RUNTIME_PASS') { throw 'Fast-wash runtime regression failed.' }
+if ($p.ExitCode -ne 0 -or $text -notmatch '^FAST_WASH_RUNTIME_PASS') {
+    throw "Fast-wash runtime regression failed (exit=$($p.ExitCode), evidenceMatch=$($text -match '^FAST_WASH_RUNTIME_PASS'))."
+}

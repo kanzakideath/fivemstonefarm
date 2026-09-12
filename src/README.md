@@ -1,10 +1,10 @@
-# ソース配置 v9.1.17
+# ソース配置 v9.1.18
 
 - `mining-auto.ahk`: 状態管理、設定、ホットキー、採掘処理、ローカル車両登録・探索・収納、更新制御を担当するバックエンドです。
 - `ui-web/`: Framework7のiOSテーマを明示した完全オフラインUIです。概要・車両・STONE・設定・アップデートを提供し、`npm ci` と `npm run build` で `www/` を生成します。
 - `ui-host/`: .NET Framework WinForms上のWebView2ホストです。ローカル資産だけを表示し、PID・HWND・セッションを照合したWM_COPYDATAでAHKと通信します。Stone Metagameの公開APIを直列ワーカーへ分離し、Farm処理を待たせずに処理します。
 - `background-bridge/CdpBridge.cs`: FiveMのox_target・ox_inventory NUIを構造的に検出し、対象操作、容量取得、ストレージ照合、差分収納、境界付き移動・視点操作を行います。
-- `updater/Updater.cs`: 固定GitHub Releaseの署名・サイズ・SHA-256を検証して自己更新します。
+- `updater/Updater.cs`: 固定GitHub Releaseの署名・サイズ・SHA-256を検証し、署名確認済みの対応版一覧から選択して自己更新します。
 - `assets/`: AHKへ埋め込む検出用アセットです。
 - `../sidecar/stone-metagame/`: 統合元の検証済みStone Metagameです。ドメイン、抽選、Profile、状態schemaを本体側で再実装せず、backendをリンクし、UIとカタログを一致検証して取り込みます。
 

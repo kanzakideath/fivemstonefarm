@@ -17,16 +17,17 @@ try {
     Require(!FastWashStartAvailable(), "update blocks quick-start")
     State.updateOperation := "", State.startInProgress := true
     Require(!FastWashStartAvailable(), "double start blocked")
-    Config.actionMode := "mining", Config.fastWashMode := 0
+    Config.actionMode := "mining", State.runFastWash := true
     Require(ConfigureFastWashStart(7), "configure claimed start")
-    Require(Config.actionMode = "washing" && Config.fastWashMode = 1
+    Require(Config.actionMode = "washing" && State.runFastWash
+        && !Config.HasOwnProp("fastWashMode")
         && SaveCalls = 1 && Config.vehicleStorageEnabled = 1
-        && Config.autoEat = 1 && State.actionControl.Value = 2, "atomic quick selection preserves storage and eating")
+        && Config.autoEat = 1 && State.actionControl.Value = 2, "per-run quick selection preserves storage and eating")
     Reset()
     State.running := false, State.startInProgress := true
-    Config.actionMode := "gold", Config.fastWashMode := 0, ThrowSave := true
+    Config.actionMode := "gold", State.runFastWash := true, ThrowSave := true
     Require(!ConfigureFastWashStart(7), "disk failure blocks start")
-    Require(Config.actionMode = "gold" && Config.fastWashMode = 0, "failed save rolls selection back")
+    Require(Config.actionMode = "gold" && State.runFastWash, "failed save rolls only the persisted action selection back")
     Require(!ConfigureFastWashStart(8), "stale start token rejected")
 
     Reset()
@@ -66,12 +67,12 @@ try {
     Require(MaybeHandleFastWashCapacity(1) && StorageCalls = 0, "in-flight completion preserved")
     Reset()
     State.running := false
-    Require(MaybeHandleFastWashCapacity(1) && StorageCalls = 0, "F9 never resumes old run")
+    Require(!MaybeHandleFastWashCapacity(1) && StorageCalls = 0, "F9 clears eligibility and never resumes old run")
     Reset()
     Config.vehicleStorageEnabled := 0
     Require(!MaybeHandleFastWashCapacity(1), "storage opt-out remains opt-out")
     Reset()
-    Config.fastWashMode := 0
+    State.runFastWash := false
     Require(!MaybeHandleFastWashCapacity(1), "ordinary mode unchanged")
 
     Reset()
@@ -98,12 +99,13 @@ Reset() {
     snapshot := {confirmedAt: Clock, revision: 1, weight: 100, items: "fixture"}
     State := {running: true, generation: 1, registrationActive: false, startInProgress: false
         , stopInProgress: false, activeFarmCallbacks: 0, updateOperation: "", runMode: "washing"
+        , runFastWash: true
         , confirmedInventory: snapshot, inventorySnapshotRevision: 1, inventoryBaselineWeight: 100
         , pendingFarmAttempt: {generation: 1, actionMode: "washing", clicked: false, before: snapshot}
         , actionCompletionPending: false, farmState: "FARMING", nextCapacityCheckAt: Clock + 3000
         , serverEpoch: "fixture", lastRawStoneCount: -1, statusLabel: {Text: ""}
-        , actionControl: FixtureControl(), fastWashControl: {Value: 0}}
-    Config := {actionMode: "washing", fastWashMode: 1, vehicleStorageEnabled: 1, autoEat: 1, rawStoneItemName: "raw"}
+        , actionControl: FixtureControl()}
+    Config := {actionMode: "washing", vehicleStorageEnabled: 1, autoEat: 1, rawStoneItemName: "raw"}
     LocalNav := {busy: false, requestActive: false}
     SaveCalls := 0, ThrowSave := false, StorageCalls := 0, Scheduled := 0, Events := [], StorageReason := ""
 }
@@ -123,8 +125,8 @@ IsCurrentRun(g) {
     return State.running && g = State.generation
 }
 FastWashModeEnabled() {
-    global Config, State
-    return Config.fastWashMode && State.runMode = "washing"
+    global State
+    return State.running && State.runFastWash && State.runMode = "washing"
 }
 AutomationStartAllowed(r, reg, starting, stopping, callbacks) {
     return !r && !reg && !starting && !stopping && callbacks = 0
