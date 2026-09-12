@@ -10,17 +10,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Show relevant source locations
+      - name: Show exact fast-wash paths
         shell: bash
         run: |
           set -euo pipefail
-          echo '--- mining-auto ---'
-          grep -nE 'WaitStationaryTaskReady|try-washing|TryBackground|RunBackgroundBridgeCancelable|washCycleMs|washReadinessGraceMs|vehicleStorageEnabled|LoadSettings|SaveSettings|ApplySettings|settings' src/mining-auto.ahk | head -220 || true
-          echo '--- stationary-only ---'
-          nl -ba src/stationary-only.ahk | sed -n '1,280p'
-          echo '--- ui app ---'
-          grep -nE 'ForwardCorrection|VehicleStorage|washing|settings|route|stationary|fast' src/ui-web/src/app.js | head -260 || true
-          echo '--- ui html ---'
-          grep -nE 'ForwardCorrection|VehicleStorage|washing|洗浄|荷台|設定|fast' src/ui-web/src/index.html | head -260 || true
-          echo '--- bridge ---'
-          grep -nE 'ProbeStationaryTaskReadyAsync|WashTaskReadiness|ProbeWashTaskReadyAsync|stationary-task-ready|WASH_STORAGE|STORAGE_ONLY|WashTargetExpression' src/background-bridge/CdpBridge.cs | head -260 || true
+          echo '--- action functions ---'
+          grep -nE '^WashAttemptBackground|^MineAttempt|^GoldAttemptBackground|BackgroundAction|try-washing|WaitStationaryTaskReady|HandleFarmTargetMissing' src/mining-auto.ahk | head -300 || true
+          echo '--- attempt neighborhood ---'
+          for n in $(grep -nE '^WashAttemptBackground|^MineAttempt|^GoldAttemptBackground' src/mining-auto.ahk | cut -d: -f1); do a=$((n-30)); [ $a -lt 1 ] && a=1; b=$((n+180)); echo "### $a-$b"; sed -n "${a},${b}p" src/mining-auto.ahk; done
+          echo '--- web payload backend ---'
+          sed -n '2320,2520p' src/mining-auto.ahk
+          sed -n '6620,6890p' src/mining-auto.ahk
+          echo '--- web frontend settings ---'
+          sed -n '130,180p' src/ui-web/src/app.js
+          sed -n '570,640p' src/ui-web/src/app.js
+          sed -n '1030,1130p' src/ui-web/src/app.js
+          sed -n '328,440p' src/ui-web/src/index.html
+          echo '--- bridge stationary readiness ---'
+          sed -n '3080,3240p' src/background-bridge/CdpBridge.cs
