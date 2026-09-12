@@ -1,0 +1,109 @@
+name: Publish v9.1.11 updater compatibility fix
+on:
+  push:
+    branches: [release/v9.1.11-publish]
+    paths: [.github/workflows/publish-v9.1.11-once.yml]
+permissions:
+  contents: write
+concurrency:
+  group: publish-v9.1.11-verified
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    environment: release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: a4aac73eb97b8f4d54fc7dd2d36576654eb3f483
+          fetch-depth: 0
+      - name: Verify exact source and unchanged release channel
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $expected='a4aac73eb97b8f4d54fc7dd2d36576654eb3f483'
+          if ((& git rev-parse HEAD).Trim() -ne $expected) {throw 'Unexpected source.'}
+          $main=gh api "repos/$env:GH_REPO/branches/main" --jq '.commit.sha'
+          if($LASTEXITCODE -ne 0 -or $main.Trim() -ne $expected){throw 'Main moved.'}
+          $latest=gh api "repos/$env:GH_REPO/releases/latest" --jq '.tag_name'
+          if($LASTEXITCODE -ne 0 -or $latest.Trim() -ne 'v9.1.10'){throw 'Latest release changed.'}
+          $refs=gh api "repos/$env:GH_REPO/git/matching-refs/tags/v9.1.11"
+          if($LASTEXITCODE -ne 0){throw 'Could not inspect tags.'}
+          if(@($refs | ConvertFrom-Json | Where-Object {$_.ref -eq 'refs/tags/v9.1.11'}).Count -ne 0){throw 'Never overwrite an existing tag.'}
+          New-Item -ItemType Directory -Force artifacts/update-release | Out-Null
+          $expected | Set-Content artifacts/update-release/SOURCE.txt
+      - name: Full build and signed package, including detached validation regression
+        shell: pwsh
+        env:
+          UPDATE_SIGNING_KEY_PKCS8_B64: ${{ secrets.UPDATE_SIGNING_KEY_PKCS8_B64 }}
+        run: |
+          $ErrorActionPreference='Stop'
+          Start-Transcript artifacts/update-release/build.txt
+          try { ./scripts/Make-Release.ps1 -Version 9.1.11; ./scripts/Verify-Release.ps1 -ArtifactDirectory artifacts/v9.1.11 } finally {Stop-Transcript}
+      - name: Actual released old updater must apply and restart the signed new EXE
+        shell: pwsh
+        run: ./scripts/Test-UpdateApply.ps1 -ArtifactDirectory artifacts/v9.1.11 -OutputDirectory artifacts/update-release/actual-apply
+      - name: Create exact new tag and upload draft only
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $latest=gh api "repos/$env:GH_REPO/releases/latest" --jq '.tag_name'
+          if($LASTEXITCODE -ne 0 -or $latest.Trim() -ne 'v9.1.10'){throw 'Release changed before tagging.'}
+          git tag v9.1.11 a4aac73eb97b8f4d54fc7dd2d36576654eb3f483
+          if($LASTEXITCODE -ne 0){throw 'Tag creation failed.'}
+          git push origin refs/tags/v9.1.11
+          if($LASTEXITCODE -ne 0){throw 'Tag push failed.'}
+          $assets=@('ai-miner-win-x64.exe','AI-Miner-v9.1.11.zip','update-manifest.json','update-manifest.sig','SHA256SUMS.txt') | ForEach-Object {Join-Path $PWD "artifacts/v9.1.11/$_"}
+          foreach($asset in $assets){if(-not(Test-Path $asset) -or (Get-Item $asset).Length -le 0){throw 'Missing release asset.'}}
+          gh release create v9.1.11 @assets --repo $env:GH_REPO --verify-tag --draft --title 'AI採掘機 v9.1.11' --notes-file docs/RELEASE_v9.1.11.md
+          if($LASTEXITCODE -ne 0){throw 'Draft upload failed; do not publish.'}
+      - name: Re-download and re-verify signature and bytes before publishing Latest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $download=Join-Path $PWD 'artifacts/downloaded-v9.1.11'
+          New-Item -ItemType Directory $download | Out-Null
+          gh release download v9.1.11 --repo $env:GH_REPO --dir $download
+          if($LASTEXITCODE -ne 0){throw 'Release download verification failed.'}
+          ./scripts/Verify-Release.ps1 -ArtifactDirectory $download
+          foreach($file in Get-ChildItem $download -File){
+            $original=Join-Path $PWD "artifacts/v9.1.11/$($file.Name)"
+            if(-not(Test-Path $original) -or (Get-FileHash $file.FullName).Hash -ne (Get-FileHash $original).Hash){throw 'Uploaded bytes differ.'}
+          }
+          $latest=gh api "repos/$env:GH_REPO/releases/latest" --jq '.tag_name'
+          if($LASTEXITCODE -ne 0 -or $latest.Trim() -ne 'v9.1.10'){throw 'Another release appeared; leave draft unchanged.'}
+          gh release edit v9.1.11 --repo $env:GH_REPO --draft=false --latest
+          if($LASTEXITCODE -ne 0){throw 'Publication failed.'}
+          $text=gh api "repos/$env:GH_REPO/releases/latest"
+          if($LASTEXITCODE -ne 0){throw 'Could not verify Latest.'}
+          $release=$text|ConvertFrom-Json
+          if($release.tag_name -ne 'v9.1.11' -or $release.draft -or $release.prerelease -or $release.assets.Count -ne 5){throw 'Latest metadata mismatch.'}
+          $text|Set-Content artifacts/update-release/published.json -Encoding utf8
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: v9.1.11-release-validation
+          path: |
+            artifacts/update-release/
+            artifacts/update-startup/
+            build/staging/*.txt
+            build/staging/*.log
+          retention-days: 14
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: success()
+        with:
+          name: v9.1.11-published-assets
+          path: artifacts/downloaded-v9.1.11/
+          retention-days: 14
+          if-no-files-found: error
