@@ -17,11 +17,13 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force build/staging,artifacts/support-export | Out-Null
-          $csc=Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
-          & $csc /nologo /target:winexe /optimize+ /warnaserror+ /reference:System.Web.Extensions.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll /out:build/staging/Diagnostics.exe src/diagnostics/Diagnostics.cs
+          $csc=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          $source=Join-Path $PWD 'src\diagnostics\Diagnostics.cs'
+          $binary=Join-Path $PWD 'build\staging\Diagnostics.exe'
+          & $csc /nologo /target:winexe /optimize+ /warnaserror+ /reference:System.Web.Extensions.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll /out:$binary $source
           if ($LASTEXITCODE -ne 0) { throw 'Diagnostics compile failed.' }
           $result=Join-Path $PWD 'artifacts/support-export/self-test.txt'
-          $process=Start-Process -FilePath (Join-Path $PWD 'build/staging/Diagnostics.exe') -ArgumentList @('self-test',"`"$result`"") -PassThru
+          $process=Start-Process -FilePath $binary -ArgumentList @('self-test',"`"$result`"") -PassThru
           if(-not $process.WaitForExit(15000)){$process.Kill();throw 'Exporter tests timed out.'}
           if($process.ExitCode -ne 0 -or (Get-Content $result -Raw).Trim() -ne 'SELFTEST OK'){throw 'Exporter self-tests failed.'}
       - name: Invoke real export with private canaries and a partial journal
