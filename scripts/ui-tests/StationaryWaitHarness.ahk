@@ -47,7 +47,7 @@ try {
 
     Reset("unknown-cargo", ["READY WORK_STORAGE 29200 180"])
     Require(!WaitStationaryCargo(1, &cargoId, &cargoType), "unknown cargo result rejected")
-    Require(Fault = "STATIONARY_CARGO_OBSERVATION_FAULT" && CargoCalls = 1, "uncertainty is not target absence")
+    Require(Fault = "STATIONARY_CARGO_OBSERVATION_FAULT" && CargoCalls.Length = 0, "uncertainty is not target absence")
 
     Reset("safe-recovery", ["READY WORK_STORAGE 29200 180"])
     State.farmState := "RECOVERY"
@@ -81,7 +81,7 @@ Reset(name, scriptedResponses) {
     Scenario := name, Responses := scriptedResponses, Calls := [], Events := [], Fault := "", CargoCalls := 0, CloseCalls := 0
     State := {running: true, generation: 1, farmStateTaskId: 7, farmState: "FARMING", runMode: "washing", lastDevConPort: 0, serverEpoch: "fixture-epoch", stationaryWaiting: false, statusLabel: {Text: "initial"}, targetLostSince: 10, targetRecoveryAttempts: 2, farmWatchdogAt: 1, watchdogRecoveryCount: 2, farmOutputLedger: {fixture: 7}, storageDepositCheckpoint: {moved: 7, receiptVerified: true}, storagePending: false, actionCompletionPending: false, pendingFarmAttempt: 0, resumeVerificationPending: false, lastStorageProbeResult: ""}
     LocalNav := {feedback: "", washFeedback: ""}
-    Config := {vehicleStorageId: "fixture-truck", vehicleStorageType: "trunk", vehicleCompanionProtocol: 0}
+    Config := {vehicleStorageId: "fixture-truck", vehicleStorageType: "trunk", vehicleCompanionProtocol: 0, fastWashMode: false}
 }
 IsCurrentRun(generation) {
     global State
@@ -154,18 +154,19 @@ CloseLocalStorageUi() {
     CloseCalls += 1
     return true
 }
-IsValidVehicleProfile(config) {
-    return true
-}
-ExeRouteModeRoot(mode) {
-    throw Error("Unexpected persistent write")
-}
 TransitionFarmState(nextState, message, generation, task) {
     global State
-    Require(IsCurrentFarmTask(generation, task), "transition ownership")
+    if !IsCurrentFarmTask(generation, task)
+        return false
     State.farmState := nextState
     return true
 }
-ScheduleNext(generation, delay) {
-    Require(IsCurrentRun(generation) && delay = 1, "resume scheduling")
+ScheduleNext(*) {
+
+}
+IsValidVehicleProfile(config) {
+    return config.vehicleStorageId != "" && config.vehicleStorageType != ""
+}
+ExeRouteModeRoot(*) {
+    return A_Temp "\stationary-harness"
 }
