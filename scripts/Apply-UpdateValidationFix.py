@@ -29,6 +29,10 @@ for name in ['README.md','src/README.md','docs/AI採掘機_使い方.txt','confi
     b = p.read_bytes()
     if b'9.1.10' not in b: raise RuntimeError('Missing release marker: '+name)
     p.write_bytes(b.replace(b'9.1.10', b'9.1.11'))
+p = root/'src/ui-web/src/app.js'
+b = p.read_bytes()
+if b.count(b"version: '9.1.10'") != 1: raise RuntimeError('Unexpected deterministic UI fixture')
+p.write_bytes(b.replace(b"version: '9.1.10'", b"version: '9.1.11'"))
 p = root/'scripts/Test-UpdateStartup.ps1'
 s = p.read_text(encoding='utf-8')
 old = '[Storage]`nMinimumFreeWeight=1234`nTriggerPercent=55`n'
