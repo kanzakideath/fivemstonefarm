@@ -9,7 +9,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "9.1.14"
+global AppVersion := "9.1.15"
 ;@Ahk2Exe-SetVersion %A_PriorLine~U)^.*"([^"]+)".*$~$1%
 processId := DllCall("GetCurrentProcessId")
 global LocalNav := {busy: false, pid: 0, cancel: "", taskId: 0, dialog: 0, guide: 0, feedback: "", requestActive: false, cycle: 0, lastBatchKey: "", lastActionKey: ""}
@@ -49,6 +49,7 @@ FileInstall "AI採掘機_Updater.exe", updaterHelperPath, true
 #Include exe-route-navigation.ahk
 #Include wash-position.ahk
 #Include nearby-wash.ahk
+#Include stationary-only.ahk
 InitExeRouteAssets()
 settingsPath := isUiTestRun || isValidationRun
     ? A_Temp "\ai-miner-ui-test-" testRunId ".ini"
@@ -64,7 +65,8 @@ updateSettingsSchema := ReadIntegerSetting(settingsPath, "Updates", "Schema", 0,
 
 global Config := {
     actionMode: ReadActionMode(settingsPath),
-    backgroundMode: ReadIntegerSetting(settingsPath, "General", "BackgroundMode", 1, 0, 1),
+    backgroundMode: 1, ; stationary UI adapter only
+    retiredBackgroundMode: ReadIntegerSetting(settingsPath, "General", "BackgroundMode", 1, 0, 1),
     hideWhileRunning: ReadIntegerSetting(settingsPath, "General", "HideWhileRunning", 1, 0, 1),
     startHotkey: ReadTextSetting(settingsPath, "Controls", "StartHotkey", "F8"),
     stopHotkey: ReadTextSetting(settingsPath, "Controls", "StopHotkey", "F9"),
@@ -104,14 +106,14 @@ global Config := {
     backgroundFirstEatDelayMs: ReadIntegerSetting(settingsPath, "Eating", "BackgroundFirstEatDelayMs", 60000, 15000, 900000),
     backgroundEatIntervalMs: ReadIntegerSetting(settingsPath, "Eating", "BackgroundEatIntervalMs", 480000, 120000, 1800000),
     failedEatRetryMs: ReadIntegerSetting(settingsPath, "Eating", "FailedEatRetryMs", 30000, 10000, 300000),
-    workViewLock: ReadIntegerSetting(settingsPath, "ViewLock", "Enabled", 1, 0, 1),
+    workViewLock: 0, ; retired by stationary-only policy
     workViewDownPulseMs: ReadIntegerSetting(settingsPath, "ViewLock", "DownPulseMs", 450, 100, 1500),
     workViewIntervalMs: ReadIntegerSetting(settingsPath, "ViewLock", "ReapplyIntervalMs", 4000, 1500, 30000),
     workViewMouseStep: ReadIntegerSetting(settingsPath, "ViewLock", "MouseStep", 24, 4, 80),
     workViewMouseDirection: ReadViewDirectionSetting(settingsPath),
     washCycleMs: ReadIntegerSetting(settingsPath, "Washing", "CycleMs", 9000, 7000, 20000),
     washReadinessGraceMs: ReadIntegerSetting(settingsPath, "Washing", "ReadinessGraceMs", 7000, 5500, 12000),
-    washForwardCorrection: ReadIntegerSetting(settingsPath, "Washing", "ForwardCorrection", 1, 0, 1),
+    washForwardCorrection: 0, ; retired by stationary-only policy
     washForwardPulseMs: ReadIntegerSetting(settingsPath, "Washing", "ForwardPulseMs", 100, 50, 250),
     washForwardSettleMs: ReadIntegerSetting(settingsPath, "Washing", "ForwardSettleMs", 250, 50, 3000),
     ; FiveM keeps applying the washing animation's backward root motion for about
@@ -121,7 +123,7 @@ global Config := {
     rawStoneItemName: ReadTextSetting(settingsPath, "Washing", "RawStoneItem", ""),
     washRefillMaximum: ReadIntegerSetting(settingsPath, "Washing", "RefillMaximum", 1000000, 1, 1000000),
     goldCycleMs: ReadIntegerSetting(settingsPath, "GoldPanning", "CycleMs", 6000, 4000, 15000),
-    goldRecoveryEnabled: ReadIntegerSetting(settingsPath, "GoldPanning", "RecoveryEnabled", 1, 0, 1),
+    goldRecoveryEnabled: 0, ; retired by stationary-only policy
     goldRecoveryAfterMs: ReadIntegerSetting(settingsPath, "GoldPanning", "RecoveryAfterMs", 12000, 8000, 60000),
     goldRecoveryPulseMs: ReadIntegerSetting(settingsPath, "GoldPanning", "RecoveryPulseMs", 150, 150, 250),
     goldRecoverySettleMs: ReadIntegerSetting(settingsPath, "GoldPanning", "RecoverySettleMs", 300, 100, 3000),
@@ -443,6 +445,8 @@ if HasCommandLineArgument("--history-import-self-test") {
 
 ; コンパイル前後の構文・埋め込み画像チェック用です。
 if isValidationRun {
+    if !ValidateStationaryOnlyPolicy()
+        ExitApp(159)
     try FileAppend "VALIDATION_PHASE proofs " A_TickCount "`n", "**", "UTF-8-RAW"
     if !ValidateStorageCycleProof() || !ValidateStationaryWorkflow() || !ValidateNearbyWashRecovery() || !ValidateNearbyWashService() || !ValidateSupportDiagnostics() {
         DeleteExtractedTemplates()
@@ -2472,9 +2476,9 @@ ApplyWebUiSettings(parts) {
     Config.stopHotkey := parts[5]
     Config.backgroundMode := parts[6] = "1"
     Config.hideWhileRunning := parts[7] = "1"
-    Config.washForwardCorrection := parts[8] = "1"
-    Config.goldRecoveryEnabled := parts[8] = "1"
-    Config.workViewLock := parts[8] = "1"
+    Config.washForwardCorrection := false ; stationary-only policy
+    Config.goldRecoveryEnabled := false ; stationary-only policy
+    Config.workViewLock := false ; stationary-only policy
     Config.autoEat := parts[9] = "1"
     try Config.foodKey := Integer(parts[10])
     Config.autoCheckUpdates := parts[11] = "1"
@@ -6278,7 +6282,7 @@ ConfigureTrayMenu() {
     A_TrayMenu.Add("AI採掘機を開く", ShowMainWindow)
     A_TrayMenu.Add()
     A_TrayMenu.Add("自動操作を開始 / 停止", ToggleMining)
-    A_TrayMenu.Add("自動収納のルート設定", OpenExeRouteSettings)
+    A_TrayMenu.Add("荷台前の設定・自動再開", OpenExeRouteSettings)
     A_TrayMenu.Add("キー・動作設定", ShowSettings)
     A_TrayMenu.Add("不具合の目印を記録", SupportMarkProblem)
     A_TrayMenu.Add("診断ZIPを保存（停止後）", ExportSupportDiagnostics)
@@ -6331,6 +6335,11 @@ UpdateActionUi() {
         State.countLabel.Text := "採掘回数`n" State.successes
         State.mealLabel.Text := "食事回数`n" State.meals
         State.taglineLabel.Text := "画面を奪わず、石の再出現を見て採掘します"
+    }
+    if StationaryOnlyEnabled() {
+        State.taglineLabel.Text := "荷台前の両操作を確認し、移動・視点入力なしで続けます"
+        if actionMode != "mining"
+            State.mealLabel.Text := "自動移動（なし）`n0"
     }
 }
 
@@ -6405,7 +6414,7 @@ UpdateRuntimeStatusOverlay(*) {
         State.lastInventoryMaxWeight > 0, State.lastInventoryFreeWeight,
         State.storageTrips)
     if State.runMode = "washing"
-        meta .= Config.washForwardCorrection ? " | 前進補正ON" : " | 前進補正OFF"
+        meta .= " | 移動入力禁止"
     now := MonotonicMs()
     watchdogAge := State.farmWatchdogAt
         ? Max(0, now - State.farmWatchdogAt) : 0
@@ -6555,9 +6564,9 @@ RuntimeStatusOverlayCompactStatus(rawStatus, phase := "") {
 
 RuntimeStatusOverlayPhaseLabel(phase) {
     return phase = "capacity_check" ? "所持品確認中"
-        : phase = "find_registered_vehicle" ? "車両へ移動中"
+        : phase = "find_registered_vehicle" ? "現在位置の荷台を確認中"
         : phase = "depositing" ? "収納中"
-        : phase = "return_to_work" ? "作業地点へ復帰中"
+        : phase = "return_to_work" ? "同じ位置で作業を再確認"
         : phase = "priming_inventory" ? "所持品準備中"
         : phase = "eating" ? "食事中"
         : phase = "preparing" ? "準備中"
@@ -8540,6 +8549,14 @@ RunUpdaterCapabilities() {
 
 StartMining(*) {
     global State, Config, LocalNav
+    ; Legacy INI/UI settings cannot reactivate movement, camera control or
+    ; foreground pixel macros. Storage/eating opt-ins remain user settings.
+    if StationaryOnlyEnabled() {
+        Config.backgroundMode := 1
+        Config.washForwardCorrection := 0
+        Config.goldRecoveryEnabled := 0
+        Config.workViewLock := 0
+    }
 
     ; UI・トレイ・設定可能なショートカットのどこから呼ばれても、
     ; 車両登録・通常run・別の開始preflightと同時実行しません。
@@ -8658,6 +8675,7 @@ StartMining(*) {
     if !IsStartOperationCurrent(startToken)
         return
     State.running := true
+    State.stationaryWaiting := false
     State.startInProgress := false
     State.startRequestToken := 0
     State.runMode := Config.actionMode
@@ -8769,7 +8787,7 @@ StartMining(*) {
     UpdateActionUi()
     State.statusLabel.Text := "●  準備中"
     State.connectionLabel.Text := "FiveM: 接続済み"
-    State.modeLabel.Text := State.runMode = "washing" && Config.washForwardCorrection
+    State.modeLabel.Text := StationaryOnlyEnabled() ? "荷台前専用：移動・視点入力なし／一時不在は自動再開待ち" : State.runMode = "washing" && Config.washForwardCorrection
         ? "石洗いの画面補正: FiveMを前面にしてください"
         : Config.backgroundMode
             ? "バックグラウンド操作: オン（徒歩・画面補正時は前面が必要）"
@@ -10818,7 +10836,7 @@ InitializeLocalVehicleRun(expectedGeneration) {
             . Config.rawStoneItemName . " count=0")
         return true
     }
-    workTargetPresent := ProbeWorkTarget(State.runMode, expectedGeneration)
+    workTargetPresent := StationaryOnlyEnabled() ? WaitStationaryTaskReady(expectedGeneration) : ProbeWorkTarget(State.runMode, expectedGeneration)
     if !IsCurrentRun(expectedGeneration)
         return false
     if !workTargetPresent {
@@ -11117,10 +11135,17 @@ RefillWashingInputAtStorage(expectedGeneration, currentInfo, &afterInfo,
             &fatalFailure, "already_at_target")
     }
 
-    Loop Config.storageMaxRetries {
+    Loop {
+        if !StationaryOnlyEnabled() && A_Index > Config.storageMaxRetries
+            break
         if !IsCurrentRun(expectedGeneration)
             return false
         refillAttempt := A_Index
+        if StationaryOnlyEnabled() && !ValidateServerEpochCheckpoint(expectedGeneration, "stationary_refill_wait") {
+            fatalFailure := true
+            failureMessage := "補充待機中に接続が変わりました。新しい接続へ要求を再送しません"
+            return false
+        }
         if refillAttempt > 1 {
             liveResult := RunBackgroundBridgeCancelable(expectedGeneration,
                 "inventory-snapshot")
@@ -11129,7 +11154,10 @@ RefillWashingInputAtStorage(expectedGeneration, currentInfo, &afterInfo,
             if !ParseInventorySnapshot(liveResult, &liveInfo) {
                 WriteDiagnostic("WASH_REFILL_REOBSERVE_ERROR retry="
                     . refillAttempt . " result=" . DiagnosticToken(liveResult))
-                Sleep 180
+                if StationaryOnlyEnabled() {
+                    if !StationaryPause(expectedGeneration, State.farmStateTaskId, "補充前の所持品再確認待ち", refillAttempt)
+                        return false
+                } else Sleep 180
                 continue
             }
             liveCount := InventorySpecNameCount(liveInfo.items,
@@ -11260,6 +11288,12 @@ RefillWashingInputAtStorage(expectedGeneration, currentInfo, &afterInfo,
                     ? "source_empty_after_partial"
                     : "capacity_after_partial")
         }
+        if errorKind = "SOURCE_EMPTY" && StationaryOnlyEnabled() {
+            ; Definite zero movement only. A sent/uncertain transfer never reaches here.
+            if !StationaryPause(expectedGeneration, State.farmStateTaskId, "荷台の未洗浄石補充待ち", Max(5, refillAttempt))
+                return false
+            continue
+        }
         if errorKind = "SOURCE_EMPTY" {
             failureMessage := "車両ストレージに未洗浄の石がありません"
             fatalFailure := true
@@ -11290,6 +11324,8 @@ RefillWashingInputAtStorage(expectedGeneration, currentInfo, &afterInfo,
             ; command still re-observes the exact accounted total first.
             Sleep 180
         }
+        if StationaryOnlyEnabled() && !StationaryPause(expectedGeneration, State.farmStateTaskId, "転送前の一時エラー・再確認待ち", refillAttempt)
+            return false
     }
     return false
 }
@@ -11326,9 +11362,9 @@ RunLocalVehicleStorageCycle(expectedGeneration, reuseStoragePose := false) {
         return
     }
 
-    TransitionFarmState("LOCATING_TRUCK", "登録した往路で荷台へ移動",
+    TransitionFarmState("LOCATING_TRUCK", "現在位置の登録荷台を確認",
         expectedGeneration, 0, true)
-    State.statusLabel.Text := "登録ルートで荷台への徒歩移動を開始します"
+    State.statusLabel.Text := "同じ位置で登録荷台を確認しています（移動なし）"
     WriteDiagnostic("LOCAL_STORAGE_TRIP_START trip=" (State.storageTrips + 1))
     if !ValidateServerEpochCheckpoint(expectedGeneration,
         "local_vehicle_departure") {
@@ -11343,7 +11379,7 @@ RunLocalVehicleStorageCycle(expectedGeneration, reuseStoragePose := false) {
     try {
         if reuseStoragePose {
             recoveryViewRoute := ""
-            storageFound := ProbeExeRouteCargo(expectedGeneration, &recoveredId, &recoveredType)
+            storageFound := StationaryOnlyEnabled() ? WaitStationaryCargo(expectedGeneration, &recoveredId, &recoveredType) : ProbeExeRouteCargo(expectedGeneration, &recoveredId, &recoveredType)
             searchFailure := storageFound ? "" : "復旧位置で登録した荷台を確認できません"
             fatalSearch := !storageFound
             if recoveryViewRoute
@@ -11744,7 +11780,7 @@ CompleteVerifiedStorageReturn(expectedGeneration) {
     WriteDiagnostic("LOCAL_FARM_RETURN_ROUTE_CONFIRMED refill="
         . (State.storageRefillVerified ? 1 : 0))
     State.statusLabel.Text := "作業ボタンを再確認しています"
-    workRecovered := ProbeExeRouteWork(expectedGeneration, State.runMode)
+    workRecovered := StationaryOnlyEnabled() ? WaitStationaryTaskReady(expectedGeneration) : ProbeExeRouteWork(expectedGeneration, State.runMode)
     if !IsCurrentRun(expectedGeneration)
         return false
     if !workRecovered {
@@ -11782,6 +11818,12 @@ CompleteVerifiedStorageReturn(expectedGeneration) {
 
 FindRegisteredStorageNearby(expectedGeneration, &movementHistory,
     &matchedViewRoute, &failureMessage) {
+    if StationaryOnlyEnabled() {
+        movementHistory := []
+        matchedViewRoute := ""
+        failureMessage := ""
+        return WaitStationaryCargo(expectedGeneration, &stationaryId, &stationaryType)
+    }
     global State
     movementHistory := []
     matchedViewRoute := ""
@@ -11867,6 +11909,8 @@ CloseLocalStorageUi() {
 }
 
 PlayLocalRoute(expectedGeneration, route) {
+    if StationaryOnlyEnabled()
+        return false
     global State
     if !IsCurrentRun(expectedGeneration) || !route || !State.serverEpoch
         return false
@@ -11893,6 +11937,8 @@ PlayLocalRoute(expectedGeneration, route) {
 }
 
 PlayForegroundViewRoute(expectedGeneration, route) {
+    if StationaryOnlyEnabled()
+        return false
     global State, Config
     if !IsCurrentRun(expectedGeneration) || !IsValidRoute(route, false)
         || !State.targetHwnd || !WinActive("ahk_id " State.targetHwnd)
@@ -12316,7 +12362,7 @@ AutomationCycleOwned(expectedGeneration, expectedTaskId := 0) {
         return
     }
 
-    if State.farmWatchdogAt
+    if (!StationaryOnlyEnabled() || State.actionCompletionPending || IsObject(State.pendingFarmAttempt)) && State.farmWatchdogAt
         && MonotonicMs() - State.farmWatchdogAt >= Config.farmWatchdogMs {
         if State.watchdogRecoveryCount >= 3 {
             StopAutomationWithFault(
@@ -12407,6 +12453,11 @@ EnterFarmRecovery(expectedGeneration, returnState, reason) {
 }
 
 HandleFarmTargetMissing(expectedGeneration, actionMode) {
+    if StationaryOnlyEnabled() {
+        if WaitStationaryTaskReady(expectedGeneration)
+            ScheduleNext(expectedGeneration, 1)
+        return true
+    }
     global State, Config
     if !IsCurrentRun(expectedGeneration)
         return true
@@ -12445,6 +12496,8 @@ HandleFarmTargetMissing(expectedGeneration, actionMode) {
 }
 
 RunFarmRecoveryCycle(expectedGeneration, expectedTaskId) {
+    if StationaryOnlyEnabled() && StationaryRecover(expectedGeneration, expectedTaskId)
+        return
     global State, Config
     if !IsCurrentFarmTask(expectedGeneration, expectedTaskId, "RECOVERY")
         return
@@ -12840,6 +12893,8 @@ RestartFarmAfterRecoveryExhausted(expectedGeneration, reason) {
 
 MaintainBackgroundWorkView(expectedGeneration, force := false,
     ignoreVerifiedTarget := false) {
+    if StationaryOnlyEnabled()
+        return IsCurrentRun(expectedGeneration)
     global State, Config, LocalNav
     if State.runMode = "washing" && Config.washForwardCorrection {
         WriteDiagnostic("WASH_VIEW_PRESERVED generation=" expectedGeneration " camera_input=0")
@@ -12970,6 +13025,8 @@ MaintainBackgroundWorkView(expectedGeneration, force := false,
 }
 
 EnsureWorkViewDown(expectedGeneration, mode, force := false) {
+    if StationaryOnlyEnabled()
+        return IsCurrentRun(expectedGeneration)
     global State, Config
     Critical "On"
     if !WorkViewDownModeSupported(mode)
@@ -13005,6 +13062,8 @@ EnsureWorkViewDown(expectedGeneration, mode, force := false) {
 }
 
 SendBackgroundCameraDown(expectedGeneration, durationMs) {
+    if StationaryOnlyEnabled()
+        return false
     global State, Config
     if !Config.backgroundMode || !IsCurrentRun(expectedGeneration)
         return false
@@ -13091,6 +13150,8 @@ HandleWorkViewDispatchFailure(expectedGeneration, failures, reason) {
 }
 
 SendForegroundCameraDown(expectedGeneration, durationMs, stepPixels, direction := -1) {
+    if StationaryOnlyEnabled()
+        return false
     global State
     duration := Max(100, Min(1500, Round(durationMs)))
     step := Max(4, Min(80, Round(stepPixels)))
@@ -13120,6 +13181,8 @@ SendForegroundCameraDown(expectedGeneration, durationMs, stepPixels, direction :
 }
 
 SendRelativeMouseDelta(deltaX, deltaY) {
+    if StationaryOnlyEnabled()
+        return false
     ; INPUT union is aligned to pointer size: MOUSEINPUT begins at 8 bytes on
     ; 64-bit and 4 bytes on 32-bit AutoHotkey.
     inputSize := A_PtrSize = 8 ? 40 : 28
@@ -13435,7 +13498,7 @@ BeginWashCompletionRecovery(expectedGeneration, attemptId) {
             transitionFailed := true
         } else {
             taskId := State.farmStateTaskId
-            settleDelay := Config.washForwardCorrection ? 1 : Config.washPostCompletionSettleMs
+            settleDelay := StationaryOnlyEnabled() ? 1 : Config.washForwardCorrection ? 1 : Config.washPostCompletionSettleMs
             settleDeadline := MonotonicMs() + settleDelay
             if !IsCurrentFarmTask(expectedGeneration, taskId, "WASH_SETTLING")
                 return false
@@ -13463,12 +13526,14 @@ BeginWashCompletionRecovery(expectedGeneration, attemptId) {
     QueueWebUiFlush(true)
     WriteDiagnostic("attempt=" attemptId " WASH_SETTLE_BEGIN delay="
         settleDelay " deadline=" settleDeadline " observed=" Config.washForwardCorrection)
-    ScheduleNext(expectedGeneration, Config.washForwardCorrection ? 1 : Config.washPostCompletionSettleMs)
+    ScheduleNext(expectedGeneration, StationaryOnlyEnabled() ? 1 : Config.washForwardCorrection ? 1 : Config.washPostCompletionSettleMs)
     return true
 }
 
 PerformWashCompletionCorrection(expectedGeneration, expectedTaskId,
     expectedAttemptId) {
+    if StationaryOnlyEnabled()
+        return IsCurrentRun(expectedGeneration)
     global State, Config, LocalNav
     if !Config.washForwardCorrection
         return true
@@ -13631,7 +13696,7 @@ ResumeAfterWashCompletionRecovery(expectedGeneration, expectedTaskId,
     State.statusLabel.Text := LocalNav.HasOwnProp("washRecoveryOutcome")
         && LocalNav.washRecoveryOutcome = "NEARBY_WASH_READY"
         ? "●  荷台前の操作範囲を確認。次の石洗いを開始します"
-        : "●  補正完了。次の石洗いを開始します"
+        : "●  作業状態を確認。移動せず次の石洗いへ"
     WriteDiagnostic("attempt=" attemptId " WASH_RECOVERY_DIRECT_RESUME")
     ScheduleNext(expectedGeneration, 1)
     return true
@@ -13913,6 +13978,8 @@ WaitPendingBackgroundActionCompletion(expectedGeneration, suppliedResult := "") 
 }
 
 WashAttemptBackground(expectedGeneration) {
+    if StationaryOnlyEnabled() && !WaitStationaryTaskReady(expectedGeneration)
+        return
     global State, Config
     if !IsCurrentRun(expectedGeneration)
         return
@@ -14037,6 +14104,8 @@ GoldRecoveryPatternIsBalanced(pulseMs := 150) {
 }
 
 PerformGoldRecoveryStep(expectedGeneration) {
+    if StationaryOnlyEnabled()
+        return false
     global State, Config
     if !IsCurrentRun(expectedGeneration) || State.goldRecoveryExhausted
         return false
@@ -14083,6 +14152,8 @@ PerformGoldRecoveryStep(expectedGeneration) {
 }
 
 GoldAttemptBackground(expectedGeneration) {
+    if StationaryOnlyEnabled() && !WaitStationaryTaskReady(expectedGeneration)
+        return
     global State, Config
 
     if !IsCurrentRun(expectedGeneration)
@@ -14173,7 +14244,7 @@ MineAttempt(expectedGeneration) {
         return
     }
 
-    if Config.backgroundMode {
+    if StationaryOnlyEnabled() || Config.backgroundMode {
         MineAttemptBackground(expectedGeneration)
         return
     }
@@ -14418,6 +14489,8 @@ MineAttempt(expectedGeneration) {
 }
 
 MineAttemptBackground(expectedGeneration) {
+    if StationaryOnlyEnabled() && !WaitStationaryTaskReady(expectedGeneration)
+        return
     global State, Config
 
     if !IsCurrentRun(expectedGeneration)
@@ -14483,6 +14556,8 @@ RunBackgroundBridge(mode, extra1 := "", extra2 := "") {
 }
 
 RunBackgroundBridgeArgs(mode, bridgeArgs*) {
+    if StationaryOnlyEnabled() && StationaryBridgeMotionBlocked(mode)
+        return StationaryMotionDenied(mode)
     global State
 
     if !RegExMatch(mode, "^[a-z0-9-]+$")
@@ -14518,6 +14593,8 @@ RunBackgroundBridgeArgs(mode, bridgeArgs*) {
 }
 
 RunBackgroundBridgeCancelable(expectedGeneration, mode, bridgeArgs*) {
+    if StationaryOnlyEnabled() && StationaryBridgeMotionBlocked(mode)
+        return StationaryMotionDenied(mode)
     global State
 
     if !IsBridgeOperationContextValid(expectedGeneration)

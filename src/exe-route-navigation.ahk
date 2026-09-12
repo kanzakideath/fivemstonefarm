@@ -8,7 +8,7 @@ InitExeRouteAssets() {
     DirCreate LocalNav.runtime
     LocalNav.washHelper := LocalNav.runtime "\WashPosition.exe"
     LocalNav.washAnchorGeneration := 0
-    LocalNav.washFeedback := "未計測。石洗いはFiveMを前面にして開始してください"
+    LocalNav.washFeedback := "移動・視点入力は禁止。画像位置合わせではなく、同じ場所の両操作を確認します"
     FileInstall "WashPosition.exe", LocalNav.washHelper, true
     LocalNav.helper := LocalNav.runtime "\LocalNavigation.exe"
     FileInstall "LocalNavigation.exe", LocalNav.helper, true
@@ -46,10 +46,12 @@ ExeRouteSetupStateJson(mode) {
         recorded := bound && (method = "stationary"
             ? IniRead(meta, "Route", "Schema", "0") = "2"
             : !!FileExist(root "\outbound.json") && !!FileExist(root "\return.json"))
-        trialSaved := recorded && (method = "stationary" || ExeRouteFilesMatch(root))
+        trialSaved := recorded && method = "stationary" && (method = "stationary" || ExeRouteFilesMatch(root))
             && IniRead(meta, "Route", "Verified", "0") = "1"
     }
-    return '{"hasVehicle":' (hasVehicle ? "true" : "false")
+    if method != "stationary"
+        recorded := false
+    return '{"stationaryOnly":true,"movementInputAllowed":false,"hasVehicle":' (hasVehicle ? "true" : "false")
         . ',"recorded":' (recorded ? "true" : "false")
         . ',"trialSaved":' (trialSaved ? "true" : "false")
         . ',"busy":' ((LocalNav.busy || LocalNav.requestActive || State.running || State.registrationActive || State.startInProgress) ? "true" : "false")
@@ -126,16 +128,11 @@ ShowExeRoutePanel(*) {
     }
     if IsObject(LocalNav.dialog)
         try LocalNav.dialog.Destroy()
-    panel := Gui("+AlwaysOnTop", "EXEだけで徒歩往復・完了ボイス")
+    panel := Gui("+AlwaysOnTop", "荷台前の確認・完了ボイス")
     panel.SetFont("s10", "Yu Gothic UI")
     panel.AddButton("w640 h40", "ルート設定の専用画面を開く").OnEvent("Click", (*) => (panel.Hide(), OpenExeRouteSettings()))
-    panel.AddText("w640", "サーバー導入は不要です。作業モードごとに、同じ作業場所と停車車両の往路・復路を記録します。`n徒歩中だけFiveMを前面で使用します。他アプリへ切替／F9／手動操作で停止します。")
-    panel.AddText("y+12 w640", "① 先に通常の車両登録を行う。`n② 荷台がその場で開くなら近接収納。歩く場合は「往復を教える」で準備後F6。W/A/S/Dとマウスだけで歩く。4秒以内ごとに立ち止まると照合点を保存。各終点でF7。`n③ 元の現場で「自動試走」。往復の画面照合・荷台ID・作業ボタンが確認できた経路だけ有効になります。")
-    panel.AddText("y+10 w640 cA34512", "車両の移動、別サーバー／再接続、画面サイズ・カメラ設定変更時は再登録が必要です。天候・照明・遮蔽物で画面照合できない場合も停止します。任意の車両を自動追跡する方式ではありません。")
     panel.AddButton("y+12 w640 h40", "この位置で近接収納を確認（歩かない）").OnEvent("Click", RequestExeRouteSetup.Bind("stationary", Config.actionMode))
-    panel.AddText("y+10 w640", "現在の作業：" BackgroundActionDisplayName(Config.actionMode))
-    panel.AddButton("y+12 w305 h36", "1. 往復を教える").OnEvent("Click", RequestExeRouteSetup.Bind("teach", Config.actionMode))
-    panel.AddButton("x+12 yp w305 h36", "2. 自動試走（収納しない）").OnEvent("Click", RequestExeRouteSetup.Bind("trial", Config.actionMode))
+    panel.AddText("y+10 w640", "移動・視点操作なし。ゲーム側の物理固定ではありません。現在の作業：" BackgroundActionDisplayName(Config.actionMode))
     panel.AddText("xm y+20 w600", "完了ボイス　VOICEVOX:四国めたん")
     voice := panel.AddDropDownList("w305", ["アニメ調・甘め", "クリアな女性音声（標準）", "音声なし"])
     voice.Choose(LocalNav.voiceStyle = "clear" ? 2 : LocalNav.voiceStyle = "off" ? 3 : 1)
@@ -247,6 +244,8 @@ ExeRouteFilesMatch(root) {
 }
 
 ExeRouteBindingValid(mode, epoch, verified := true) {
+    if StationaryOnlyEnabled() && ExeStorageMethod(mode) != "stationary"
+        return false
     global Config
     root := ExeRouteModeRoot(mode)
     meta := root "\route.ini"
@@ -263,6 +262,8 @@ ExeRouteBindingValid(mode, epoch, verified := true) {
 }
 
 RequireExeRouteForRun(expectedGeneration) {
+    if StationaryOnlyEnabled()
+        return VerifyStationaryRunSite(expectedGeneration)
     global State, Config
     if !Config.vehicleStorageEnabled
         return true
@@ -303,6 +304,8 @@ CancelExeRouteOperation(*) {
 }
 
 RunExeRouteHelper(operation, routePath, generation := 0) {
+    if StationaryOnlyEnabled()
+        return StationaryMotionDenied(operation)
     global LocalNav, State, Config, processId
     if !ExeRouteContextValid(generation) || !State.targetHwnd
         return "ERROR CANCELLED"
@@ -430,6 +433,11 @@ FinishExeRouteSetupContext(message) {
 }
 
 TeachExeRoute(*) {
+    if StationaryOnlyEnabled() {
+        LocalNav.feedback := "徒歩記録は廃止しました。荷台前で近接収納を確認してください"
+        QueueWebUiFlush(true)
+        return false
+    }
     global LocalNav, State, Config
     if MsgBox("作業場所で、通常の作業ボタンを出せる位置に立ってください。石洗いは手持ちに未洗浄石が必要です。`n`n往路：トラックの荷台前へ歩いてF7。`n復路：同じ作業場所へ歩いてF7。`n各片道の準備画面でF6を押して記録開始。視点は勝手に動かしません。`n4秒以内ごとに立ち止まり、照合用の景色を保存してください。`n記録中はW/A/S/Dとマウスだけ。走る・乗車・UI操作はしないでください。`n`n徒歩中にFiveMを前面にすることへ同意して開始します。", "EXE徒歩ルートの記録", "OKCancel") != "OK"
         return
@@ -488,6 +496,8 @@ TeachExeRoute(*) {
 }
 
 TrialExeRoute(*) {
+    if StationaryOnlyEnabled()
+        return SetupStationaryStorage()
     global State, Config
     if ExeStorageMethod(Config.actionMode) = "stationary" {
         SetupStationaryStorage()
@@ -562,6 +572,8 @@ ExeRouteErrorMessage(result) {
 }
 
 ExecuteExeRouteLeg(generation, leg) {
+    if StationaryOnlyEnabled()
+        return false
     global State, Config
     if (leg != "outbound" && leg != "return") || !IsCurrentRun(generation)
         return false
@@ -587,6 +599,8 @@ ExecuteExeRouteLeg(generation, leg) {
 }
 
 ExeRouteCameraStep(generation, dx, dy) {
+    if StationaryOnlyEnabled()
+        return false
     global State
     if !ExeRouteContextValid(generation) || !WinActive("ahk_id " State.targetHwnd)
         return false

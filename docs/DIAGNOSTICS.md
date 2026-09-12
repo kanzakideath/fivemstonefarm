@@ -19,3 +19,7 @@ READ-ME.txt → manifest.json → last-events.txt → logs/events.jsonl（.4が�
 manifestのomissionsは取得できなかったファイル、skippedJournalLinesは途中書込み/不正JSONの行数です。これらがある場合にログ完備と判断しないでください。イベントは容量上限で古い順に消えるため、問題が起きたら早めに保存してください。保存したZIPは自動削除しません。
 
 ディスク満杯/権限不足などでログを書けない場合は画面に失敗数を表示します。ログ失敗を理由に安全ガードを緩めたり、操作を再送したりしません。強制電源断などで未記録となることはあります。
+
+## v9.1.15 の非移動モード
+
+STATIONARY_READINESS は作業と荷台の同時利用可能性、STATIONARY_SITE_VERIFIED は開始時の登録荷台確認、STATIONARY_MOTION_BLOCKED は旧移動処理を送信前に拒否した記録です。W入力0はゲーム物理の固定を意味しません。画像補正の古いレポートがZIPに残っている場合は、バージョン・起動セッション・時刻で今回の記録と区別してください。

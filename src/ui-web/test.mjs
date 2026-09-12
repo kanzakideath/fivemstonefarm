@@ -164,10 +164,14 @@ for (const id of ['overview-route', 'vehicle-route', 'route-register', 'route-te
   assert.match(html, new RegExp(`id="${id}"`));
 }
 assert.match(css, /\.route-launch\s*\{[^}]*background:#eaf2ff/);
-assert.match(js, /sendAction\('route\.teach', \{ mode: state\.actionMode \}\)/);
+assert.doesNotMatch(js, /sendAction\('route\.teach'/, 'walking commands must not be emitted');
 assert.match(js, /sendAction\('route\.trial', \{ mode: state\.actionMode \}\)/);
 assert.match(js, /trialSaved === true/);
-assert.match(js, /routeTeach\.disabled = busy \|\| !hasVehicle/);
+assert.match(js, /routeTeach\.disabled = true/);
+assert.match(js, /routeTeach\.hidden = true/);
+assert.match(html, /id="stationary-policy"/);
+assert.match(html, /F8を押し直さず自動再開/);
+assert.match(js, /sendAction\('route\.stationary', \{ mode: state\.actionMode \}\)/);
 assert.match(css, /grid-auto-flow: column/);
 for (const [,body] of html.matchAll(/<button\b[^>]*class="[^"]*primary-action[^"]*"[^>]*>([\s\S]*?)<\/button>/g)) {
   assert.match(body, /class="press-surface"/, 'white primary buttons must have a visible surface');

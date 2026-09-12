@@ -237,7 +237,7 @@ Write-Output 'Washing completion recovery source contract tests passed.'
 
 Assert-Contract ($correct -notmatch 'play-route-health|washForwardPulseMs') 'Washing must not use unobserved transport nudges.'
 Assert-Contract ($correct -match 'WASH_STABLE' -and $correct -match 'if visualOk') 'Movement success must require visual evidence.'
-Assert-Contract ($begin -match 'settleDelay := Config.washForwardCorrection \? 1 : Config.washPostCompletionSettleMs') 'Observed settling must avoid adding the old unconditional wait.'
+Assert-Contract ($begin -match 'settleDelay := StationaryOnlyEnabled\(\) \? 1 : Config.washForwardCorrection \? 1 : Config.washPostCompletionSettleMs') 'Stationary readiness must not add an unconditional two-second delay.'
 $attempt = Get-AhkFunctionBody 'WashAttemptBackground'
 Assert-Contract ($attempt -match 'EnsureObservedWashAnchor' -and $attempt -match '!Config.washForwardCorrection && !EnsureWorkViewDown') 'Observed camera must not be pitch-clamped every wash.'
 $vision = [IO.File]::ReadAllText((Join-Path (Split-Path $resolvedSource) 'wash-position\WashPosition.cs'))
@@ -251,7 +251,7 @@ Assert-Contract ($washModule.Contains('ObservedWashCorrectionOperation(generatio
     $correct.Contains('RunObservedWashHelper(correctionOperation, expectedGeneration)')) 'Nearby precise correction is not bound to the registered active route.'
 Assert-Contract ($vision.Contains('CUMULATIVE_MICRO_DRIFT_TEST') -and $vision.Contains('RefineSubpixel') -and
     $vision.Contains('NO_INPUT_WITHIN_TOLERANCE') -and $vision.Contains('noEffect>=2')) 'Micro drift, zero-input and consecutive-no-effect regressions are missing.'
-Assert-Contract ($source.Contains('WASH_RECOVERY_TICK') -and $source.Contains('前進補正OFF')) 'Input-disabled and pending-dispatch states are not observable.'
+Assert-Contract ($source.Contains('WASH_RECOVERY_TICK') -and $source.Contains('移動入力禁止')) 'Input-disabled and pending-dispatch states are not observable.'
 
 # Stationary service is not a visual-success bypass: require before+after task
 # proof, single native proposal, exact reward ownership and unchanged transfers.
