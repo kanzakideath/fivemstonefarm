@@ -5,6 +5,16 @@ ObservedWashAnchorPath(generation) {
     return LocalNav.runtime "\wash-position-" generation ".json"
 }
 
+ObservedWashCorrectionOperation(generation) {
+    global State, Config
+    if IsCurrentRun(generation) && State.runMode = "washing"
+        && Config.washForwardCorrection && Config.vehicleStorageEnabled
+        && ExeStorageMethod("washing") = "stationary"
+        && ExeRouteBindingValid("washing", State.serverEpoch)
+        return "wash-maintain"
+    return "wash-correct"
+}
+
 RunObservedWashHelper(operation, generation) {
     global LocalNav, State
     if !IsCurrentRun(generation) || !IsTargetForeground(generation)
@@ -17,6 +27,7 @@ RunObservedWashHelper(operation, generation) {
         result := RunExeRouteHelper(operation, path, generation)
         if IsCurrentRun(generation) && FileExist(path ".last-run.json") {
             try FileCopy path ".last-run.json", LocalNav.root "\wash-position-last.json", true
+            SupportReportEvent(path ".last-run.json", "WASH_REPORT")
         }
         if !IsCurrentRun(generation)
             return "ERROR CANCELLED"

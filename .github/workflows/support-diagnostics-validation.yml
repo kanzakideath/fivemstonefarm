@@ -1,0 +1,38 @@
+name: Diagnostic ZIP privacy and export
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  support-export:
+    runs-on: windows-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Compile production diagnostic exporter without modifying source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force build/staging,artifacts/support-export | Out-Null
+          $csc=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          $source=Join-Path $PWD 'src\diagnostics\Diagnostics.cs'
+          $binary=Join-Path $PWD 'build\staging\Diagnostics.exe'
+          & $csc /nologo /target:winexe /optimize+ /warnaserror+ /reference:System.Web.Extensions.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll /out:$binary $source
+          if ($LASTEXITCODE -ne 0) { throw 'Diagnostics compile failed.' }
+          $result=Join-Path $PWD 'artifacts/support-export/self-test.txt'
+          $process=Start-Process -FilePath $binary -ArgumentList @('self-test',"`"$result`"") -PassThru
+          if(-not $process.WaitForExit(15000)){$process.Kill();throw 'Exporter tests timed out.'}
+          if($process.ExitCode -ne 0 -or (Get-Content $result -Raw).Trim() -ne 'SELFTEST OK'){throw 'Exporter self-tests failed.'}
+      - name: Invoke real export with private canaries and a partial journal
+        shell: pwsh
+        run: ./scripts/Test-SupportExport.ps1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: diagnostic-export-evidence
+          path: artifacts/support-export/
+          retention-days: 14
+          if-no-files-found: error

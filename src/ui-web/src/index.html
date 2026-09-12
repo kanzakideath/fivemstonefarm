@@ -285,6 +285,7 @@
                 <section class="route-feedback" aria-live="polite" aria-label="石洗いの位置補正">
                   <strong>石洗いの位置補正 · 入力と継続判定</strong>
                   <p id="route-wash-position">未計測。FiveMを前面にして石洗いを開始してください。</p>
+                  <button id="route-diagnostics" class="support-button" type="button">不具合の診断ZIP・ログを開く</button>
                   <p>後退補正は維持します。近接モードでは画像が完全一致しなくても、洗浄・荷台の両ボタンを連続確認できれば追加前進せず続行します。「画像補正の確認」と「作業できる範囲の確認」は別表示です。石0では荷台を確認して収納・補充へ進みます。</p>
                 </section>
                 <div class="route-steps">
@@ -414,6 +415,18 @@
                   <p class="group-footnote">次の1回で容量を超える可能性も含めて収納し、結果確認に失敗した場合は設定回数まで自動復旧します。</p>
                 </section>
 
+                <section id="support-diagnostics" class="support-card" aria-labelledby="support-heading">
+                  <h2 id="support-heading">不具合の記録・診断ZIP</h2>
+                  <p>操作・停止理由・前進入力と効果をローカルに自動記録します。再起動しても直近約10MiBを保持します。</p>
+                  <p>画像・チャット・セーブ・INI全体は収集しません。外部への自動送信はありません。</p>
+                  <p id="diagnostics-status" role="status" aria-live="polite">診断の状態を確認中</p>
+                  <div class="support-actions">
+                    <button id="diagnostics-mark" class="support-button" type="button">今の不具合に目印を付ける</button>
+                    <button id="diagnostics-export" class="support-button support-primary" type="button">診断ZIPを保存</button>
+                  </div>
+                  <p id="diagnostics-feedback" role="status" aria-live="polite">不具合が起きたら目印 → F9で停止 → 診断ZIPを保存 → このチャットへ添付してください。共有前に内容を確認できます。</p>
+                </section>
+
                 <button id="settings-save" class="primary-action pressable" type="button">
                   <span class="press-surface" aria-hidden="true"></span>
                   <span id="settings-save-label">設定を保存</span>
@@ -455,6 +468,7 @@
                   <span class="button-spinner preloader preloader-white" aria-hidden="true"></span>
                 </button>
                 <p id="update-feedback" class="persistent-feedback" role="status" aria-live="polite"></p>
+                <button id="update-diagnostics" class="support-button" type="button">更新失敗の診断ZIP・ログを開く</button>
               </div>
             </section>
           </main>

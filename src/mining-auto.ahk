@@ -9,7 +9,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "9.1.12"
+global AppVersion := "9.1.13"
 ;@Ahk2Exe-SetVersion %A_PriorLine~U)^.*"([^"]+)".*$~$1%
 processId := DllCall("GetCurrentProcessId")
 global LocalNav := {busy: false, pid: 0, cancel: "", taskId: 0, dialog: 0, guide: 0, feedback: "", requestActive: false, cycle: 0, lastBatchKey: "", lastActionKey: ""}
@@ -31,6 +31,8 @@ persistentDataRoot := isUiTestRun || isValidationRun
     : isHistoryImportTestRun
         ? EnvGet("LOCALAPPDATA") "\AI採掘機"
         : EnvGet("USERPROFILE") "\Saved Games\AI採掘機"
+#Include diagnostics.ahk
+InitSupportDiagnostics(persistentDataRoot, isUiTestRun || isValidationRun || isHistoryImportTestRun || HasCommandLineArgument("--cursor-api-test"), processId)
 buttonTemplatePath := A_Temp "\codex-mining-button-" processId ".png"
 windowedButtonTemplatePath := A_Temp "\codex-mining-button-windowed-" processId ".png"
 hungerTemplatePath := A_Temp "\codex-hunger-icon-" processId ".png"
@@ -442,7 +444,7 @@ if HasCommandLineArgument("--history-import-self-test") {
 ; コンパイル前後の構文・埋め込み画像チェック用です。
 if isValidationRun {
     try FileAppend "VALIDATION_PHASE proofs " A_TickCount "`n", "**", "UTF-8-RAW"
-    if !ValidateStorageCycleProof() || !ValidateStationaryWorkflow() || !ValidateNearbyWashRecovery() {
+    if !ValidateStorageCycleProof() || !ValidateStationaryWorkflow() || !ValidateNearbyWashRecovery() || !ValidateSupportDiagnostics() {
         DeleteExtractedTemplates()
         ExitApp(145)
     }
@@ -2414,6 +2416,12 @@ ProcessWebUiActions(*) {
                     State.ui.navUpdate.Text := "アップデート •"
                 } else
                     CheckForUpdates()
+            } else if action = "diagnostics.mark" && parts.Length = 3 {
+                SupportMarkProblem()
+            } else if action = "diagnostics.export" && parts.Length = 3 {
+                ExportSupportDiagnostics()
+            } else if action = "diagnostics.clientError" && parts.Length = 4 {
+                SupportWriteEvent("WEB_ERROR", parts[4])
             } else if action = "window.close" && parts.Length = 3 {
                 ExitApp()
             }
@@ -2582,6 +2590,7 @@ BuildWebUiStateJson() {
         . ',"farmRetry":' State.farmStateRetry
         . ',"windowVisible":' (State.uiWindowVisible ? "true" : "false")
         . ',"visualTest":' (State.visualTest ? "true" : "false")
+        . ',"diagnostics":' SupportUiJson()
         . ',"routes":' ExeRouteSetupStateJson(actionMode)
         . ',"controls":{' controlsJson '}}'
 }
@@ -6271,6 +6280,8 @@ ConfigureTrayMenu() {
     A_TrayMenu.Add("自動操作を開始 / 停止", ToggleMining)
     A_TrayMenu.Add("自動収納のルート設定", OpenExeRouteSettings)
     A_TrayMenu.Add("キー・動作設定", ShowSettings)
+    A_TrayMenu.Add("不具合の目印を記録", SupportMarkProblem)
+    A_TrayMenu.Add("診断ZIPを保存（停止後）", ExportSupportDiagnostics)
     A_TrayMenu.Add("アップデート", OpenUpdatePage)
     A_TrayMenu.Add()
     A_TrayMenu.Add("終了", (*) => ExitApp())
@@ -6393,6 +6404,8 @@ UpdateRuntimeStatusOverlay(*) {
     meta := RuntimeStatusOverlayMeta(State.successes,
         State.lastInventoryMaxWeight > 0, State.lastInventoryFreeWeight,
         State.storageTrips)
+    if State.runMode = "washing"
+        meta .= Config.washForwardCorrection ? " | 前進補正ON" : " | 前進補正OFF"
     now := MonotonicMs()
     watchdogAge := State.farmWatchdogAt
         ? Max(0, now - State.farmWatchdogAt) : 0
@@ -12173,6 +12186,7 @@ StopAutomationWithFault(message, pageName := "overview",
         if !criticalWasOn
             Critical "Off"
     }
+    SupportWriteEvent("FAULT", "code=" resolvedCode " detail=" message)
     ObserveStorageCycle(expectedGeneration, "stopped", resolvedCode)
     return StopMining({message: message, pageName: pageName,
         faultCode: resolvedCode, expectedGeneration: expectedGeneration,
@@ -13400,7 +13414,7 @@ ResetWashCompletionRecoveryState() {
 }
 
 BeginWashCompletionRecovery(expectedGeneration, attemptId) {
-    global State, Config
+    global State, Config, LocalNav
     criticalWasOn := A_IsCritical
     if !criticalWasOn
         Critical "On"
@@ -13435,7 +13449,11 @@ BeginWashCompletionRecovery(expectedGeneration, attemptId) {
             "洗浄完了後の静止待ちへ移れないため安全停止しました")
         return false
     }
-    State.statusLabel.Text := "●  洗浄完了。後退が止まるまで待機中"
+    State.statusLabel.Text := Config.washForwardCorrection
+        ? "●  前進補正ON：洗浄完了。静止確認後に微小後退を測ります（W未送信）"
+        : "●  前進補正OFF：この設定では洗浄後にWを送りません"
+    LocalNav.washFeedback := State.statusLabel.Text
+    QueueWebUiFlush(true)
     WriteDiagnostic("attempt=" attemptId " WASH_SETTLE_BEGIN delay="
         settleDelay " deadline=" settleDeadline " observed=" Config.washForwardCorrection)
     ScheduleNext(expectedGeneration, Config.washForwardCorrection ? 1 : Config.washPostCompletionSettleMs)
@@ -13478,7 +13496,9 @@ PerformWashCompletionCorrection(expectedGeneration, expectedTaskId,
     State.statusLabel.Text := "●  画面で静止・位置ずれ・前進の効果を確認しています"
     WriteDiagnostic("attempt=" expectedAttemptId " WASH_VISUAL_BEGIN settle=observed input=foreground_scancode")
     LocalNav.washRecoveryOutcome := "VISUAL_PENDING"
-    nudgeResult := RunObservedWashHelper("wash-correct", expectedGeneration)
+    correctionOperation := ObservedWashCorrectionOperation(expectedGeneration)
+    WriteDiagnostic("WASH_CORRECTION_PROFILE operation=" correctionOperation)
+    nudgeResult := RunObservedWashHelper(correctionOperation, expectedGeneration)
     visualOk := RegExMatch(nudgeResult, "^WASH_STABLE (\d+) (\d+) (\d+) (\d+)$", &observed)
     criticalWasOn := EnterMetagameOutboxCritical()
     try {
@@ -13494,7 +13514,8 @@ PerformWashCompletionCorrection(expectedGeneration, expectedTaskId,
                 State.nudges += 1
                 State.mealLabel.Text := "画面確認済み補正`n" State.nudges
             }
-            LocalNav.washFeedback := (observed[1] + 0 > 0 ? "補正確認" : "補正不要")
+            LocalNav.washFeedback := (correctionOperation = "wash-maintain" ? "荷台前・微小後退補正" : "通常補正")
+                . " / " (observed[1] + 0 > 0 ? "前進効果確認" : "許容範囲内のためW未送信")
                 . " / W入力 " observed[1] "回・計" observed[2] "ms / ずれ "
                 . (observed[3] / 1000) "px / 確認時間 " observed[4] "ms"
             WriteDiagnostic("attempt=" expectedAttemptId " WASH_VISUAL_VERIFIED " nudgeResult)
@@ -13521,11 +13542,13 @@ RunWashCompletionRecoveryCycle(expectedGeneration, expectedTaskId) {
         return
     }
     attemptId := State.washRecoveryAttemptId
+    WriteDiagnostic("WASH_RECOVERY_TICK phase=" currentState " correction=" Config.washForwardCorrection
+        " stateAgeMs=" (MonotonicMs() - State.farmStateEnteredAt) " attempt=" attemptId)
 
     if currentState = "WASH_SETTLING" {
         remaining := State.washSettleDeadline - MonotonicMs()
         if remaining > 0 {
-            State.statusLabel.Text := "●  洗浄完了。後退が止まるまで待機中（"
+            State.statusLabel.Text := (Config.washForwardCorrection ? "●  前進補正ON：開始待ち（" : "●  前進補正OFF：Wを送らず待機（")
                 . (Ceil(remaining / 100) / 10) . "秒）"
             ScheduleNext(expectedGeneration, remaining)
             return
@@ -15590,6 +15613,8 @@ ResetDiagnosticLog() {
 
 WriteDiagnostic(message) {
     global State
+    ; Keep the legacy reward-import format intact; journal is separately bounded.
+    SupportWriteEvent("TRACE", message)
     if State.diagnosticLines >= 5000 {
         RotateDiagnosticLogs()
         State.diagnosticLines := 0

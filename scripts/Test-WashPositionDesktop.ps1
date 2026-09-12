@@ -15,7 +15,7 @@ $helper = Join-Path $root 'build\staging\WashPosition.exe'
 if (-not (Test-Path $helper)) { throw 'Production wash helper is missing.' }
 $report = Join-Path $output 'desktop-input-report.txt'
 $process = Start-Process -FilePath $probe -ArgumentList @("`"$helper`"", "`"$report`"") -PassThru
-if (-not $process.WaitForExit(90000)) {
+if (-not $process.WaitForExit(180000)) {
     # Kill only the test's own child tree, never a game or another app.
     & taskkill.exe /PID $process.Id /T /F | Out-Null
     throw 'Synthetic desktop input check timed out.'

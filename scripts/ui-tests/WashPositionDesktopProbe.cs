@@ -16,7 +16,7 @@ internal sealed class WashPositionDesktopProbe : Form
     private readonly string helper, output;
     private readonly Bitmap texture;
     private readonly StringBuilder evidence = new StringBuilder();
-    private int offset, keyDowns, keyUps;
+    private int offset, keyDowns, keyUps, microPixels;
     private bool keyHeld, noEffect, wrongDirection;
     private int status=1;
     private Process child;
@@ -39,7 +39,7 @@ internal sealed class WashPositionDesktopProbe : Form
         FormBorderStyle=FormBorderStyle.None;AutoScaleMode=AutoScaleMode.None;
         ClientSize=new Size(1024,576);StartPosition=FormStartPosition.Manual;Location=new Point(0,0);
         DoubleBuffered=true;KeyPreview=true;
-        KeyDown+=delegate(object s,KeyEventArgs e){if(e.KeyCode==Keys.W&&!keyHeld){keyHeld=true;keyDowns++;if(!noEffect)offset+=wrongDirection?1:-1;Invalidate();Update();}};
+        KeyDown+=delegate(object s,KeyEventArgs e){if(e.KeyCode==Keys.W&&!keyHeld){keyHeld=true;keyDowns++;if(!noEffect){if(microPixels>0)microPixels--;else offset+=wrongDirection?1:-1;}Invalidate();Update();}};
         KeyUp+=delegate(object s,KeyEventArgs e){if(e.KeyCode==Keys.W){keyHeld=false;keyUps++;}};
         Shown+=delegate{BeginInvoke(new Action(Run));};
         FormClosed+=delegate{if(child!=null&&!child.HasExited)try{child.Kill();}catch{};texture.Dispose();};
@@ -48,7 +48,7 @@ internal sealed class WashPositionDesktopProbe : Form
     {
         e.Graphics.Clear(Color.Black);e.Graphics.InterpolationMode=InterpolationMode.NearestNeighbor;
         e.Graphics.PixelOffsetMode=PixelOffsetMode.Half;
-        e.Graphics.DrawImage(texture,new Rectangle(0,offset*4,1024,576),0,0,256,144,GraphicsUnit.Pixel);
+        e.Graphics.DrawImage(texture,new Rectangle(0,offset*4+microPixels,1024,576),0,0,256,144,GraphicsUnit.Pixel);
     }
     private static void Check(bool okay,string reason){if(!okay)throw new Exception(reason);}
     private void Pump(int ms)
@@ -66,14 +66,14 @@ internal sealed class WashPositionDesktopProbe : Form
         var timeout=Stopwatch.StartNew();
         while(!child.HasExited){Pump(10);if(timeout.ElapsedMilliseconds>25000){child.Kill();throw new Exception("HELPER_TIMEOUT "+label);}}
         Pump(100);string text=File.Exists(result)?File.ReadAllText(result).Trim():"NO_RESULT";
-        evidence.AppendLine(label+": "+text+" Wdown="+keyDowns+" Wup="+keyUps+" offset="+offset);
+        evidence.AppendLine(label+": "+text+" Wdown="+keyDowns+" Wup="+keyUps+" offset="+offset+" microPixels="+microPixels);
         child.Dispose();child=null;
         Check(!keyHeld && (GetAsyncKeyState(0x57)&0x8000)==0,"W_STUCK "+label);
         Check(keyDowns==keyUps,"UNBALANCED_KEY_EVENTS "+label);
         return text;
     }
     private void Reset(int displacement,bool noMove,bool wrong)
-    {offset=displacement;keyDowns=keyUps=0;noEffect=noMove;wrongDirection=wrong;keyHeld=false;Invalidate();Update();Pump(150);}
+    {offset=displacement;microPixels=0;keyDowns=keyUps=0;noEffect=noMove;wrongDirection=wrong;keyHeld=false;Invalidate();Update();Pump(150);}
     private void Run()
     {
         try
@@ -96,6 +96,28 @@ internal sealed class WashPositionDesktopProbe : Form
             Reset(3,false,false);
             Check(Execute("wash-correct","pre-cancel",true)=="ERROR CANCELLED","CANCEL_FAILED");
             Check(keyDowns==0,"CANCEL_INJECTED_INPUT");
+            Reset(0,false,false);
+            Check(Execute("wash-maintain","nearby-no-drift",false).StartsWith("WASH_STABLE 0 0 "),"NEARBY_NO_DRIFT_MOVED");
+            // One physical screen pixel is 0.25px in the captured 256-wide image.
+            // This previously fell inside the 0.65px no-input band.
+            Reset(0,false,false);microPixels=1;Invalidate();Update();Pump(150);
+            Check(Execute("wash-correct","micro-standard-baseline",false).StartsWith("WASH_STABLE 0 0 "),"STANDARD_PROFILE_CHANGED");
+            Check(microPixels==1 && keyDowns==0,"STANDARD_BASELINE_MOVED");
+            for(int cycle=0;cycle<8;cycle++)
+            {
+                keyDowns=keyUps=0;microPixels=1;Invalidate();Update();Pump(150);
+                Check(Execute("wash-maintain","micro-cycle-"+cycle,false).StartsWith("WASH_STABLE "),"MICRO_CYCLE_FAILED");
+                Check(microPixels==0 && offset==0 && keyDowns==1,"MICRO_NATIVE_INPUT_NOT_OBSERVED");
+            }
+            Reset(3,true,false);
+            Check(Execute("wash-maintain","nearby-no-effect",false)=="ERROR FORWARD_NO_OBSERVED_EFFECT","NEARBY_NO_EFFECT_GUARD");
+            Check(keyDowns==2,"NEARBY_NO_EFFECT_BUDGET");
+            Reset(3,false,true);
+            Check(Execute("wash-maintain","nearby-wrong-direction",false)=="ERROR WRONG_DIRECTION_OR_CAMERA_MOVED","NEARBY_DIRECTION_GUARD");
+            Check(keyDowns==1,"NEARBY_DIRECTION_BUDGET");
+            Reset(3,false,false);
+            Check(Execute("wash-maintain","nearby-pre-cancel",true)=="ERROR CANCELLED","NEARBY_CANCEL");
+            Check(keyDowns==0,"NEARBY_CANCEL_INPUT");
             evidence.AppendLine("DESKTOP_PROBE OK (synthetic Windows target, NOT FiveM)");status=0;
         }
         catch(Exception e){evidence.AppendLine("DESKTOP_PROBE ERROR "+e.Message);}

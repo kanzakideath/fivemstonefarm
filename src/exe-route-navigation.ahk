@@ -322,7 +322,8 @@ RunExeRouteHelper(operation, routePath, generation := 0) {
             return "ERROR CANCELLED"
         ; The route setup explicitly discloses foreground use. Never type into
         ; another application after a user switches away during navigation.
-        washOperation := operation = "wash-anchor" || operation = "wash-correct" || operation = "wash-check"
+        washOperation := operation = "wash-anchor" || operation = "wash-correct"
+            || operation = "wash-maintain" || operation = "wash-check"
         if washOperation && !WinActive("ahk_id " State.targetHwnd)
             return "ERROR GAME_NOT_FOREGROUND"
         if !washOperation

@@ -55,8 +55,15 @@ namespace AiMiner.UiHost
                     case "vehicle.route":
                     case "vehicle.delete":
                     case "update.check":
+                    case "diagnostics.mark":
+                    case "diagnostics.export":
                     case "window.close":
                         EnsureOnlyKeys(payload);
+                        break;
+
+                    case "diagnostics.clientError":
+                        EnsureOnlyKeys(payload, "message");
+                        values.Add(GetSafeString(payload, "message", 400));
                         break;
 
                     case "nav":
@@ -229,6 +236,9 @@ namespace AiMiner.UiHost
                     "route.trial", new[] { "gold" });
                 AssertAction(@"{""type"":""action"",""action"":""vehicle.route"",""payload"":{}}",
                     "vehicle.route", new string[0]);
+                AssertAction(@"{""type"":""action"",""action"":""diagnostics.export"",""payload"":{}}", "diagnostics.export", new string[0]);
+                AssertRejected(@"{""type"":""action"",""action"":""diagnostics.export"",""payload"":{""path"":""secret""}}");
+                AssertAction(@"{""type"":""action"",""action"":""diagnostics.mark"",""payload"":{}}", "diagnostics.mark", new string[0]);
                 AssertAction(@"{""type"":""action"",""action"":""route.stationary"",""payload"":{""mode"":""washing""}}",
                     "route.stationary", new[] { "washing" });
                 AssertRejected(@"{""type"":""action"",""action"":""route.stationary"",""payload"":{""mode"":""external""}}");

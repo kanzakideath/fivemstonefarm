@@ -50,7 +50,7 @@
   const fixtureState = {
     ...baseState,
     revision: 1,
-    version: '9.1.12',
+    version: '9.1.13',
     controls: {
       overviewSubtitle: { text: modeDetails.gold.subtitle },
       runStatus: { text: '停止中', tone: 'neutral' },
@@ -140,6 +140,7 @@
   });
 
   const elements = Object.fromEntries([
+    'diagnostics-status', 'diagnostics-mark', 'diagnostics-export', 'diagnostics-feedback', 'route-diagnostics', 'update-diagnostics',
     'app-version', 'overview-subtitle', 'run-status', 'connection-status', 'operation-mode',
     'action-picker-button', 'action-value', 'run-button', 'run-button-label', 'run-icon-use',
     'metric-primary-label', 'metric-primary-value', 'metric-correction-label',
@@ -393,6 +394,7 @@
     renderOverview(options.animate !== false && previousRevision >= 0);
     renderVehicle(options.animate !== false && previousRevision >= 0);
     renderRoutes();
+    renderDiagnostics();
     renderSettings(options.animate !== false && previousRevision >= 0);
     renderUpdate(options.animate !== false && previousRevision >= 0);
     updatePickerSelection();
@@ -473,6 +475,21 @@
       animate,
     );
     setText(elements.shortcutHint, textOf(shortcut, '開始 F8 · 停止 F9'), animate);
+  }
+
+  function renderDiagnostics() {
+    const diagnostic = state.diagnostics || {};
+    const busy = Boolean(state.running || state.registrationActive || state.routes?.busy || diagnostic.busy);
+    const status = diagnostic.writeFailures > 0
+      ? `ログ書込失敗 ${diagnostic.writeFailures}回。空き容量・保存先を確認してください。`
+      : diagnostic.enabled === true ? 'ローカルに記録中 · 外部送信なし'
+      : fixtureMode ? '画面プレビュー（ログ保存なし）' : '診断ログの状態を確認中';
+    setText(elements.diagnosticsStatus, status, false);
+    elements.diagnosticsExport.disabled = busy;
+    elements.diagnosticsMark.disabled = Boolean(diagnostic.busy);
+    setText(elements.diagnosticsFeedback, diagnostic.feedback || (busy
+      ? '不具合に目印を付けてからF9で停止すると、診断ZIPを保存できます。'
+      : '診断ZIPを保存して、このチャットへ添付してください。送信前にZIPの内容を確認してください。'), false);
   }
 
   function renderRoutes() {
@@ -859,6 +876,16 @@
     element?.setAttribute('aria-busy', 'false');
   }
 
+  let diagnosticErrorCount = 0;
+  let diagnosticErrorWindow = Date.now();
+  function reportClientError(message) {
+    if (Date.now() - diagnosticErrorWindow > 30000) { diagnosticErrorCount = 0; diagnosticErrorWindow = Date.now(); }
+    if (++diagnosticErrorCount > 5) return;
+    sendAction('diagnostics.clientError', { message: String(message || 'Unknown web error').replace(/[\r\n\t]/g, ' ').slice(0, 400) });
+  }
+  window.addEventListener('error', event => reportClientError(event.message));
+  window.addEventListener('unhandledrejection', event => reportClientError(event.reason?.message || 'Unhandled promise rejection'));
+
   function sendAction(action, payload = {}) {
     const message = { type: 'action', action, payload };
     sentActions.push(clone(message));
@@ -930,6 +957,9 @@
         settingsFeedback: { text: '設定を保存しました', tone: 'success' },
       });
     }
+    if (action === 'diagnostics.mark' || action === 'diagnostics.export') {
+      next.diagnostics = { ...(next.diagnostics || {}), feedback: '画面プレビューです。実際の診断ZIPはWindows版EXEで保存します。外部送信なし。' };
+    }
     if (action === 'update.check') {
       next.controls.updateStatus = { text: '最新です', tone: 'success' };
       next.controls.updateFeedback = { text: '最新バージョンを使用しています', tone: 'success' };
@@ -952,6 +982,14 @@
     });
 
     actionButton.addEventListener('click', openActionPicker);
+    elements.diagnosticsMark.addEventListener('click', () => sendAction('diagnostics.mark'));
+    elements.diagnosticsExport.addEventListener('click', () => sendAction('diagnostics.export'));
+    const openDiagnostics = () => {
+      switchPage('settings', { animate: true, send: true });
+      requestAnimationFrame(() => document.getElementById('support-diagnostics').scrollIntoView({ block: 'center', behavior: 'instant' }));
+    };
+    elements.routeDiagnostics.addEventListener('click', openDiagnostics);
+    elements.updateDiagnostics.addEventListener('click', openDiagnostics);
     elements.stoneReturnButton.addEventListener('click', returnFromStone);
     document.querySelector('[data-close-picker]').addEventListener('click', closeActionPicker);
     elements.runButton.addEventListener('click', () => {
