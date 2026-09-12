@@ -23,6 +23,10 @@ for row in rows:
 for p,value in prepared:
     p.parent.mkdir(parents=True,exist_ok=True)
     p.write_bytes(value)
+p=root/'docs/AI採掘機_使い方.txt'
+s=p.read_text(encoding='utf-8-sig')
+assert s.count('v9.1.15は、')==1
+p.write_text(s.replace('v9.1.15は、','前版は、',1),encoding='utf-8')
 output=root/'artifacts/forward-cycle'
 output.mkdir(parents=True,exist_ok=True)
 (output/'changed-paths.json').write_text(json.dumps([r['path'] for r in rows],ensure_ascii=False),encoding='utf-8')
