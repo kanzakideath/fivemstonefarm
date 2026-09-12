@@ -1,0 +1,85 @@
+name: Validate v9.1.16 fast wash mode
+on:
+  push:
+    branches: [fix/fast-wash-9.1.16]
+    paths: [.github/workflows/fast-wash-repair.yml]
+permissions:
+  contents: write
+concurrency:
+  group: fast-wash-9.1.16
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Apply reviewed fast wash changes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force artifacts/fast-wash | Out-Null
+          python scripts/Apply-FastWash.py
+          if($LASTEXITCODE -ne 0){throw 'Fast wash patch failed.'}
+          git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --check
+          if($LASTEXITCODE -ne 0){throw 'Source diff validation failed.'}
+          ./scripts/Test-FastWashContract.ps1
+      - name: Full Windows build and regression suite
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          Start-Transcript artifacts/fast-wash/build.txt
+          try { ./scripts/Build.ps1 -Version 9.1.16 } finally { Stop-Transcript }
+          ./scripts/Test-FastWashContract.ps1
+      - name: Verify settings UI and diagnostics
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          ./scripts/Test-SupportExport.ps1 -OutputDirectory artifacts/fast-wash/diagnostics
+          python -m pip install playwright==1.57.0
+          if($LASTEXITCODE -ne 0){throw 'Playwright install failed.'}
+          $edge='C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+          if(-not(Test-Path $edge)){$edge='C:\Program Files\Microsoft\Edge\Application\msedge.exe'}
+          if(Test-Path $edge){python scripts/ui-tests/Test-RouteSetupBrowser.py --browser $edge --output artifacts/fast-wash/ui}
+          else {python -m playwright install chromium; if($LASTEXITCODE -ne 0){throw 'Browser install failed.'}; python scripts/ui-tests/Test-RouteSetupBrowser.py --output artifacts/fast-wash/ui}
+          if($LASTEXITCODE -ne 0){throw 'Browser UI regression failed.'}
+          if(-not (Select-String -LiteralPath src/ui-web/src/index.html -SimpleMatch '最速石洗い（ストレージ表示を待たない）')){throw 'Fast wash UI missing.'}
+      - name: Retain only validated application source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          Remove-Item -LiteralPath '.github/workflows/inspect-fast-wash.yml' -Force
+          Remove-Item -LiteralPath '.github/workflows/fast-wash-repair.yml' -Force
+          Remove-Item -LiteralPath 'scripts/Apply-FastWash.py' -Force
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- README.md 'config/AI採掘機.ini' 'docs/AI採掘機_使い方.txt' docs/RELEASE_v9.1.16.md docs/VALIDATION_v9.1.16.md scripts/Test-FastWashContract.ps1 src/README.md src/mining-auto.ahk src/stationary-only.ahk src/ui-web/package.json src/ui-web/package-lock.json src/ui-web/src/app.js src/ui-web/src/index.html
+          git add -u -- .github/workflows/inspect-fast-wash.yml .github/workflows/fast-wash-repair.yml scripts/Apply-FastWash.py
+          git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --cached --check
+          if($LASTEXITCODE -ne 0){throw 'Staged diff failed.'}
+          git commit -m 'Add fast washing without cargo-visibility gate'
+          if($LASTEXITCODE -ne 0){throw 'Commit failed.'}
+          git push origin HEAD:fix/fast-wash-9.1.16
+          if($LASTEXITCODE -ne 0){throw 'Push failed.'}
+          git rev-parse HEAD | Set-Content artifacts/fast-wash/SOURCE.txt
+          git archive --format=zip -o artifacts/fast-wash/tested-source.zip HEAD
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: fast-wash-evidence
+          path: |
+            artifacts/fast-wash/
+            artifacts/update-startup/
+            build/staging/*.txt
+            build/staging/*.log
+          retention-days: 14
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: success()
+        with:
+          name: fast-wash-v9.1.16-candidate
+          path: dist/ai-miner-win-x64.exe
+          retention-days: 14
+          if-no-files-found: error
