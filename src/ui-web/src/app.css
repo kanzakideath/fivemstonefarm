@@ -1307,3 +1307,11 @@ input:focus-visible,
 .support-primary { color: #fff; background: #335b8b; }
 .support-button:disabled { opacity: .55; cursor: not-allowed; }
 .support-button:focus-visible { outline: 3px solid #4479ff; outline-offset: 3px; }
+
+/* Direct fast-wash entry immediately below the ordinary start/stop action. */
+#run-button { margin-bottom: 10px; }
+.fast-wash-action { margin: 0 0 8px; }
+.fast-wash-action .press-surface { background: #16736c; }
+.fast-wash-action:active .press-surface { background: #115b55; }
+.fast-wash-action:disabled .press-surface { background: #a8a8ad; }
+.fast-wash-description { margin: 0 8px 24px; line-height: 1.5; }

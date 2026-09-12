@@ -32,6 +32,10 @@ foreach ($invalidCall in @(
     [string[]]@('wash-task-ready', 'unused-result.txt', 'invalid-epoch', '29200'),
     [string[]]@('wash-task-ready', 'unused-result.txt', 'invalid-epoch', '42'),
     [string[]]@('try-washing', 'unused-result.txt', 'invalid-epoch', '29200'),
+    [string[]]@('try-washing', 'unused-result.txt', 'invalid-epoch', '29200', 'work-only'),
+    [string[]]@('try-washing', 'unused-result.txt', 'invalid-epoch', '42', 'work-only'),
+    [string[]]@('try-washing', 'unused-result.txt', 'invalid-epoch', '29200', 'unrecognized'),
+    [string[]]@('try-mining', 'unused-result.txt', 'invalid-epoch', '29200', 'work-only'),
     [string[]]@('probe-wash-storage', 'unused-result.txt'),
     [string[]]@('probe-wash-storage', 'unused-result.txt', 'invalid-epoch'),
     [string[]]@('try-mining', 'unused-result.txt'),
@@ -58,6 +62,9 @@ $payloadPath = Join-Path ([IO.Path]::GetTempPath()) `
     ('ai-miner-wash-dom-' + [Guid]::NewGuid().ToString('N') + '.json')
 try {
     $payload = [ordered]@{
+        fastWashClick = [string]$bridgeType.GetMethod('WorkClickExpressionForMode', $bindingFlags).Invoke($null, [object[]]@('try-washing', $true))
+        ordinaryWashClick = [string]$bridgeType.GetMethod('WorkClickExpressionForMode', $bindingFlags).Invoke($null, [object[]]@('try-washing', $false))
+        fastFlagOnMineClick = [string]$bridgeType.GetMethod('WorkClickExpressionForMode', $bindingFlags).Invoke($null, [object[]]@('try-mining', $true))
         stationaryMine = [string]$bridgeType.GetMethod('StationaryControlsExpression', $bindingFlags).Invoke($null, [object[]]@([Enum]::Parse($actionType, 'Mine')))
         stationaryGold = [string]$bridgeType.GetMethod('StationaryControlsExpression', $bindingFlags).Invoke($null, [object[]]@([Enum]::Parse($actionType, 'Gold')))
         stationaryClick = [string]$bridgeType.GetMethod('StationaryWorkClickExpression', $bindingFlags).Invoke($null, [object[]]@([string]$targetMethod.Invoke($null,[object[]]@($true))))

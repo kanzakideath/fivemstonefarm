@@ -369,3 +369,31 @@ for (const [expression,label] of [[expressions.stationaryMine,'鉱石を採掘�
  assert(evaluate(expression,f.document)==='AMBIGUOUS WASH_STORAGE','Ambiguous cargo must not authorize work');
 }
 console.log('STATIONARY_DOM_PASS: three modes, same-turn cargo guard, no unintended clicks');
+
+// Use the exact builder called at the production click site, not an unwrapped fixture.
+for (const state of ['missing', 'disabled', 'ambiguous', 'generic']) {
+  const f = targetFixture();
+  const cargo = [];
+  if (state === 'disabled') cargo.push(washOption('ストレージを開く',300,{attributes:{'aria-disabled':'true'}}));
+  if (state === 'ambiguous') cargo.push(washOption('ストレージを開く',300),washOption('ストレージを開く',50));
+  if (state === 'generic') cargo.push(washOption('インベントリを開く',300,{states:['hover']}));
+  for (const c of cargo) f.root.append(c.hit);
+  assert(evaluate(expressions.ordinaryWashClick,f.document) === false, state + ': ordinary cargo guard');
+  assert(evaluate(expressions.fastWashClick,f.document) === true, state + ': fast washing without cargo');
+  assert(f.first.hit.clicked + f.second.hit.clicked === 1, state + ': exactly one wash');
+  assert(cargo.every(c => c.hit.clicked === 0), state + ': never click cargo/inventory');
+}
+{
+  const f = targetFixture();
+  f.first.hit.style.display = f.second.hit.style.display = 'none';
+  const cargo = washOption('ストレージを開く',300); f.root.append(cargo.hit);
+  assert(evaluate(expressions.fastWashClick,f.document) === false, 'Cargo cannot substitute for washing');
+  assert(cargo.hit.clicked === 0, 'No fallback cargo click');
+}
+{
+  const f = targetFixture();
+  f.first.hit.style.display = f.second.hit.style.display = 'none';
+  const mine = washOption('鉱石を採掘する',300); f.root.append(mine.hit);
+  assert(evaluate(expressions.fastFlagOnMineClick,f.document) === false && mine.hit.clicked === 0, 'Fast flag cannot relax other modes');
+}
+console.log('FAST_WASH_DOM_PASS: actual dispatch expression, washing alone, exact single click');

@@ -177,3 +177,9 @@ for (const [,body] of html.matchAll(/<button\b[^>]*class="[^"]*primary-action[^"
   assert.match(body, /class="press-surface"/, 'white primary buttons must have a visible surface');
 }
 console.log('Route setup entries, visible surfaces and guarded commands verified');
+
+const nativeProtocol = await readFile(join(root, '..', 'ui-host', 'Protocol.cs'), 'utf8');
+assert.match(html, /id="fast-wash-start"/);
+assert.match(js, /sendAction\('washing\.fast\.start'\)/);
+assert.match(nativeProtocol, /case "washing\.fast\.start":/);
+assert.match(nativeProtocol, /case "washing\.fast\.toggle":/);

@@ -73,8 +73,10 @@ internal static class CdpBridge
             || mode == "activate" || mode == "deactivate"
             || mode == "deactivate-29200" || mode == "deactivate-29300");
         bool stationaryReadyMode = args.Length == 5 && mode == "stationary-task-ready";
-        bool actionTryMode = (args.Length == 3 || (args.Length == 4 && mode == "try-washing")) && (mode == "try-mining"
-            || mode == "try-washing" || mode == "try-gold");
+        bool fastWashWorkOnly = mode == "try-washing" && args.Length == 5
+            && String.Equals(args[4], "work-only", StringComparison.Ordinal);
+        bool actionTryMode = (args.Length == 3 || (args.Length == 4 && mode == "try-washing")
+            || fastWashWorkOnly) && (mode == "try-mining" || mode == "try-washing" || mode == "try-gold");
         bool nearbyWashProbeMode = args.Length == 3 && mode == "probe-wash-storage";
         bool washReadyMode = args.Length == 4 && mode == "wash-task-ready";
         bool actionCompletionMode = args.Length == 4 && mode == "wait-action-completion";
@@ -99,7 +101,7 @@ internal static class CdpBridge
             return 64;
 
         int preferredWashPort=0;
-        if ((washReadyMode || (actionTryMode && args.Length==4))
+        if ((washReadyMode || (actionTryMode && args.Length>=4))
             && (!Int32.TryParse(args[3],out preferredWashPort)
                 || (preferredWashPort!=0 && preferredWashPort!=29200 && preferredWashPort!=29300)))
             return 64;
@@ -271,7 +273,7 @@ internal static class CdpBridge
                 if (actionTryMode && !IsValidServerEpoch(args[2]))
                     return 64;
                 result = actionTryMode
-                    ? TryAndWaitActionAsync(mode, args[2], preferredWashPort).GetAwaiter().GetResult()
+                    ? TryAndWaitActionAsync(mode, args[2], preferredWashPort, fastWashWorkOnly).GetAwaiter().GetResult()
                     : TryActionAsync(mode, null, null).GetAwaiter().GetResult();
             }
             else if (washReadyMode)
@@ -1099,7 +1101,7 @@ internal static class CdpBridge
     }
 
     private static async Task<string> TryActionAsync(string mode, string expectedEpoch,
-        Action<long> clickDispatchObserver, int preferredPort = 0)
+        Action<long> clickDispatchObserver, int preferredPort = 0, bool fastWashWorkOnly = false)
     {
         bool probeOnly = mode == "try-probe-mining";
         bool washingMode = mode == "try-washing";
@@ -1148,9 +1150,8 @@ internal static class CdpBridge
                                 expectedTargetFrameId, StringComparison.Ordinal)
                             || !await session.MatchesServerEpochAsync().ConfigureAwait(false)))
                             return "ERROR SERVER_SESSION_CHANGED";
-                        expression = washingMode
-                            ? WashTargetExpression(true) : ClickExpression(targetLabel, exactOnly);
-                        expression = StationaryWorkClickExpression(expression);
+                        // Fast washing omits cargo, not the exact work target or epoch.
+                        expression = WorkClickExpressionForMode(mode, fastWashWorkOnly);
                         bool clicked;
                         clickMayHaveBeenDispatched = true;
                         if (clickDispatchObserver != null)
@@ -1203,7 +1204,7 @@ internal static class CdpBridge
     }
 
     private static async Task<string> TryAndWaitActionAsync(
-        string mode, string expectedEpoch, int preferredPort = 0)
+        string mode, string expectedEpoch, int preferredPort = 0, bool fastWashWorkOnly = false)
     {
         WorkAction action;
         if (!TryGetWorkActionForTryMode(mode, out action))
@@ -1235,7 +1236,7 @@ internal static class CdpBridge
         {
             long clickDispatchTimestamp = -1;
             string clickResult = await TryActionAsync(mode, expectedEpoch,
-                delegate(long timestamp) { clickDispatchTimestamp = timestamp; }, preferredPort)
+                delegate(long timestamp) { clickDispatchTimestamp = timestamp; }, preferredPort, fastWashWorkOnly)
                 .ConfigureAwait(false);
             string clickedResult = "CLICKED " + actionToken;
             if (!String.Equals(clickResult, clickedResult, StringComparison.Ordinal))
@@ -3128,6 +3129,16 @@ internal static class CdpBridge
 
     // Non-mutating functional-area proof. The two labels are read in the same
     // JS turn; stale/alternating single-label samples cannot become a pair.
+    private static string WorkClickExpressionForMode(string mode, bool fastWashWorkOnly)
+    {
+        bool washing = mode == "try-washing";
+        bool gold = mode == "try-gold";
+        string workClick = washing ? WashTargetExpression(true)
+            : ClickExpression(gold ? "砂金採りトレイ" : "鉱石を採掘する", gold);
+        // This washing-only policy never authorizes an inventory transfer.
+        return washing && fastWashWorkOnly ? workClick : StationaryWorkClickExpression(workClick);
+    }
+
     private static string StationaryWorkClickExpression(string workClick)
     {
         return "(() => {if(" + StorageTargetExpression(false) + "!=='PRESENT')return false;return " + workClick + ";})()";

@@ -51,6 +51,7 @@ namespace AiMiner.UiHost
                         break;
 
                     case "run.toggle":
+                    case "washing.fast.start":
                     case "vehicle.register":
                     case "vehicle.route":
                     case "vehicle.delete":
@@ -79,6 +80,7 @@ namespace AiMiner.UiHost
                         values.Add(GetEnum(payload, "mode", "mining", "washing", "gold"));
                         break;
 
+                    case "washing.fast.toggle":
                     case "vehicle.toggle":
                         EnsureOnlyKeys(payload, "enabled");
                         values.Add(GetBoolean(payload, "enabled") ? "1" : "0");
@@ -244,6 +246,14 @@ namespace AiMiner.UiHost
                 AssertRejected(@"{""type"":""action"",""action"":""route.stationary"",""payload"":{""mode"":""external""}}");
                 AssertRejected(@"{""type"":""action"",""action"":""route.teach"",""payload"":{""mode"":""external""}}");
                 AssertRejected(@"{""type"":""action"",""action"":""route.trial"",""payload"":{""mode"":""gold"",""command"":""bad""}}");
+                AssertAction(@"{""type"":""action"",""action"":""washing.fast.start"",""payload"":{}}",
+                    "washing.fast.start", new string[0]);
+                AssertAction(@"{""type"":""action"",""action"":""washing.fast.toggle"",""payload"":{""enabled"":true}}",
+                    "washing.fast.toggle", new[] { "1" });
+                AssertAction(@"{""type"":""action"",""action"":""washing.fast.toggle"",""payload"":{""enabled"":false}}",
+                    "washing.fast.toggle", new[] { "0" });
+                AssertRejected(@"{""type"":""action"",""action"":""washing.fast.start"",""payload"":{""enabled"":true}}");
+                AssertRejected(@"{""type"":""action"",""action"":""washing.fast.toggle"",""payload"":{}}");
                 const string settingsFixture = @"{""type"":""action"",""action"":""settings.save"",""payload"":{""startHotkey"":""F8"",""stopHotkey"":""F9"",""backgroundMode"":true,""hideWhileRunning"":false,""correctionEnabled"":true,""autoEat"":true,""foodKey"":1,""autoCheckUpdates"":true,""minimumFreeWeight"":2000,""storageTriggerPercent"":90,""estimatedRewardWeight"":2000,""minimumFreeSlots"":1,""storageMaxRetries"":3,""farmWatchdogMs"":45000,""targetLostRecoveryMs"":12000,""debugOverlay"":false}}";
                 AssertAction(settingsFixture,
                     "settings.save", new[] { "F8", "F9", "1", "0", "1", "1", "1", "1", "2000",
