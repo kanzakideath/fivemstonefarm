@@ -358,7 +358,7 @@ foreach ($coldStartClause in @(
         "Local raw-zero cold start lost its refill-only clause: $coldStartClause"
 }
 $initializeCall = $startMining.IndexOf(
-    'InitializeLocalVehicleRun(runGeneration)', [StringComparison]::Ordinal)
+    'InitializeLocalVehicleRun(runGeneration, primedInventory)', [StringComparison]::Ordinal)
 $pendingBranch = $startMining.IndexOf('if State.storagePending {',
     $initializeCall, [StringComparison]::Ordinal)
 $initialStorageSchedule = $startMining.IndexOf(

@@ -18,3 +18,19 @@ Assert ($config.Contains('FastMode=1')) 'Fast mode template default is not ON.'
 Assert ($source.Contains('"try-washing"')) 'Atomic wash helper path missing.'
 Assert ($source.Contains('deposit-delta') -and $source.Contains('withdraw-item')) 'Transfer verification paths missing.'
 Write-Host 'FAST_WASH_CONTRACT_PASS'
+
+$hostSource = Get-Content (Join-Path $root 'src/ui-host/Protocol.cs') -Raw
+Assert ($hostSource.Contains('case "washing.fast.toggle":') -and $hostSource.Contains('case "washing.fast.start":')) 'Native host rejects fast-wash actions.'
+Assert ($html.Contains('id="fast-wash-start"') -and $ui.Contains("sendAction('washing.fast.start')")) 'Direct fast-wash entry is missing.'
+Assert ($source.Contains('&& (!FastWashModeEnabled() || State.storagePending)')) 'Fast mode still uses independent periodic inventory dispatch.'
+Assert ($source.Contains('MaybeHandleFastWashCapacity(expectedGeneration)')) 'Fast mode lost live pre-click capacity verification.'
+Assert ($source.Contains('reuseObservation := FastWashCapacityObservationCurrent(expectedGeneration, observedInfo)')) 'Capacity workflow does not validate the observed snapshot.'
+Assert ($source.Contains('poseRestored := StationaryOnlyEnabled() ? IsCurrentRun(expectedGeneration)')) 'Stationary return still invokes retired walking.'
+Assert ($source.Contains('FAST_WASH_RESUME_DEFERRED')) 'Fast resume still waits for paired cargo display.'
+Write-Host 'FAST_WASH_NATIVE_WIRING_PASS'
+
+$bridgeSource = Get-Content (Join-Path $root 'src/background-bridge/CdpBridge.cs') -Raw
+Assert ($bridgeSource.Contains('expression = WorkClickExpressionForMode(mode, fastWashWorkOnly);')) 'Final click is not wired to fast policy.'
+Assert ($bridgeSource.Contains('washing && fastWashWorkOnly ? workClick : StationaryWorkClickExpression(workClick)')) 'Only fast washing may omit cargo guard.'
+Assert ($source.Contains('washArguments.Push("work-only")')) 'AHK does not request the native fast policy.'
+Write-Host 'FAST_WASH_FINAL_CLICK_WIRING_PASS'

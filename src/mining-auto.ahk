@@ -9,7 +9,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "9.1.16"
+global AppVersion := "9.1.17"
 ;@Ahk2Exe-SetVersion %A_PriorLine~U)^.*"([^"]+)".*$~$1%
 processId := DllCall("GetCurrentProcessId")
 global LocalNav := {busy: false, pid: 0, cancel: "", taskId: 0, dialog: 0, guide: 0, feedback: "", requestActive: false, cycle: 0, lastBatchKey: "", lastActionKey: ""}
@@ -50,6 +50,7 @@ FileInstall "AI採掘機_Updater.exe", updaterHelperPath, true
 #Include wash-position.ahk
 #Include nearby-wash.ahk
 #Include stationary-only.ahk
+#Include fast-wash.ahk
 InitExeRouteAssets()
 settingsPath := isUiTestRun || isValidationRun
     ? A_Temp "\ai-miner-ui-test-" testRunId ".ini"
@@ -2377,6 +2378,17 @@ ProcessWebUiActions(*) {
                     ToggleVisualTestRun()
                 else
                     ToggleMining()
+            } else if action = "washing.fast.start" && parts.Length = 3 {
+                if State.visualTest {
+                    if !State.running && !State.registrationActive {
+                        Config.actionMode := "washing"
+                        Config.fastWashMode := 1
+                        State.fastWashControl.Value := 1
+                        State.actionControl.Choose(2)
+                        ToggleVisualTestRun()
+                    }
+                } else
+                    StartMining("fast-washing")
             } else if action = "vehicle.toggle" && parts.Length = 4 {
                 if State.visualTest {
                     State.vehicleEnabledControl.Value := parts[4] = "1"
@@ -2472,6 +2484,7 @@ ToggleFastWashMode(enabled) {
     State.settingsErrorLabel.Text := requested
         ? "最速石洗いON：通常洗浄はストレージ表示を待たず、洗浄対象だけを待ちます。"
         : "最速石洗いOFF：従来どおり荷台前の両操作を確認してから洗浄します。"
+    UpdateActionUi()
     SupportWriteEvent("FAST_WASH_SETTING", "enabled=" requested)
     QueueWebUiFlush(true)
     return true
@@ -2621,6 +2634,8 @@ BuildWebUiStateJson() {
         . ',"page":' JsonQuote(State.page)
         . ',"running":' (State.running ? "true" : "false")
         . ',"registrationActive":' (State.registrationActive ? "true" : "false")
+        . ',"startInProgress":' (State.startInProgress ? "true" : "false")
+        . ',"fastWashStartAvailable":' (FastWashStartAvailable() ? "true" : "false")
         . ',"actionMode":' JsonQuote(actionMode)
         . ',"farmState":' JsonQuote(State.farmState)
         . ',"farmStateReason":' JsonQuote(State.farmStateReason)
@@ -6372,7 +6387,9 @@ UpdateActionUi() {
         State.taglineLabel.Text := "画面を奪わず、石の再出現を見て採掘します"
     }
     if StationaryOnlyEnabled() {
-        State.taglineLabel.Text := "荷台前の両操作を確認し、移動・視点入力なしで続けます"
+        State.taglineLabel.Text := actionMode = "washing" && Config.fastWashMode
+            ? "高速石洗い：洗浄対象だけで開始。収納・補充時のみ荷台を確認します"
+            : "荷台前の両操作を確認し、移動・視点入力なしで続けます"
         if actionMode != "mining"
             State.mealLabel.Text := "自動移動（なし）`n0"
     }
@@ -8584,7 +8601,7 @@ RunUpdaterCapabilities() {
     }
 }
 
-StartMining(*) {
+StartMining(startMode := "", *) {
     global State, Config, LocalNav
     ; Legacy INI/UI settings cannot reactivate movement, camera control or
     ; foreground pixel macros. Storage/eating opt-ins remain user settings.
@@ -8605,6 +8622,8 @@ StartMining(*) {
         try LocalNav.dialog.Hide()
     runInitializationOwned := false
     try {
+    if startMode = "fast-washing" && !ConfigureFastWashStart(startToken)
+        return
     if !ShowStartPreparationState(startToken)
         return
     ; A previous graceful stop may have hit a transient disk error while appending
@@ -8851,9 +8870,12 @@ StartMining(*) {
         }
     }
 
-    if Config.backgroundMode && (Config.autoEat || Config.vehicleStorageEnabled) {
+    primedInventory := 0
+    if Config.backgroundMode && (Config.autoEat || Config.vehicleStorageEnabled || FastWashModeEnabled()) {
         State.automationPhase := "priming_inventory"
-        State.statusLabel.Text := "●  インベントリ状態を準備しています"
+        State.statusLabel.Text := FastWashModeEnabled()
+            ? "●  高速石洗い：開始前の所持品データを確認（荷台探索なし）"
+            : "●  インベントリ状態を準備しています"
         inventoryReady := EnsureBackgroundInventoryReady(runGeneration,
             &primedInventory)
         if !IsCurrentRun(runGeneration)
@@ -8943,7 +8965,7 @@ StartMining(*) {
 
     if Config.vehicleStorageEnabled && Config.vehicleCompanionProtocol = 0
         && IsCurrentRun(runGeneration) {
-        if !InitializeLocalVehicleRun(runGeneration)
+        if !InitializeLocalVehicleRun(runGeneration, primedInventory)
             return
     }
 
@@ -9344,21 +9366,29 @@ MaybeHandleServerHealth(expectedGeneration) {
     return true
 }
 
-MaybeHandleVehicleCapacity(expectedGeneration) {
+MaybeHandleVehicleCapacity(expectedGeneration, observedInfo := 0) {
     global State, Config
     if !Config.vehicleStorageEnabled || !IsCurrentRun(expectedGeneration)
         return false
     now := MonotonicMs()
-    if !State.storagePending && now < State.nextCapacityCheckAt {
+    reuseObservation := FastWashCapacityObservationCurrent(expectedGeneration, observedInfo)
+    if !reuseObservation && !State.storagePending && now < State.nextCapacityCheckAt {
         TransitionFarmState("FARMING", "容量確認はまだ不要",
             expectedGeneration, 0, true)
         return false
     }
     State.nextCapacityCheckAt := now + Config.capacityCheckIntervalMs
-    snapshotResult := RunBackgroundBridgeCancelable(expectedGeneration, "inventory-snapshot")
+    if reuseObservation {
+        inventoryInfo := observedInfo
+        snapshotResult := "FAST_WASH_LIVE_BASELINE"
+        snapshotReady := true
+    } else {
+        snapshotResult := RunBackgroundBridgeCancelable(expectedGeneration, "inventory-snapshot")
+        snapshotReady := ParseInventorySnapshot(snapshotResult, &inventoryInfo)
+    }
     if !IsCurrentRun(expectedGeneration)
         return true
-    if !ParseInventorySnapshot(snapshotResult, &inventoryInfo) {
+    if !snapshotReady {
         State.capacityProbeFailures += 1
         WriteDiagnostic("CAPACITY_PROBE_ERROR=" snapshotResult)
         if State.capacityProbeFailures >= 3 {
@@ -10800,7 +10830,7 @@ WashingBatchWasCompleted(beforeSpec, afterSpec, rawStoneItemName) {
     return beforeCount > 0 && afterCount = 0
 }
 
-InitializeLocalVehicleRun(expectedGeneration) {
+InitializeLocalVehicleRun(expectedGeneration, primedInventory := 0) {
     global State, Config
     State.statusLabel.Text := "作業位置と満重量判定を確認しています"
     epochValid := ValidateServerEpochCheckpoint(expectedGeneration, "local_work_start")
@@ -10816,10 +10846,19 @@ InitializeLocalVehicleRun(expectedGeneration) {
     if !RequireExeRouteForRun(expectedGeneration)
         return false
     State.statusLabel.Text := "開始前の所持品を保護しています"
-    snapshotResult := RunBackgroundBridgeCancelable(expectedGeneration, "inventory-snapshot")
+    if FastWashStartupObservationCurrent(expectedGeneration, primedInventory) {
+        ; This object was read by the same startup stack before any work/transfer.
+        inventoryInfo := primedInventory
+        snapshotResult := "STARTUP_SNAPSHOT_REUSED"
+        snapshotReady := true
+        SupportWriteEvent("FAST_WASH_STARTUP_REUSE", "cargo_probe=0 duplicate_snapshot=0")
+    } else {
+        snapshotResult := RunBackgroundBridgeCancelable(expectedGeneration, "inventory-snapshot")
+        snapshotReady := ParseInventorySnapshot(snapshotResult, &inventoryInfo)
+    }
     if !IsCurrentRun(expectedGeneration)
         return false
-    if !ParseInventorySnapshot(snapshotResult, &inventoryInfo) {
+    if !snapshotReady {
         WriteDiagnostic("LOCAL_INVENTORY_BASELINE_ERROR=" snapshotResult)
         StopMining()
         State.statusLabel.Text := "インベントリ状態を取得できないため開始しませんでした"
@@ -11797,14 +11836,17 @@ CompleteVerifiedStorageReturn(expectedGeneration) {
     TransitionFarmState("RETURNING_TO_FARM", "元の作業地点へ復帰",
         expectedGeneration, 0, true)
     State.statusLabel.Text := ExeStorageMethod(State.runMode) = "stationary" ? "近接位置の作業状態を確認しています" : "作業位置へ戻っています"
-    poseRestored := ExecuteExeRouteLeg(expectedGeneration, "return")
+    ; Stationary storage never invokes the retired walking helper (which rejects
+    ; all calls). Physical travel is not claimed; epoch and actual work follow.
+    poseRestored := StationaryOnlyEnabled() ? IsCurrentRun(expectedGeneration)
+        : ExecuteExeRouteLeg(expectedGeneration, "return")
     if !IsCurrentRun(expectedGeneration)
         return false
     if !poseRestored {
         StopAutomationWithFault("作業位置へ安全に戻れないため停止しました", "vehicle")
         return false
     }
-    TransitionFarmState("VERIFY_FARM_REACHED", "登録した復路の実画面照合を確認",
+    TransitionFarmState("VERIFY_FARM_REACHED", "収納後の作業再開条件を確認",
         expectedGeneration, 0, true)
     if !ValidateServerEpochCheckpoint(expectedGeneration, "local_work_return") {
         StopAutomationWithFault("収納中のサーバー再起動または再接続を検知しました",
@@ -11822,14 +11864,20 @@ CompleteVerifiedStorageReturn(expectedGeneration) {
     WriteDiagnostic("LOCAL_FARM_RETURN_ROUTE_CONFIRMED refill="
         . (State.storageRefillVerified ? 1 : 0))
     State.statusLabel.Text := "作業ボタンを再確認しています"
-    workRecovered := StationaryOnlyEnabled() ? WaitStationaryTaskReady(expectedGeneration) : ProbeExeRouteWork(expectedGeneration, State.runMode)
+    deferWorkProbe := FastWashModeEnabled()
+    workRecovered := deferWorkProbe ? true
+        : StationaryOnlyEnabled() ? WaitStationaryTaskReady(expectedGeneration)
+        : ProbeExeRouteWork(expectedGeneration, State.runMode)
     if !IsCurrentRun(expectedGeneration)
         return false
     if !workRecovered {
         StopAutomationWithFault("復路終点の作業ボタンを確認できません。徒歩をやり直さず停止しました", "vehicle", "EXE_ROUTE_WORK_NOT_VERIFIED")
         return false
     }
-    ObserveStorageCycle(expectedGeneration, "work_arrived")
+    if deferWorkProbe
+        SupportWriteEvent("FAST_WASH_RESUME_DEFERRED", "cargo_gate=0 proof=pending_next_verified_reward")
+    else
+        ObserveStorageCycle(expectedGeneration, "work_arrived")
     State.storageTrips += 1
     State.vehicleTripLabel.Text := "自動収納`n" State.storageTrips
     State.waitingForStone := false
@@ -12296,6 +12344,7 @@ EnsureBackgroundInventoryReady(expectedGeneration, &inventoryInfo) {
     if !IsCurrentRun(expectedGeneration)
         return false
     snapshotReady := ParseInventorySnapshot(snapshotResult, &inventoryInfo)
+    snapshotObservedAt := MonotonicMs()
 
     ; 開いたままのinventoryを持ち越さず、初期化済みの場合も閉状態を保証します。
     closeResult := RunBackgroundBridgeCancelable(expectedGeneration, "close-inventory")
@@ -12320,6 +12369,8 @@ EnsureBackgroundInventoryReady(expectedGeneration, &inventoryInfo) {
             return false
         }
         port := State.lastDevConPort
+        State.statusLabel.Text := "●  所持品データが未初期化のため一度だけ開閉します（荷台探索ではありません）"
+        SupportWriteEvent("INVENTORY_INITIALIZE_ONCE", "reason=uninitialized player_inventory=1 cargo=0")
         pressResult := RunBackgroundBridgeCancelable(expectedGeneration,
             "press-inventory", port, 80)
         if !IsCurrentRun(expectedGeneration)
@@ -12346,6 +12397,7 @@ EnsureBackgroundInventoryReady(expectedGeneration, &inventoryInfo) {
                 return false
             if ParseInventorySnapshot(snapshotResult, &inventoryInfo) {
                 snapshotReady := true
+                snapshotObservedAt := MonotonicMs()
                 break
             }
             Sleep 160
@@ -12365,6 +12417,11 @@ EnsureBackgroundInventoryReady(expectedGeneration, &inventoryInfo) {
         return false
     WriteDiagnostic("INVENTORY_PRIME ready=" snapshotReady
         " epoch=" epochValid " snapshot=" snapshotResult)
+    if snapshotReady && epochValid {
+        inventoryInfo.startupGeneration := expectedGeneration
+        inventoryInfo.startupEpoch := State.serverEpoch
+        inventoryInfo.startupObservedAt := snapshotObservedAt
+    }
     return snapshotReady && epochValid
 }
 
@@ -12445,7 +12502,10 @@ AutomationCycleOwned(expectedGeneration, expectedTaskId := 0) {
     State.nextActionAt := 0
     if MaybeHandleServerHealth(expectedGeneration)
         return
-    if State.farmState = "FARMING" && Config.vehicleStorageEnabled {
+    if State.farmState = "FARMING" && Config.vehicleStorageEnabled
+        && (!FastWashModeEnabled() || State.storagePending) {
+        ; Fast washing checks capacity from its live pre-click reward baseline.
+        ; Pending transfers still enter the original reconciliation workflow.
         TransitionFarmState("CHECKING_INVENTORY", "定期所持品確認",
             expectedGeneration)
         if MaybeHandleVehicleCapacity(expectedGeneration)
@@ -13855,6 +13915,8 @@ CompleteVerifiedFarmReward(expectedGeneration, actionMode, completionAt,
         wasResume := State.resumeVerificationPending
         if wasResume {
             State.resumeVerificationPending := false
+            if FastWashModeEnabled()
+                ObserveStorageCycle(expectedGeneration, "work_arrived", "proof=verified_washing_reward")
             ObserveStorageCycle(expectedGeneration, "resumed_verified")
         }
         if State.farmState = "RECOVERY" || State.farmState = "RESUMING_FARM" {
@@ -14050,6 +14112,8 @@ WashAttemptBackground(expectedGeneration) {
             "wash_reward_baseline_unavailable")
         return
     }
+    if MaybeHandleFastWashCapacity(expectedGeneration)
+        return
     ; Observed correction preserves the captured camera. The legacy view-only
     ; mode remains opt-out; never pitch-clamp the visual anchor on every attempt.
     if !Config.washForwardCorrection && !EnsureWorkViewDown(expectedGeneration, "washing", true) {
@@ -14060,8 +14124,12 @@ WashAttemptBackground(expectedGeneration) {
     State.statusLabel.Text := "●  「石を洗う」を確認中"
     dispatchStartedAt := MonotonicMs()
     WriteDiagnostic("WASH_DISPATCH_BEGIN sinceRewardMs=" (State.lastVerifiedRewardAt ? dispatchStartedAt-State.lastVerifiedRewardAt : -1))
+    washArguments := [State.serverEpoch, (State.lastDevConPort = 29200 || State.lastDevConPort = 29300 ? State.lastDevConPort : 0)]
+    if FastWashModeEnabled()
+        washArguments.Push("work-only")
+    WriteDiagnostic("WASH_CLICK_POLICY fast=" (FastWashModeEnabled() ? 1 : 0) " cargoGate=" (FastWashModeEnabled() ? 0 : 1))
     clickResult := RunBackgroundBridgeCancelable(expectedGeneration,
-        "try-washing", State.serverEpoch, (State.lastDevConPort = 29200 || State.lastDevConPort = 29300 ? State.lastDevConPort : 0))
+        "try-washing", washArguments*)
     if !IsCurrentRun(expectedGeneration)
         return
     WriteDiagnostic("WASH_DISPATCH_END elapsedMs=" (MonotonicMs()-dispatchStartedAt))

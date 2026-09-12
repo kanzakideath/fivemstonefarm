@@ -50,7 +50,7 @@
   const fixtureState = {
     ...baseState,
     revision: 1,
-    version: '9.1.16',
+    version: '9.1.17',
     controls: {
       overviewSubtitle: { text: modeDetails.gold.subtitle },
       runStatus: { text: '停止中', tone: 'neutral' },
@@ -111,6 +111,7 @@
   let lastPickerFocus = null;
   let pickerKind = '';
   let runPendingRevision = null;
+  let fastWashPendingRevision = null;
   let settingsPendingRevision = null;
   let updatePendingRevision = null;
   let vehiclePendingRevision = null;
@@ -144,6 +145,7 @@
     'diagnostics-status', 'diagnostics-mark', 'diagnostics-export', 'diagnostics-feedback', 'route-diagnostics', 'update-diagnostics',
     'app-version', 'overview-subtitle', 'run-status', 'connection-status', 'operation-mode',
     'action-picker-button', 'action-value', 'run-button', 'run-button-label', 'run-icon-use',
+    'fast-wash-start', 'fast-wash-start-label',
     'metric-primary-label', 'metric-primary-value', 'metric-correction-label',
     'metric-correction-value', 'metric-storage-value', 'shortcut-hint', 'vehicle-status',
     'vehicle-enabled', 'capacity-value', 'capacity-fill', 'capacity-detail',
@@ -382,6 +384,10 @@
       runPendingRevision = null;
       clearPending(elements.runButton, 'run');
     }
+    if (fastWashPendingRevision !== null && revision > fastWashPendingRevision) {
+      fastWashPendingRevision = null;
+      clearPending(elements.fastWashStart, 'fast-wash');
+    }
     if (updatePendingRevision !== null && revision > updatePendingRevision) {
       updatePendingRevision = null;
       clearPending(elements.updateCheck, 'update');
@@ -449,6 +455,13 @@
     elements.runButton.classList.toggle('is-running', state.running);
     elements.runButton.disabled = !enabledOf(runButton);
     elements.runButton.setAttribute('aria-busy', elements.runButton.classList.contains('is-pending') ? 'true' : 'false');
+    const fastAvailable = state.fastWashStartAvailable !== false && !state.running
+      && !state.registrationActive && !state.startInProgress && !state.routes?.busy
+      && enabledOf(runButton);
+    elements.fastWashStart.disabled = !fastAvailable;
+    setText(elements.fastWashStartLabel,
+      state.running && state.actionMode === 'washing' && booleanOf(control('fastWashMode'))
+        ? '高速石洗い 実行中（上のボタンで停止）' : '高速石洗いを開始', false);
     actionButton.disabled = !enabledOf(control('actionPicker', 'actionControl'), !state.running);
 
     setText(elements.metricPrimaryLabel, textOf(primaryLabel, legacyPrimary.label || details.primaryMetric), animate);
@@ -867,6 +880,7 @@
     element.setAttribute('aria-busy', 'true');
     pendingTimeouts.set(key, setTimeout(() => clearPending(element, key), 6000));
     if (key === 'run') runPendingRevision = revision;
+    if (key === 'fast-wash') fastWashPendingRevision = revision;
     if (key === 'settings') settingsPendingRevision = revision;
     if (key === 'update') updatePendingRevision = revision;
     if (key === 'vehicle') vehiclePendingRevision = revision;
@@ -913,6 +927,14 @@
       next.controls.overviewSubtitle = { text: modeDetails[payload.mode].subtitle };
       next.controls.metricPrimaryLabel = { text: modeDetails[payload.mode].primaryMetric };
       next.controls.metricCorrectionLabel = { text: modeDetails[payload.mode].correctionMetric };
+    }
+    if (action === 'washing.fast.start' && !next.running && !next.registrationActive) {
+      next.actionMode = 'washing';
+      next.controls.fastWashMode = { value: true, enabled: true };
+      next.running = true;
+      next.controls.overviewSubtitle = { text: '高速石洗い：収納・補充時のみ荷台を確認' };
+      next.controls.runStatus = { text: '高速石洗い 実行中', tone: 'success' };
+      next.controls.runButton = { text: '自動操作を停止', enabled: true };
     }
     if (action === 'run.toggle') {
       next.running = !next.running;
@@ -1008,6 +1030,11 @@
       if (elements.runButton.classList.contains('is-pending')) return;
       setPending(elements.runButton, 'run', state.revision);
       sendAction('run.toggle');
+    });
+    elements.fastWashStart.addEventListener('click', () => {
+      if (elements.fastWashStart.disabled || elements.fastWashStart.classList.contains('is-pending')) return;
+      setPending(elements.fastWashStart, 'fast-wash', state.revision);
+      sendAction('washing.fast.start');
     });
     elements.settingFastWash.addEventListener('change', () => {
       const previous = booleanOf(control('fastWashMode'), true);

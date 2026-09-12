@@ -141,10 +141,10 @@ Assert-SourcePattern `
     'TryClaimStartOperation\(&startToken\)\s*\{[\s\S]{0,220}EnterMetagameOutboxCritical\(\)[\s\S]{0,500}AutomationStartAllowed\(State\.running, State\.registrationActive,[\s\S]{0,220}State\.activeFarmCallbacks\)[\s\S]{0,500}State\.startInProgress := true' `
     'A Start request does not atomically claim ownership before blocking preflight.'
 Assert-SourcePattern `
-    'StartMining\(\*\)[\s\S]{0,700}TryClaimStartOperation\(&startToken\)[\s\S]{0,600}PrepareMetagameForNewFarmStart\(\)[\s\S]{0,180}IsStartOperationCurrent\(startToken\)[\s\S]{0,5000}RunBackgroundBridge\("health"\)[\s\S]{0,180}IsStartOperationCurrent\(startToken\)' `
+    'StartMining\(startMode\s*:=\s*"",\s*\*\)[\s\S]{0,700}TryClaimStartOperation\(&startToken\)[\s\S]{0,600}PrepareMetagameForNewFarmStart\(\)[\s\S]{0,180}IsStartOperationCurrent\(startToken\)[\s\S]{0,5000}RunBackgroundBridge\("health"\)[\s\S]{0,180}IsStartOperationCurrent\(startToken\)' `
     'Start preflight does not revalidate ownership after its blocking boundaries.'
 Assert-SourcePattern `
-    'StartMining\(\*\)[\s\S]{0,9500}criticalWasOn := EnterMetagameOutboxCritical\(\)[\s\S]{0,180}IsStartOperationCurrent\(startToken\)[\s\S]{0,180}State\.running := true[\s\S]{0,800}State\.activeFarmCallbacks \+= 1[\s\S]{0,180}runInitializationOwned := true[\s\S]{0,12000}ScheduleNext\(runGeneration,[\s\S]{0,300}finally\s*\{[\s\S]{0,180}FinishStartPreparation\(startToken\)[\s\S]{0,180}ReleaseFarmCallback\(\)' `
+    'StartMining\(startMode\s*:=\s*"",\s*\*\)[\s\S]{0,9500}criticalWasOn := EnterMetagameOutboxCritical\(\)[\s\S]{0,180}IsStartOperationCurrent\(startToken\)[\s\S]{0,180}State\.running := true[\s\S]{0,800}State\.activeFarmCallbacks \+= 1[\s\S]{0,180}runInitializationOwned := true[\s\S]{0,12000}ScheduleNext\(runGeneration,[\s\S]{0,300}finally\s*\{[\s\S]{0,180}FinishStartPreparation\(startToken\)[\s\S]{0,180}ReleaseFarmCallback\(\)' `
     'Start does not transfer atomic ownership through every post-install blocking boundary.'
 Assert-SourcePattern `
     'StopMining\([^)]*\)[\s\S]{0,700}startCancelled := CancelStartOperation\(\)[\s\S]{0,500}if startCancelled && !State\.running[\s\S]{0,900}return' `
