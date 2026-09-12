@@ -67,7 +67,7 @@ try {
         $config = Join-Path $dir 'AI採掘機.ini'
         $legacy = Join-Path $dir '自動採掘マクロ.ini'
         $diagnostic = Join-Path $dir 'AI採掘機_診断.log'
-        [IO.File]::WriteAllText($legacy, "[General]`nActionMode=washing`n[Storage]`nMinimumFreeWeight=1234`nTriggerPercent=55`n", [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($legacy, "[General]`nActionMode=washing`n[VehicleStorage]`nMinimumFreeWeight=1234`nEstimatedRewardWeight=500`nStorageTriggerPercent=55`nMinimumFreeSlots=3`n", [Text.UTF8Encoding]::new($false))
         if ($case.Custom) { Copy-Item -LiteralPath $legacy -Destination $config }
         [IO.File]::WriteAllText($diagnostic, 'USER_DIAGNOSTIC_MUST_SURVIVE', [Text.UTF8Encoding]::new($false))
         $before = @{}
