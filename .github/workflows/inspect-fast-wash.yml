@@ -1,0 +1,26 @@
+name: Inspect fast wash integration points
+on:
+  push:
+    branches: [fix/fast-wash-9.1.16]
+    paths: [.github/workflows/inspect-fast-wash.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Show relevant source locations
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '--- mining-auto ---'
+          grep -nE 'WaitStationaryTaskReady|try-washing|TryBackground|RunBackgroundBridgeCancelable|washCycleMs|washReadinessGraceMs|vehicleStorageEnabled|LoadSettings|SaveSettings|ApplySettings|settings' src/mining-auto.ahk | head -220 || true
+          echo '--- stationary-only ---'
+          nl -ba src/stationary-only.ahk | sed -n '1,280p'
+          echo '--- ui app ---'
+          grep -nE 'ForwardCorrection|VehicleStorage|washing|settings|route|stationary|fast' src/ui-web/src/app.js | head -260 || true
+          echo '--- ui html ---'
+          grep -nE 'ForwardCorrection|VehicleStorage|washing|洗浄|荷台|設定|fast' src/ui-web/src/index.html | head -260 || true
+          echo '--- bridge ---'
+          grep -nE 'ProbeStationaryTaskReadyAsync|WashTaskReadiness|ProbeWashTaskReadyAsync|stationary-task-ready|WASH_STORAGE|STORAGE_ONLY|WashTargetExpression' src/background-bridge/CdpBridge.cs | head -260 || true
