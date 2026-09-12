@@ -74,6 +74,7 @@ internal static class CdpBridge
             || mode == "deactivate-29200" || mode == "deactivate-29300");
         bool actionTryMode = args.Length == 3 && (mode == "try-mining"
             || mode == "try-washing" || mode == "try-gold");
+        bool nearbyWashProbeMode = args.Length == 3 && mode == "probe-wash-storage";
         bool actionCompletionMode = args.Length == 4 && mode == "wait-action-completion";
         bool washCompletionMode = args.Length == 3 && mode == "wait-wash-completion";
         bool nudgeMode = (args.Length == 4 || args.Length == 5) && mode == "nudge-forward";
@@ -88,7 +89,7 @@ internal static class CdpBridge
         bool cancelOperationMode = args.Length == 3 && mode == "cancel-operation";
         bool companionCommandMode = (args.Length == 3 || args.Length == 4)
             && mode == "companion-command";
-        if (!twoArgumentMode && !actionTryMode && !actionCompletionMode && !washCompletionMode
+        if (!twoArgumentMode && !actionTryMode && !nearbyWashProbeMode && !actionCompletionMode && !washCompletionMode
             && !nudgeMode && !routeMode && !routeHealthMode && !viewMode
             && !hotbarMode && !inventoryKeyMode
             && !testDeactivateMode && !depositMode && !withdrawMode && !cancelOperationMode
@@ -258,6 +259,11 @@ internal static class CdpBridge
                 result = actionTryMode
                     ? TryAndWaitActionAsync(mode, args[2]).GetAwaiter().GetResult()
                     : TryActionAsync(mode, null, null).GetAwaiter().GetResult();
+            }
+            else if (nearbyWashProbeMode)
+            {
+                if (!IsValidServerEpoch(args[2])) return 64;
+                result = ProbeNearbyWashAsync(args[2]).GetAwaiter().GetResult();
             }
             else if (actionCompletionMode)
             {
@@ -3088,6 +3094,44 @@ internal static class CdpBridge
                     + "const choice=candidates[0];if(!usable(choice.leaf)||!usable(choice.hit))return false;choice.hit.click();return true;"
                 : "return true;")
             + "})()";
+    }
+
+    // Non-mutating functional-area proof. The two labels are read in the same
+    // JS turn; stale/alternating single-label samples cannot become a pair.
+    private static string NearbyWashControlsExpression()
+    {
+        return "(() => {const wash=" + WashTargetExpression(false)
+            + ",storage=" + StorageTargetExpression(false) + ";"
+            + "if(storage==='AMBIGUOUS')return 'AMBIGUOUS WASH_STORAGE';"
+            + "if(storage!=='PRESENT')return 'MISSING WASH_STORAGE';"
+            + "return wash?'PRESENT WASH_STORAGE':'PRESENT STORAGE_ONLY';})()";
+    }
+
+    private static async Task<string> ProbeNearbyWashAsync(string expectedEpoch)
+    {
+        string[] frames;
+        if (!TryDecodeServerEpoch(expectedEpoch, out frames))
+            return "ERROR SERVER_SESSION_CHANGED";
+        using (var session = await CdpSession.OpenAsync(TargetFramePart,
+            TimeSpan.FromSeconds(5), frames).ConfigureAwait(false))
+        {
+            string first = null;
+            for (int sample = 0; sample < 3; sample++)
+            {
+                if (sample > 0) await Task.Delay(120, session.Token).ConfigureAwait(false);
+                if (!await session.MatchesServerEpochAsync().ConfigureAwait(false))
+                    return "ERROR SERVER_SESSION_CHANGED";
+                string value = await session.EvaluateStringAsync(
+                    NearbyWashControlsExpression(), false).ConfigureAwait(false);
+                if (value != "PRESENT WASH_STORAGE" && value != "PRESENT STORAGE_ONLY")
+                    return value;
+                if (first != null && value != first) return "MISSING WASH_STORAGE";
+                first = value;
+            }
+            if (!await session.MatchesServerEpochAsync().ConfigureAwait(false))
+                return "ERROR SERVER_SESSION_CHANGED";
+            return first;
+        }
     }
 
     private static string ProbeStorageExpression()

@@ -79,6 +79,12 @@ FailObservedWash(generation, result) {
     global LocalNav
     if !IsCurrentRun(generation)
         return false
+    ; A fixed-camera pixel threshold is not the task completion criterion at a
+    ; verified nearby cargo spot. Do not change the visual report or count a nudge.
+    if TryAcceptNearbyWashRecovery(generation, result)
+        return true
+    if !IsCurrentRun(generation)
+        return false
     reason := InStr(result, "WASH_TARGET_MISSING_AT_ANCHOR")
         ? "この位置・視点では「石を洗う」を確認できません。未洗浄石と作業地点を確認してください"
         : InStr(result, "FORWARD_NO_OBSERVED_EFFECT")

@@ -9,7 +9,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "9.1.11"
+global AppVersion := "9.1.12"
 ;@Ahk2Exe-SetVersion %A_PriorLine~U)^.*"([^"]+)".*$~$1%
 processId := DllCall("GetCurrentProcessId")
 global LocalNav := {busy: false, pid: 0, cancel: "", taskId: 0, dialog: 0, guide: 0, feedback: "", requestActive: false, cycle: 0, lastBatchKey: "", lastActionKey: ""}
@@ -46,6 +46,7 @@ FileInstall "AI採掘機_Background.exe", backgroundBridgePath, true
 FileInstall "AI採掘機_Updater.exe", updaterHelperPath, true
 #Include exe-route-navigation.ahk
 #Include wash-position.ahk
+#Include nearby-wash.ahk
 InitExeRouteAssets()
 settingsPath := isUiTestRun || isValidationRun
     ? A_Temp "\ai-miner-ui-test-" testRunId ".ini"
@@ -441,7 +442,7 @@ if HasCommandLineArgument("--history-import-self-test") {
 ; コンパイル前後の構文・埋め込み画像チェック用です。
 if isValidationRun {
     try FileAppend "VALIDATION_PHASE proofs " A_TickCount "`n", "**", "UTF-8-RAW"
-    if !ValidateStorageCycleProof() || !ValidateStationaryWorkflow() {
+    if !ValidateStorageCycleProof() || !ValidateStationaryWorkflow() || !ValidateNearbyWashRecovery() {
         DeleteExtractedTemplates()
         ExitApp(145)
     }
@@ -13476,6 +13477,7 @@ PerformWashCompletionCorrection(expectedGeneration, expectedTaskId,
         return FailObservedWash(expectedGeneration, "ERROR ANCHOR_MISSING")
     State.statusLabel.Text := "●  画面で静止・位置ずれ・前進の効果を確認しています"
     WriteDiagnostic("attempt=" expectedAttemptId " WASH_VISUAL_BEGIN settle=observed input=foreground_scancode")
+    LocalNav.washRecoveryOutcome := "VISUAL_PENDING"
     nudgeResult := RunObservedWashHelper("wash-correct", expectedGeneration)
     visualOk := RegExMatch(nudgeResult, "^WASH_STABLE (\d+) (\d+) (\d+) (\d+)$", &observed)
     criticalWasOn := EnterMetagameOutboxCritical()
@@ -13487,6 +13489,7 @@ PerformWashCompletionCorrection(expectedGeneration, expectedTaskId,
             return false
         State.washCorrectionInFlight := false
         if visualOk {
+            LocalNav.washRecoveryOutcome := "VISUAL_VERIFIED"
             if observed[1] + 0 > 0 {
                 State.nudges += 1
                 State.mealLabel.Text := "画面確認済み補正`n" State.nudges
@@ -13557,7 +13560,7 @@ RunWashCompletionRecoveryCycle(expectedGeneration, expectedTaskId) {
 
 ResumeAfterWashCompletionRecovery(expectedGeneration, expectedTaskId,
     expectedState, attemptId) {
-    global State, Config
+    global State, Config, LocalNav
     if !IsCurrentFarmTask(expectedGeneration, expectedTaskId, expectedState)
         return false
 
@@ -13585,14 +13588,16 @@ ResumeAfterWashCompletionRecovery(expectedGeneration, expectedTaskId,
     ; try-washing owns the next target wait, click and progress observation in one
     ; CDP session.  A separate probe here only duplicated work and added seconds.
     if !TransitionFarmState("FARMING",
-        "洗浄後の位置補正完了。次の対象を即時監視", expectedGeneration,
+        "洗浄後の継続条件を確認。次の対象を即時監視", expectedGeneration,
         expectedTaskId)
         return false
     ResetWashCompletionRecoveryState()
     State.targetLostSince := 0
     State.targetRecoveryAttempts := 0
-    State.statusLabel.Text := "●  補正完了。次の「" chr(0x77F3)
-        . "を洗う」を待っています"
+    State.statusLabel.Text := LocalNav.HasOwnProp("washRecoveryOutcome")
+        && LocalNav.washRecoveryOutcome = "NEARBY_WASH_READY"
+        ? "●  荷台前の操作範囲を確認。次の石洗いを開始します"
+        : "●  補正完了。次の石洗いを開始します"
     WriteDiagnostic("attempt=" attemptId " WASH_RECOVERY_DIRECT_RESUME")
     ScheduleNext(expectedGeneration, 1)
     return true
