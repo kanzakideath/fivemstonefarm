@@ -1,5 +1,5 @@
 from pathlib import Path
-import base64, hashlib, json, zlib
+import base64, hashlib, json, zlib, re
 
 root = Path(__file__).resolve().parents[1]
 parts = [(root / f'scripts/stationary-wait-{n}.b64').read_text().strip() for n in range(7)]
@@ -27,7 +27,6 @@ for path, value in prepared:
     path.write_bytes(value)
 print(f'Applied {len(prepared)} files after verifying all base and result hashes.')
 
-# Preserve the real migration contract; version validation remains unchanged.
 for name in ['README.md', 'docs/AI採掘機_使い方.txt']:
     p = root / name
     s = p.read_text(encoding='utf-8-sig')
@@ -45,8 +44,6 @@ s = s.replace('[ViewLock]\nEnabled=1', '[ViewLock]\nEnabled=0')
 s = s.replace('; AI採掘機 v9.1.15 設定テンプレート', '; AI採掘機 v9.1.15 設定テンプレート\n; 移動・視点補正の旧設定はこの版では使用しません。ゲームの物理座標を固定する設定ではありません。')
 p.write_text(s, encoding='utf-8-sig')
 
-# AutoHotkey identifiers are case-insensitive. Avoid test parameters shadowing
-# the scripted adapter globals; still include/run the actual production module.
 p = root / 'scripts/ui-tests/StationaryWaitHarness.ahk'
 s = p.read_text(encoding='utf-8-sig')
 for old, new in [('Reset(name, responses) {', 'Reset(name, scriptedResponses) {'),
@@ -55,4 +52,8 @@ for old, new in [('Reset(name, responses) {', 'Reset(name, scriptedResponses) {'
                  ('State.farmState := state', 'State.farmState := nextState')]:
     assert s.count(old) == 1, old
     s = s.replace(old, new, 1)
+# Ordinary AHK v2 functions need their statements on separate lines.
+s, count = re.subn(r'(?m)^([A-Za-z]\w*\([^\n]*\)) \{(.*?)\}$',
+    lambda m: m[1] + ' {\n    ' + m[2].strip() + '\n}', s)
+assert count == 6, f'Unexpected compact adapter count: {count}'
 p.write_text(s, encoding='utf-8-sig')
