@@ -5,6 +5,16 @@ ObservedWashAnchorPath(generation) {
     return LocalNav.runtime "\wash-position-" generation ".json"
 }
 
+ObservedWashCorrectionOperation(generation) {
+    global State, Config
+    if IsCurrentRun(generation) && State.runMode = "washing"
+        && Config.washForwardCorrection && Config.vehicleStorageEnabled
+        && ExeStorageMethod("washing") = "stationary"
+        && ExeRouteBindingValid("washing", State.serverEpoch)
+        return "wash-maintain"
+    return "wash-correct"
+}
+
 RunObservedWashHelper(operation, generation) {
     global LocalNav, State
     if !IsCurrentRun(generation) || !IsTargetForeground(generation)

@@ -244,3 +244,11 @@ $vision = [IO.File]::ReadAllText((Join-Path (Split-Path $resolvedSource) 'wash-p
 Assert-Contract ($vision.Contains('FORWARD_NO_OBSERVED_EFFECT') -and $vision.Contains('WRONG_DIRECTION_OR_CAMERA_MOVED')) 'Observed correction must reject no-effect and worsening pulses.'
 Assert-Contract ($vision.Contains('finally {ReleaseKey();') -and $vision.Contains('GetForegroundWindow()!=target')) 'Physical input must be released and foreground guarded.'
 Assert-Contract ($vision -notmatch 'move_up_only|ReadProcessMemory|MoveCamera') 'Washing helper may not use guessed game commands or camera injection.'
+
+$washModule = [IO.File]::ReadAllText((Join-Path (Split-Path $resolvedSource) 'wash-position.ahk'))
+Assert-Contract ($washModule.Contains('ObservedWashCorrectionOperation(generation)') -and
+    $washModule.Contains('ExeRouteBindingValid("washing", State.serverEpoch)') -and
+    $correct.Contains('RunObservedWashHelper(correctionOperation, expectedGeneration)')) 'Nearby precise correction is not bound to the registered active route.'
+Assert-Contract ($vision.Contains('CUMULATIVE_MICRO_DRIFT_TEST') -and $vision.Contains('RefineSubpixel') -and
+    $vision.Contains('NO_INPUT_WITHIN_TOLERANCE') -and $vision.Contains('noEffect>=2')) 'Micro drift, zero-input and consecutive-no-effect regressions are missing.'
+Assert-Contract ($source.Contains('WASH_RECOVERY_TICK') -and $source.Contains('前進補正OFF')) 'Input-disabled and pending-dispatch states are not observable.'

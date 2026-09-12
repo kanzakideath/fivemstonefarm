@@ -40,6 +40,8 @@ internal sealed class WashPosition : Form
         public string startedUtc = DateTime.UtcNow.ToString("O");
         public string result = "ERROR INCOMPLETE";
         public int pulses, inputMs;
+        public string profile = "standard";
+        public double tolerancePx = 0.65;
         public double beforeError, afterError;
         public long elapsedMs, stableWaitMs;
         public bool inputsReleased;
@@ -48,6 +50,7 @@ internal sealed class WashPosition : Form
     private readonly IntPtr target;
     private readonly int gamePid, parentPid;
     private readonly string operation, anchorPath, cancelPath;
+    private bool Nearby { get { return operation == "wash-maintain"; } }
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = 300000 };
     private readonly Label label = new Label();
@@ -67,7 +70,7 @@ internal sealed class WashPosition : Form
         try
         {
             if (args[0] == "self-test") result = SelfTest();
-            else if (args.Length == 8 && (args[0] == "wash-anchor" || args[0] == "wash-correct" || args[0] == "wash-check"))
+            else if (args.Length == 8 && (args[0] == "wash-anchor" || args[0] == "wash-correct" || args[0] == "wash-maintain" || args[0] == "wash-check"))
             {
                 long h; int owner, pid;
                 if (!Int64.TryParse(args[2], out h) || h <= 0 || !Int32.TryParse(args[3], out owner)
@@ -97,13 +100,21 @@ internal sealed class WashPosition : Form
     protected override CreateParams CreateParams
     { get { var p=base.CreateParams; p.ExStyle |= 0x08000000 | 0x00000020 | 0x00000080; return p; } }
     private void Say(string text)
-    { label.Text=text + "\nF9／手動操作／他アプリへの切替で停止 · 座標ではなく景色の照合"; Refresh(); }
+    {
+        label.Text=text + "\n" + (report.pulses==0 ? "W未送信" : "W送信済み "+report.pulses+"回・計"+report.inputMs+"ms")
+            + " / 経過 "+(clock.ElapsedMilliseconds/1000.0).ToString("0.0",CultureInfo.InvariantCulture)+"秒"
+            + "\nF9／手動操作／他アプリ切替で停止 · 画像上のずれ（座標ではありません）";
+        Refresh();
+    }
     private void Event(string text)
     { report.events.Add(clock.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture)+"ms "+text); }
     private void Run()
     {
         try
         {
+            report.profile=Nearby ? "nearby-micro" : "standard";
+            report.tolerancePx=Nearby ? 0.20 : 0.65;
+            Event("PROFILE "+report.profile+" tolerance_px="+F(report.tolerancePx));
             Guard(); RECT r; GetClientRect(target,out r); clientWidth=r.right; clientHeight=r.bottom;
             if (clientWidth < 640 || clientHeight < 360) throw new Exception("WINDOW_TOO_SMALL");
             POINT p=new POINT(); ClientToScreen(target,ref p); Location=new Point(p.x+16,p.y+16);
@@ -134,21 +145,21 @@ internal sealed class WashPosition : Form
                 byte[] reference=Convert.FromBase64String(anchor.reference);
                 if(reference.Length!=W*H) throw new Exception("ANCHOR_INVALID");
                 Say("洗浄後の動きが止まるまで実画面を確認中。まだ前進入力は送りません。");
-                byte[] before=WaitStable(); Match match=Estimate(reference,before);
+                byte[] before=WaitStable(); Match match=Estimate(reference,before,Nearby);
                 if (!match.valid) throw new Exception("ANCHOR_LOST_NO_INPUT");
                 report.beforeError=match.error; report.afterError=match.error;
                 Event("OBSERVED error_px="+F(match.error)+" support="+match.support);
                 if (operation=="wash-check" && !AtAnchor(match)) throw new Exception("ANCHOR_CHANGED_BEFORE_WASH");
-                if (operation=="wash-correct")
+                if (operation=="wash-correct" || Nearby)
                 {
                     Correct(reference, before, WaitStable, PulseForward,
                         delegate { Guard(); }, delegate(Match m,int ms) {
                             Say("位置ずれ "+F(m.error)+"px · 前進 W "+ms+"ms → 画面で効果を確認");
-                        }, report);
+                        }, report, Nearby);
                 }
                 // Final independent stable sample prevents one transient frame from being success.
-                Match final=Estimate(reference,WaitStable());
-                if (!AtAnchor(final)) throw new Exception("FINAL_POSITION_NOT_VERIFIED");
+                Match final=Estimate(reference,WaitStable(),Nearby);
+                if (!AtAnchor(final,report.tolerancePx)) throw new Exception("FINAL_POSITION_NOT_VERIFIED");
                 report.afterError=final.error;
                 Result="WASH_STABLE "+report.pulses+" "+report.inputMs+" "+((int)Math.Round(final.error*1000))+" "+clock.ElapsedMilliseconds;
                 Say(report.pulses==0 ? "位置ずれなし。前進せず、次の石洗いへ。" : "画面で補正完了を確認。次の石洗いへ。");
@@ -165,32 +176,42 @@ internal sealed class WashPosition : Form
             RemoveHooks(); Close();
         }
     }
-    internal static bool AtAnchor(Match m) { return m.valid && m.error <= 0.65; }
+    internal static bool AtAnchor(Match m, double tolerance = 0.65) { return m.valid && m.error <= tolerance; }
     // This is the same closed loop used by the real adapter and synthetic tests.
     // Re-observe after each bounded pulse. Never count input acceptance as motion.
     internal static void Correct(byte[] reference, byte[] initial, Func<byte[]> observe,
-        Action<int> pulse, Action guard, Action<Match,int> status, Report r)
+        Action<int> pulse, Action guard, Action<Match,int> status, Report r, bool nearby = false)
     {
-        Match current=Estimate(reference,initial);
-        int ms=30;
-        for(int n=0;n<8 && r.inputMs<360 && !AtAnchor(current);n++)
+        double tolerance=nearby ? 0.20 : 0.65;
+        double minimumImprovement=nearby ? 0.025 : 0.08;
+        r.profile=nearby ? "nearby-micro" : "standard"; r.tolerancePx=tolerance;
+        Match current=Estimate(reference,initial,nearby);
+        int ms=30, noEffect=0;
+        r.beforeError=current.error; r.afterError=current.error;
+        if(AtAnchor(current,tolerance)) r.events.Add("NO_INPUT_WITHIN_TOLERANCE error_px="+F(current.error));
+        for(int n=0;n<8 && r.inputMs<360 && !AtAnchor(current,tolerance);n++)
         {
             guard();
             if(!current.valid || current.error > 8.0) throw new Exception("ANCHOR_LOST_NO_INPUT");
             ms=Math.Min(ms,360-r.inputMs); status(current,ms); guard();
             r.events.Add("PULSE_BEGIN ms="+ms+" before_px="+F(current.error));
             pulse(ms); r.pulses++; r.inputMs+=ms; guard();
-            Match next=Estimate(reference,observe());
+            Match next=Estimate(reference,observe(),nearby);
             r.afterError=next.error;
             r.events.Add("PULSE_OBSERVED after_px="+F(next.error)+" support="+next.support);
             if(!next.valid) throw new Exception("VISION_LOST_AFTER_INPUT");
             if(next.error > current.error + 0.45) throw new Exception("WRONG_DIRECTION_OR_CAMERA_MOVED");
-            if(n>=1 && current.error-next.error<0.08 && !AtAnchor(next)) throw new Exception("FORWARD_NO_OBSERVED_EFFECT");
             double improvement=current.error-next.error;
-            ms=improvement>0.08 ? (int)Math.Max(15,Math.Min(80,Math.Floor(Math.Max(0.1,next.error-0.3)/improvement*ms*0.65))) : Math.Min(80,ms+20);
+            // Count consecutive ineffective pulses, not the index of the pulse.
+            // One delayed sample after an effective pulse is not two failures.
+            noEffect=improvement>=minimumImprovement || AtAnchor(next,tolerance) ? 0 : noEffect+1;
+            if(noEffect>=2) throw new Exception("FORWARD_NO_OBSERVED_EFFECT");
+            ms=improvement>=minimumImprovement
+                ? (int)Math.Max(15,Math.Min(80,Math.Floor(Math.Max(0.05,next.error-tolerance*0.5)/improvement*ms*0.65)))
+                : Math.Min(80,ms+20);
             current=next;
         }
-        if(!AtAnchor(current)) throw new Exception("POSITION_CORRECTION_BUDGET");
+        if(!AtAnchor(current,tolerance)) throw new Exception("POSITION_CORRECTION_BUDGET");
     }
     private byte[] WaitStable()
     {
@@ -199,13 +220,14 @@ internal sealed class WashPosition : Form
         while(clock.ElapsedMilliseconds-begin<6000)
         {
             Pause(120); byte[] next=CaptureFrame();
-            Match adjacent=Estimate(previous,next), accumulated=Estimate(first,next);
+            Match adjacent=Estimate(previous,next,Nearby), accumulated=Estimate(first,next,Nearby);
             // Compare with the beginning of the window as well as the last frame:
             // slow root motion must not pass as stationary just because each delta is tiny.
-            if(!adjacent.valid || adjacent.error>0.30 || !accumulated.valid || accumulated.error>0.45)
+            if(!adjacent.valid || adjacent.error>(Nearby?0.12:0.30) || !accumulated.valid || accumulated.error>(Nearby?0.18:0.45))
             { stable=clock.ElapsedMilliseconds; first=next; }
             if(clock.ElapsedMilliseconds-stable>=480)
             { report.stableWaitMs+=clock.ElapsedMilliseconds-begin; return next; }
+            Say("静止確認中。まだWを押しません（安定 "+(clock.ElapsedMilliseconds-stable)+" / 480ms）");
             previous=next;
         }
         throw new Exception("SCENE_NOT_STABLE");
@@ -233,7 +255,7 @@ internal sealed class WashPosition : Form
         }
         finally {if(visible && !IsDisposed) Show();}
     }
-    internal static Match Estimate(byte[] reference,byte[] image)
+    internal static Match Estimate(byte[] reference,byte[] image,bool precise = false)
     {
         var result=new Match {valid=false,error=Double.MaxValue};
         if(reference==null || image==null || reference.Length!=W*H || image.Length!=W*H) return result;
@@ -247,12 +269,18 @@ internal sealed class WashPosition : Form
                 double score=Ncc(reference,image,tile,dx,dy); scores[dx+Search,dy+Search]=score;
                 if(score>best) {best=score;bx=dx;by=dy;}
             }
-            if(best<0.86 || Math.Abs(bx)==Search || Math.Abs(by)==Search) continue;
+            // Integer NCC is only a candidate search in the precise profile.
+            // Fractional interpolation can lower integer NCC even for a perfect match.
+            if(best<(precise ? 0.45 : 0.86) || Math.Abs(bx)==Search || Math.Abs(by)==Search) continue;
             for(int dy=-Search;dy<=Search;dy++) for(int dx=-Search;dx<=Search;dx++)
                 if(Math.Abs(dx-bx)>2 || Math.Abs(dy-by)>2) second=Math.Max(second,scores[dx+Search,dy+Search]);
             if(best-second<0.02) continue;
             double sx=Subpixel(scores[bx+Search-1,by+Search],best,scores[bx+Search+1,by+Search]);
             double sy=Subpixel(scores[bx+Search,by+Search-1],best,scores[bx+Search,by+Search+1]);
+            if(precise) {
+                best=RefineSubpixel(reference,image,tile,bx,by,out sx,out sy);
+                if(best<0.94) continue; // Require high confidence AFTER fractional fitting.
+            }
             distances.Add(Math.Sqrt((bx+sx)*(bx+sx)+(by+sy)*(by+sy))); quality+=best;
         }
         result.support=distances.Count;
@@ -262,6 +290,42 @@ internal sealed class WashPosition : Form
         // from hiding a drift observed by the other half.
         result.error=distances[distances.Count/2]; result.quality=quality/distances.Count; result.valid=true;
         return result;
+    }
+    // A parabola through three integer NCC scores systematically understates
+    // small shifts of interpolated textures. Fit the fractional translation
+    // itself instead. Inner pixels need no data outside the persisted tile.
+    private static double RefineSubpixel(byte[] reference,byte[] image,Point tile,int dx,int dy,out double sx,out double sy)
+    {
+        double best=-2,fx=0,fy=0;
+        for(int y=-4;y<=4;y++) for(int x=-4;x<=4;x++)
+        {
+            double score=FractionalNcc(reference,image,tile,dx,dy,x/8.0,y/8.0);
+            if(score>best){best=score;fx=x/8.0;fy=y/8.0;}
+        }
+        double cx=fx,cy=fy;
+        for(int y=-2;y<=2;y++) for(int x=-2;x<=2;x++)
+        {
+            double tx=Math.Max(-.5,Math.Min(.5,cx+x/32.0));
+            double ty=Math.Max(-.5,Math.Min(.5,cy+y/32.0));
+            double score=FractionalNcc(reference,image,tile,dx,dy,tx,ty);
+            if(score>best){best=score;fx=tx;fy=ty;}
+        }
+        sx=fx;sy=fy;return best;
+    }
+    private static double FractionalNcc(byte[] a,byte[] b,Point p,int dx,int dy,double fx,double fy)
+    {
+        double sa=0,sb=0,aa=0,bb=0,ab=0; int n=(TileSize-2)*(TileSize-2);
+        for(int y=1;y<TileSize-1;y++) for(int x=1;x<TileSize-1;x++)
+        {
+            double px=p.X+x-fx,py=p.Y+y-fy; int ix=(int)Math.Floor(px),iy=(int)Math.Floor(py);
+            double u=px-ix,v=py-iy;
+            double av=(1-v)*((1-u)*a[iy*W+ix]+u*a[iy*W+ix+1])
+                +v*((1-u)*a[(iy+1)*W+ix]+u*a[(iy+1)*W+ix+1]);
+            double bv=b[(p.Y+y+dy)*W+p.X+x+dx];
+            sa+=av;sb+=bv;aa+=av*av;bb+=bv*bv;ab+=av*bv;
+        }
+        double va=aa-sa*sa/n,vb=bb-sb*sb/n;
+        return va/n<4 || vb/n<4 ? -1 : (ab-sa*sb/n)/Math.Sqrt(va*vb);
     }
     private static double Ncc(byte[] a,byte[] b,Point p,int dx,int dy)
     {
@@ -278,9 +342,9 @@ internal sealed class WashPosition : Form
     {double d=left-2*centre+right;return Math.Abs(d)<1e-9?0:Math.Max(-.5,Math.Min(.5,.5*(left-right)/d));}
     private void PulseForward(int milliseconds)
     {
-        if(operation!="wash-correct" || milliseconds<1 || milliseconds>100) throw new Exception("INPUT_NOT_AUTHORIZED");
+        if((operation!="wash-correct" && !Nearby) || milliseconds<1 || milliseconds>100) throw new Exception("INPUT_NOT_AUTHORIZED");
         Guard(); keyHeld=true;
-        try {KeyPacket(true); Event("W_DOWN actual_ms="+clock.ElapsedMilliseconds); Pause(milliseconds);}
+        try {Say("前進Wを押下 "+milliseconds+"ms → 解除 → 効果を測定"); Guard(); KeyPacket(true); Event("W_DOWN actual_ms="+clock.ElapsedMilliseconds); Pause(milliseconds);}
         finally {ReleaseKey(); Event("W_UP actual_ms="+clock.ElapsedMilliseconds);}
         if(keyHeld) throw new Exception("KEY_RELEASE_FAILED");
     }
@@ -334,6 +398,36 @@ internal sealed class WashPosition : Form
     }
     private static byte[] Shift(byte[] src,int dx,int dy,int brightness)
     {var b=new byte[W*H];for(int y=0;y<H;y++)for(int x=0;x<W;x++){int sx=x-dx,sy=y-dy;if(sx>=0&&sx<W&&sy>=0&&sy<H)b[y*W+x]=(byte)Math.Max(0,Math.Min(255,src[sy*W+sx]+brightness));}return b;}
+    private static byte[] FractionShift(byte[] src,double dy)
+    {
+        var b=new byte[W*H];
+        for(int y=2;y<H-2;y++) for(int x=0;x<W;x++)
+        {double sy=y-dy;int iy=(int)Math.Floor(sy);double v=sy-iy;
+            if(iy>=0 && iy+1<H)b[y*W+x]=(byte)Math.Round((1-v)*src[iy*W+x]+v*src[(iy+1)*W+x]);}
+        return b;
+    }
+    private static void MicroTests(byte[] a)
+    {
+        foreach(double shift in new[]{0.0,0.18,0.30,0.40,0.65,1.25})
+        {Match m=Estimate(a,FractionShift(a,shift),true);
+            if(!m.valid || Math.Abs(m.error-shift)>0.075)throw new Exception("FRACTIONAL_TRANSLATION_TEST shift="+F(shift)+" estimated="+F(m.error)+" support="+m.support);}
+        var r=new Report();int inputs=0;
+        Correct(a,a,delegate{return a;},delegate(int ms){inputs++;},delegate{},delegate(Match m,int ms){},r,true);
+        if(inputs!=0)throw new Exception("NEARBY_NO_DRIFT_NO_INPUT");
+        double residual=0;int pulses=0;
+        for(int cycle=0;cycle<100;cycle++)
+        {
+            residual+=0.18;r=new Report();
+            Correct(a,FractionShift(a,residual),delegate{return FractionShift(a,residual);},
+                delegate(int ms){residual=Math.Max(0,residual-0.18);pulses++;},delegate{},delegate(Match m,int ms){},r,true);
+            if(residual>0.22 || r.inputMs>360)throw new Exception("CUMULATIVE_MICRO_DRIFT_TEST");
+        }
+        if(pulses<90)throw new Exception("MICRO_DRIFT_WAS_IGNORED");
+        int sample=0;double d=3;r=new Report();
+        Correct(a,FractionShift(a,d),delegate{sample++;if(sample!=2)d=Math.Max(0,d-1);return FractionShift(a,d);},
+            delegate(int ms){},delegate{},delegate(Match m,int ms){},r,true);
+        if(r.pulses!=4)throw new Exception("ONE_DELAYED_SAMPLE_MUST_NOT_ABORT");
+    }
     internal static string SelfTest()
     {
         var random=new Random(4412);var a=new byte[W*H];for(int n=0;n<a.Length;n++)a[n]=(byte)random.Next(25,205);
@@ -363,6 +457,7 @@ internal sealed class WashPosition : Form
         catch(Exception e){stopped=e.Message=="CANCELLED";}
         if(!stopped||sent!=0)throw new Exception("CANCEL_TEST");
         if(Marshal.SizeOf(typeof(INPUT))!=(IntPtr.Size==8?40:28))throw new Exception("INPUT_LAYOUT_TEST");
+        MicroTests(a);
         return "SELFTEST OK";
     }
     [StructLayout(LayoutKind.Sequential)] private struct RECT{public int left,top,right,bottom;}

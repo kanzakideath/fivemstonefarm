@@ -418,6 +418,14 @@ Assert-Contract ($washAttempt -match 'if\s+!EnsureObservedWashAnchor\(expectedGe
     $washAttempt.IndexOf('EnsureObservedWashAnchor(') -lt $washAttempt.IndexOf('CaptureFarmAttemptBaseline(')) `
     'Observed washing can capture/click after visual anchor preparation failed.'
 $washCorrection = Get-AhkFunctionBody 'PerformWashCompletionCorrection'
-Assert-Contract ($washCorrection -match 'IsTargetForeground' -and $washCorrection -match 'RunObservedWashHelper\("wash-correct"' -and
+Assert-Contract ($washCorrection -match 'IsTargetForeground' -and $washCorrection -match 'correctionOperation := ObservedWashCorrectionOperation\(expectedGeneration\)' -and $washCorrection -match 'RunObservedWashHelper\(correctionOperation, expectedGeneration\)' -and
     $washCorrection -match 'WASH_STABLE' -and $washCorrection -notmatch 'play-route-health') `
     'Observed washing lost its foreground/visual confirmation gate.'
+
+$washModule = [IO.File]::ReadAllText((Join-Path (Split-Path $resolvedSource) 'wash-position.ahk'))
+Assert-Contract ($washModule.Contains('IsCurrentRun(generation)') -and
+    $washModule.Contains('Config.washForwardCorrection && Config.vehicleStorageEnabled') -and
+    $washModule.Contains('ExeStorageMethod("washing") = "stationary"') -and
+    $washModule.Contains('ExeRouteBindingValid("washing", State.serverEpoch)') -and
+    $washModule.Contains('return "wash-maintain"') -and $washModule.Contains('return "wash-correct"')) `
+    'Precise nearby correction requires active generation, enabled correction, storage and verified stationary binding.'

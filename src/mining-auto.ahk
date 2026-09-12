@@ -9,7 +9,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "9.1.12"
+global AppVersion := "9.1.13"
 ;@Ahk2Exe-SetVersion %A_PriorLine~U)^.*"([^"]+)".*$~$1%
 processId := DllCall("GetCurrentProcessId")
 global LocalNav := {busy: false, pid: 0, cancel: "", taskId: 0, dialog: 0, guide: 0, feedback: "", requestActive: false, cycle: 0, lastBatchKey: "", lastActionKey: ""}
@@ -6393,6 +6393,8 @@ UpdateRuntimeStatusOverlay(*) {
     meta := RuntimeStatusOverlayMeta(State.successes,
         State.lastInventoryMaxWeight > 0, State.lastInventoryFreeWeight,
         State.storageTrips)
+    if State.runMode = "washing"
+        meta .= Config.washForwardCorrection ? " | 前進補正ON" : " | 前進補正OFF"
     now := MonotonicMs()
     watchdogAge := State.farmWatchdogAt
         ? Max(0, now - State.farmWatchdogAt) : 0
@@ -13400,7 +13402,7 @@ ResetWashCompletionRecoveryState() {
 }
 
 BeginWashCompletionRecovery(expectedGeneration, attemptId) {
-    global State, Config
+    global State, Config, LocalNav
     criticalWasOn := A_IsCritical
     if !criticalWasOn
         Critical "On"
@@ -13435,7 +13437,11 @@ BeginWashCompletionRecovery(expectedGeneration, attemptId) {
             "洗浄完了後の静止待ちへ移れないため安全停止しました")
         return false
     }
-    State.statusLabel.Text := "●  洗浄完了。後退が止まるまで待機中"
+    State.statusLabel.Text := Config.washForwardCorrection
+        ? "●  前進補正ON：洗浄完了。静止確認後に微小後退を測ります（W未送信）"
+        : "●  前進補正OFF：この設定では洗浄後にWを送りません"
+    LocalNav.washFeedback := State.statusLabel.Text
+    QueueWebUiFlush(true)
     WriteDiagnostic("attempt=" attemptId " WASH_SETTLE_BEGIN delay="
         settleDelay " deadline=" settleDeadline " observed=" Config.washForwardCorrection)
     ScheduleNext(expectedGeneration, Config.washForwardCorrection ? 1 : Config.washPostCompletionSettleMs)
@@ -13478,7 +13484,9 @@ PerformWashCompletionCorrection(expectedGeneration, expectedTaskId,
     State.statusLabel.Text := "●  画面で静止・位置ずれ・前進の効果を確認しています"
     WriteDiagnostic("attempt=" expectedAttemptId " WASH_VISUAL_BEGIN settle=observed input=foreground_scancode")
     LocalNav.washRecoveryOutcome := "VISUAL_PENDING"
-    nudgeResult := RunObservedWashHelper("wash-correct", expectedGeneration)
+    correctionOperation := ObservedWashCorrectionOperation(expectedGeneration)
+    WriteDiagnostic("WASH_CORRECTION_PROFILE operation=" correctionOperation)
+    nudgeResult := RunObservedWashHelper(correctionOperation, expectedGeneration)
     visualOk := RegExMatch(nudgeResult, "^WASH_STABLE (\d+) (\d+) (\d+) (\d+)$", &observed)
     criticalWasOn := EnterMetagameOutboxCritical()
     try {
@@ -13494,7 +13502,8 @@ PerformWashCompletionCorrection(expectedGeneration, expectedTaskId,
                 State.nudges += 1
                 State.mealLabel.Text := "画面確認済み補正`n" State.nudges
             }
-            LocalNav.washFeedback := (observed[1] + 0 > 0 ? "補正確認" : "補正不要")
+            LocalNav.washFeedback := (correctionOperation = "wash-maintain" ? "荷台前・微小後退補正" : "通常補正")
+                . " / " (observed[1] + 0 > 0 ? "前進効果確認" : "許容範囲内のためW未送信")
                 . " / W入力 " observed[1] "回・計" observed[2] "ms / ずれ "
                 . (observed[3] / 1000) "px / 確認時間 " observed[4] "ms"
             WriteDiagnostic("attempt=" expectedAttemptId " WASH_VISUAL_VERIFIED " nudgeResult)
@@ -13521,11 +13530,13 @@ RunWashCompletionRecoveryCycle(expectedGeneration, expectedTaskId) {
         return
     }
     attemptId := State.washRecoveryAttemptId
+    WriteDiagnostic("WASH_RECOVERY_TICK phase=" currentState " correction=" Config.washForwardCorrection
+        " stateAgeMs=" (MonotonicMs() - State.farmStateEnteredAt) " attempt=" attemptId)
 
     if currentState = "WASH_SETTLING" {
         remaining := State.washSettleDeadline - MonotonicMs()
         if remaining > 0 {
-            State.statusLabel.Text := "●  洗浄完了。後退が止まるまで待機中（"
+            State.statusLabel.Text := (Config.washForwardCorrection ? "●  前進補正ON：開始待ち（" : "●  前進補正OFF：Wを送らず待機（")
                 . (Ceil(remaining / 100) / 10) . "秒）"
             ScheduleNext(expectedGeneration, remaining)
             return
