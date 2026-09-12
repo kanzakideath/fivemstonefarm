@@ -269,6 +269,7 @@ Copy-Item -LiteralPath $mainSource -Destination $stagedMain -Force
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'exe-route-navigation.ahk') -Destination $stageRoot -Force
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'wash-position.ahk') -Destination $stageRoot -Force
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'nearby-wash.ahk') -Destination $stageRoot -Force
+Copy-Item -LiteralPath (Join-Path $sourceRoot 'diagnostics.ahk') -Destination $stageRoot -Force
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'audio') -Destination $stageRoot -Recurse -Force
 $assetRoot = Join-Path $sourceRoot 'assets'
 if (Test-Path -LiteralPath $assetRoot -PathType Container) {
@@ -303,6 +304,8 @@ function Invoke-CSharpBuild {
         '/reference:System.Web.Extensions.dll',
         '/reference:System.Drawing.dll',
         '/reference:System.Windows.Forms.dll',
+        '/reference:System.IO.Compression.dll',
+        '/reference:System.IO.Compression.FileSystem.dll',
         $Source
     )
     & $csc @arguments
@@ -341,6 +344,9 @@ $bridgeOutput = Join-Path $stageRoot 'AI採掘機_Background.exe'
 $updaterOutput = Join-Path $stageRoot 'AI採掘機_Updater.exe'
 Invoke-CSharpBuild -Source $bridgeSource -Output $bridgeOutput
 Invoke-CSharpBuild -Source $updaterSource -Output $updaterOutput
+$diagnosticsOutput = Join-Path $stageRoot 'Diagnostics.exe'
+Invoke-CSharpBuild -Source (Join-Path $sourceRoot 'diagnostics\Diagnostics.cs') -Output $diagnosticsOutput
+Invoke-CapabilitySmokeTest -Executable $diagnosticsOutput -Expected 'SELFTEST OK' -Mode 'self-test'
 $washPositionOutput = Join-Path $stageRoot 'WashPosition.exe'
 Invoke-CSharpBuild -Source (Join-Path $sourceRoot 'wash-position\WashPosition.cs') -Output $washPositionOutput
 Invoke-CapabilitySmokeTest -Executable $washPositionOutput -Expected 'SELFTEST OK' -Mode 'self-test'

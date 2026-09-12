@@ -27,6 +27,7 @@ RunObservedWashHelper(operation, generation) {
         result := RunExeRouteHelper(operation, path, generation)
         if IsCurrentRun(generation) && FileExist(path ".last-run.json") {
             try FileCopy path ".last-run.json", LocalNav.root "\wash-position-last.json", true
+            SupportReportEvent(path ".last-run.json", "WASH_REPORT")
         }
         if !IsCurrentRun(generation)
             return "ERROR CANCELLED"

@@ -31,6 +31,8 @@ persistentDataRoot := isUiTestRun || isValidationRun
     : isHistoryImportTestRun
         ? EnvGet("LOCALAPPDATA") "\AI採掘機"
         : EnvGet("USERPROFILE") "\Saved Games\AI採掘機"
+#Include diagnostics.ahk
+InitSupportDiagnostics(persistentDataRoot, isUiTestRun || isValidationRun || isHistoryImportTestRun || HasCommandLineArgument("--cursor-api-test"), processId)
 buttonTemplatePath := A_Temp "\codex-mining-button-" processId ".png"
 windowedButtonTemplatePath := A_Temp "\codex-mining-button-windowed-" processId ".png"
 hungerTemplatePath := A_Temp "\codex-hunger-icon-" processId ".png"
@@ -442,7 +444,7 @@ if HasCommandLineArgument("--history-import-self-test") {
 ; コンパイル前後の構文・埋め込み画像チェック用です。
 if isValidationRun {
     try FileAppend "VALIDATION_PHASE proofs " A_TickCount "`n", "**", "UTF-8-RAW"
-    if !ValidateStorageCycleProof() || !ValidateStationaryWorkflow() || !ValidateNearbyWashRecovery() {
+    if !ValidateStorageCycleProof() || !ValidateStationaryWorkflow() || !ValidateNearbyWashRecovery() || !ValidateSupportDiagnostics() {
         DeleteExtractedTemplates()
         ExitApp(145)
     }
@@ -2414,6 +2416,12 @@ ProcessWebUiActions(*) {
                     State.ui.navUpdate.Text := "アップデート •"
                 } else
                     CheckForUpdates()
+            } else if action = "diagnostics.mark" && parts.Length = 3 {
+                SupportMarkProblem()
+            } else if action = "diagnostics.export" && parts.Length = 3 {
+                ExportSupportDiagnostics()
+            } else if action = "diagnostics.clientError" && parts.Length = 4 {
+                SupportWriteEvent("WEB_ERROR", parts[4])
             } else if action = "window.close" && parts.Length = 3 {
                 ExitApp()
             }
@@ -2582,6 +2590,7 @@ BuildWebUiStateJson() {
         . ',"farmRetry":' State.farmStateRetry
         . ',"windowVisible":' (State.uiWindowVisible ? "true" : "false")
         . ',"visualTest":' (State.visualTest ? "true" : "false")
+        . ',"diagnostics":' SupportUiJson()
         . ',"routes":' ExeRouteSetupStateJson(actionMode)
         . ',"controls":{' controlsJson '}}'
 }
@@ -6271,6 +6280,8 @@ ConfigureTrayMenu() {
     A_TrayMenu.Add("自動操作を開始 / 停止", ToggleMining)
     A_TrayMenu.Add("自動収納のルート設定", OpenExeRouteSettings)
     A_TrayMenu.Add("キー・動作設定", ShowSettings)
+    A_TrayMenu.Add("不具合の目印を記録", SupportMarkProblem)
+    A_TrayMenu.Add("診断ZIPを保存（停止後）", ExportSupportDiagnostics)
     A_TrayMenu.Add("アップデート", OpenUpdatePage)
     A_TrayMenu.Add()
     A_TrayMenu.Add("終了", (*) => ExitApp())
@@ -12175,6 +12186,7 @@ StopAutomationWithFault(message, pageName := "overview",
         if !criticalWasOn
             Critical "Off"
     }
+    SupportWriteEvent("FAULT", "code=" resolvedCode " detail=" message)
     ObserveStorageCycle(expectedGeneration, "stopped", resolvedCode)
     return StopMining({message: message, pageName: pageName,
         faultCode: resolvedCode, expectedGeneration: expectedGeneration,
@@ -15601,6 +15613,8 @@ ResetDiagnosticLog() {
 
 WriteDiagnostic(message) {
     global State
+    ; Keep the legacy reward-import format intact; journal is separately bounded.
+    SupportWriteEvent("TRACE", message)
     if State.diagnosticLines >= 5000 {
         RotateDiagnosticLogs()
         State.diagnosticLines := 0

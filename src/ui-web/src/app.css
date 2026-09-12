@@ -1297,3 +1297,13 @@ input:focus-visible,
 .route-nearby-option { padding: 16px; margin: 12px 0 18px; border: 1px solid #83bab1; border-radius: 12px; background: #eef8f5; color: #184e43; }
 .route-nearby-option .route-button { background: #126755; color: #fff; }
 .route-feedback { overflow-wrap: anywhere; }
+
+/* Readable support actions independent of animated press surfaces. */
+.support-card { margin: 24px 0; padding: 22px; border: 1px solid #ccd4e4; border-radius: 18px; background: #fff; overflow-wrap: anywhere; }
+.support-card h2 { margin: 0 0 12px; font-size: 19px; }
+.support-card p { line-height: 1.65; }
+.support-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.support-button { min-height: 44px; max-width: 100%; border: 1px solid #527195; border-radius: 12px; background: #edf3fc; color: #1e3655; padding: 12px 16px; cursor: pointer; font: inherit; font-weight: 600; white-space: normal; }
+.support-primary { color: #fff; background: #335b8b; }
+.support-button:disabled { opacity: .55; cursor: not-allowed; }
+.support-button:focus-visible { outline: 3px solid #4479ff; outline-offset: 3px; }
