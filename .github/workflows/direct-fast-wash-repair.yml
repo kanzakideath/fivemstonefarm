@@ -39,6 +39,8 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Patch application failed.'}
           python scripts/Finalize-DirectFast17.py
           if($LASTEXITCODE -ne 0){throw 'Final click repair failed.'}
+          python scripts/Patch-FastWashStartContract.py
+          if($LASTEXITCODE -ne 0){throw 'Start contract update failed.'}
           git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --check
           if($LASTEXITCODE -ne 0){throw 'Source whitespace check failed.'}
           ./scripts/Test-FastWashContract.ps1
@@ -66,11 +68,11 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          Remove-Item scripts/patch17.0.b64,scripts/patch17.1.b64,scripts/patch17.2.b64,scripts/patch17-finalclick.b64,scripts/Finalize-DirectFast17.py,.github/workflows/direct-fast-wash-repair.yml -Force
+          Remove-Item scripts/patch17.0.b64,scripts/patch17.1.b64,scripts/patch17.2.b64,scripts/patch17-finalclick.b64,scripts/Finalize-DirectFast17.py,scripts/Patch-FastWashStartContract.py,.github/workflows/direct-fast-wash-repair.yml -Force
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- README.md 'config/AI採掘機.ini' 'docs/AI採掘機_使い方.txt' docs/RELEASE_v9.1.17.md scripts/Build.ps1 scripts/Test-FastWashContract.ps1 scripts/Test-FastWashRuntime.ps1 scripts/Test-StorageClosedLoopContract.ps1 scripts/ui-tests/FastWashHarness.ahk scripts/ui-tests/Test-RouteSetupBrowser.py src/README.md src/fast-wash.ahk src/mining-auto.ahk src/ui-host/Protocol.cs src/ui-web/package.json src/ui-web/package-lock.json src/ui-web/src/app.css src/ui-web/src/app.js src/ui-web/src/index.html src/ui-web/test.mjs src/background-bridge/CdpBridge.cs scripts/Test-WashDomExpressions.ps1 scripts/Test-WashDomExpressions.mjs
-          git add -u -- scripts/patch17.0.b64 scripts/patch17.1.b64 scripts/patch17.2.b64 scripts/patch17-finalclick.b64 scripts/Finalize-DirectFast17.py .github/workflows/direct-fast-wash-repair.yml
+          git add -- README.md 'config/AI採掘機.ini' 'docs/AI採掘機_使い方.txt' docs/RELEASE_v9.1.17.md scripts/Build.ps1 scripts/Test-FastWashContract.ps1 scripts/Test-FastWashRuntime.ps1 scripts/Test-StorageClosedLoopContract.ps1 scripts/Test-StoneProgressContract.ps1 scripts/ui-tests/FastWashHarness.ahk scripts/ui-tests/Test-RouteSetupBrowser.py src/README.md src/fast-wash.ahk src/mining-auto.ahk src/ui-host/Protocol.cs src/ui-web/package.json src/ui-web/package-lock.json src/ui-web/src/app.css src/ui-web/src/app.js src/ui-web/src/index.html src/ui-web/test.mjs src/background-bridge/CdpBridge.cs scripts/Test-WashDomExpressions.ps1 scripts/Test-WashDomExpressions.mjs
+          git add -u -- scripts/patch17.0.b64 scripts/patch17.1.b64 scripts/patch17.2.b64 scripts/patch17-finalclick.b64 scripts/Finalize-DirectFast17.py scripts/Patch-FastWashStartContract.py .github/workflows/direct-fast-wash-repair.yml
           git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --cached --check
           if($LASTEXITCODE -ne 0){throw 'Staged diff failed.'}
           git commit -m 'Fix fast-wash native actions, direct start, final click policy and inventory scheduling'
