@@ -9,7 +9,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "9.1.13"
+global AppVersion := "9.1.14"
 ;@Ahk2Exe-SetVersion %A_PriorLine~U)^.*"([^"]+)".*$~$1%
 processId := DllCall("GetCurrentProcessId")
 global LocalNav := {busy: false, pid: 0, cancel: "", taskId: 0, dialog: 0, guide: 0, feedback: "", requestActive: false, cycle: 0, lastBatchKey: "", lastActionKey: ""}
@@ -444,7 +444,7 @@ if HasCommandLineArgument("--history-import-self-test") {
 ; コンパイル前後の構文・埋め込み画像チェック用です。
 if isValidationRun {
     try FileAppend "VALIDATION_PHASE proofs " A_TickCount "`n", "**", "UTF-8-RAW"
-    if !ValidateStorageCycleProof() || !ValidateStationaryWorkflow() || !ValidateNearbyWashRecovery() || !ValidateSupportDiagnostics() {
+    if !ValidateStorageCycleProof() || !ValidateStationaryWorkflow() || !ValidateNearbyWashRecovery() || !ValidateNearbyWashService() || !ValidateSupportDiagnostics() {
         DeleteExtractedTemplates()
         ExitApp(145)
     }
@@ -6389,8 +6389,8 @@ EnsureRuntimeStatusOverlay() {
 }
 
 UpdateRuntimeStatusOverlay(*) {
-    global State, Config
-    if !RuntimeStatusOverlayShouldBeVisible(&bounds) {
+    global State, Config, LocalNav
+    if !RuntimeStatusOverlayShouldBeVisible(&bounds) || LocalNav.pid {
         if IsObject(State.statusOverlay) && State.statusOverlay.visible {
             try State.statusOverlay.gui.Hide()
             State.statusOverlay.visible := false
@@ -6439,6 +6439,11 @@ UpdateRuntimeStatusOverlay(*) {
         statusOverlay.textKey := textKey
     }
 
+    if !State.running || !IsTargetForeground(State.generation) || LocalNav.pid {
+        try statusOverlay.gui.Hide()
+        statusOverlay.visible := false
+        return
+    }
     if !statusOverlay.visible {
         statusOverlay.gui.Show("x" bounds.x " y" bounds.y " w" bounds.w
             " h" bounds.h " NoActivate")
@@ -6568,7 +6573,9 @@ UpdateConnectionStatus(*) {
     global State, Config
     hwnd := FindFiveMWindow()
     State.connectionLabel.Text := hwnd ? "FiveM　接続済み" : "FiveM　未接続"
-    State.modeLabel.Text := Config.backgroundMode
+    State.modeLabel.Text := Config.actionMode = "washing" && Config.washForwardCorrection
+        ? "操作　石洗い＋位置補正（FiveMを前面にしてください）"
+        : Config.backgroundMode
         ? "操作　バックグラウンド（解像度に依存しません）"
         : "操作　前面のみ（画面画像で検出）"
 }
@@ -13493,7 +13500,11 @@ PerformWashCompletionCorrection(expectedGeneration, expectedTaskId,
     Critical "Off"
     if LocalNav.washAnchorGeneration != expectedGeneration
         return FailObservedWash(expectedGeneration, "ERROR ANCHOR_MISSING")
+    if IsNearbyWashService(expectedGeneration)
+        return PerformNearbyWashService(expectedGeneration, expectedTaskId, expectedAttemptId)
+
     State.statusLabel.Text := "●  画面で静止・位置ずれ・前進の効果を確認しています"
+    UpdateRuntimeStatusOverlay()
     WriteDiagnostic("attempt=" expectedAttemptId " WASH_VISUAL_BEGIN settle=observed input=foreground_scancode")
     LocalNav.washRecoveryOutcome := "VISUAL_PENDING"
     correctionOperation := ObservedWashCorrectionOperation(expectedGeneration)
@@ -13928,10 +13939,13 @@ WashAttemptBackground(expectedGeneration) {
         return
     }
     State.statusLabel.Text := "●  「石を洗う」を確認中"
+    dispatchStartedAt := MonotonicMs()
+    WriteDiagnostic("WASH_DISPATCH_BEGIN sinceRewardMs=" (State.lastVerifiedRewardAt ? dispatchStartedAt-State.lastVerifiedRewardAt : -1))
     clickResult := RunBackgroundBridgeCancelable(expectedGeneration,
-        "try-washing", State.serverEpoch)
+        "try-washing", State.serverEpoch, (State.lastDevConPort = 29200 || State.lastDevConPort = 29300 ? State.lastDevConPort : 0))
     if !IsCurrentRun(expectedGeneration)
         return
+    WriteDiagnostic("WASH_DISPATCH_END elapsedMs=" (MonotonicMs()-dispatchStartedAt))
     WriteDiagnostic("attempt=" State.attempts " WASH_TRY=" clickResult)
     if IsActionCompletionBridgeResult(clickResult, "washing") {
         MarkPendingFarmAttemptClicked(expectedGeneration, "washing")

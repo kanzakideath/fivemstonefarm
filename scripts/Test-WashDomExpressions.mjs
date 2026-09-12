@@ -337,3 +337,15 @@ for (const label of ['ストレージを開く', 'トランクを開く', '荷�
   assert(evaluate(expressions.nearby, f.document) === 'MISSING WASH_STORAGE', 'A generic inventory control is not registered cargo.');
 }
 console.log('Paired nearby wash/storage DOM probes passed (no clicks or item transfers).');
+
+// Readiness must distinguish a live idle progress UI from active/unmounted UI.
+{
+  const active = progressFixture('石を洗っています');
+  active.body.id = 'root';
+  assert(evaluate(expressions.idle, active) === 'BUSY', 'Active wash must block movement/resume.');
+  const idle = progressFixture('石を洗っています', {visible:false});
+  idle.body.id = 'root';
+  assert(evaluate(expressions.idle, idle) === 'IDLE', 'Completed progress with live root may be idle.');
+  idle.body.id = '';
+  assert(evaluate(expressions.idle, idle) === 'UNKNOWN', 'A missing progress root is not idle.');
+}

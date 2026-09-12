@@ -252,3 +252,12 @@ Assert-Contract ($washModule.Contains('ObservedWashCorrectionOperation(generatio
 Assert-Contract ($vision.Contains('CUMULATIVE_MICRO_DRIFT_TEST') -and $vision.Contains('RefineSubpixel') -and
     $vision.Contains('NO_INPUT_WITHIN_TOLERANCE') -and $vision.Contains('noEffect>=2')) 'Micro drift, zero-input and consecutive-no-effect regressions are missing.'
 Assert-Contract ($source.Contains('WASH_RECOVERY_TICK') -and $source.Contains('前進補正OFF')) 'Input-disabled and pending-dispatch states are not observable.'
+
+# Stationary service is not a visual-success bypass: require before+after task
+# proof, single native proposal, exact reward ownership and unchanged transfers.
+$nearby = [IO.File]::ReadAllText((Join-Path (Split-Path $resolvedSource) 'nearby-wash.ahk'))
+Assert-Contract ($nearby.Contains('EvaluateNearbyWashService') -and
+    $nearby.Contains('TASK_NOT_READY_BEFORE_INPUT') -and $nearby.Contains('TASK_NOT_READY_AFTER_INPUT') -and
+    $nearby.Contains('INVALID_SERVICE_RECEIPT') -and $source.Contains('ValidateNearbyWashService()')) 'Task proof and compiled service tests required.'
+Assert-Contract ($vision.Contains('ServicePulseSelfTest') -and $vision.Contains('INPUT_ENDED_NEEDS_TASK_PROOF') -and
+    $vision.Contains('SERVICE_CAMERA_RESIDUAL_TEST')) 'Service movement cannot pretend image convergence.'

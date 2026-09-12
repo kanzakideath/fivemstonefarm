@@ -50,7 +50,7 @@ internal sealed class WashPosition : Form
     private readonly IntPtr target;
     private readonly int gamePid, parentPid;
     private readonly string operation, anchorPath, cancelPath;
-    private bool Nearby { get { return operation == "wash-maintain"; } }
+    private bool Nearby { get { return operation == "wash-maintain" || operation == "wash-service"; } }
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = 300000 };
     private readonly Label label = new Label();
@@ -70,7 +70,7 @@ internal sealed class WashPosition : Form
         try
         {
             if (args[0] == "self-test") result = SelfTest();
-            else if (args.Length == 8 && (args[0] == "wash-anchor" || args[0] == "wash-correct" || args[0] == "wash-maintain" || args[0] == "wash-check"))
+            else if (args.Length == 8 && (args[0] == "wash-anchor" || args[0] == "wash-correct" || args[0] == "wash-maintain" || args[0] == "wash-service" || args[0] == "wash-check"))
             {
                 long h; int owner, pid;
                 if (!Int64.TryParse(args[2], out h) || h <= 0 || !Int32.TryParse(args[3], out owner)
@@ -149,6 +149,14 @@ internal sealed class WashPosition : Form
                 if (!match.valid) throw new Exception("ANCHOR_LOST_NO_INPUT");
                 report.beforeError=match.error; report.afterError=match.error;
                 Event("OBSERVED error_px="+F(match.error)+" support="+match.support);
+                if (operation=="wash-service")
+                {
+                    ServicePulse(reference, before, delegate { Pause(120); return CaptureFrame(); },
+                        PulseForward, delegate { Guard(); }, report);
+                    Result="WASH_SERVICE "+report.pulses+" "+report.inputMs+" "+clock.ElapsedMilliseconds;
+                    Event("INPUT_ENDED_NEEDS_TASK_PROOF image_position_verified=0");
+                    return; // finally releases keys and writes the unchanged observation.
+                }
                 if (operation=="wash-check" && !AtAnchor(match)) throw new Exception("ANCHOR_CHANGED_BEFORE_WASH");
                 if (operation=="wash-correct" || Nearby)
                 {
@@ -213,6 +221,31 @@ internal sealed class WashPosition : Form
         }
         if(!AtAnchor(current,tolerance)) throw new Exception("POSITION_CORRECTION_BUDGET");
     }
+    // One bounded move per verified washing reward. A moving third-person camera
+    // can increase anchor error even when the player has returned correctly.
+    // Do not keep chasing this non-directional scalar. The parent MUST require
+    // epoch-bound progress-idle + closed inventory + usable work/cargo afterwards.
+    internal static void ServicePulse(byte[] reference, byte[] initial, Func<byte[]> observe,
+        Action<int> pulse, Action guard, Report r)
+    {
+        guard();
+        Match before=Estimate(reference,initial,true);
+        if(!before.valid || before.error>8.0) throw new Exception("ANCHOR_LOST_NO_INPUT");
+        r.profile="nearby-task"; r.tolerancePx=0.20;
+        r.beforeError=before.error; r.afterError=before.error;
+        if(before.error<=r.tolerancePx)
+        { r.events.Add("SERVICE_WITHIN_TOLERANCE input=0 needs_task_proof=1"); return; }
+        // Sub-pixel drifts get a smaller pulse. Never exceed 80ms or send a
+        // second pulse for this reward, even when image error gets worse.
+        int ms=(int)Math.Max(30,Math.Min(80,30+20*before.error));
+        r.events.Add("SERVICE_PULSE_BEGIN ms="+ms+" before_px="+F(before.error));
+        guard(); pulse(ms); r.pulses=1; r.inputMs=ms; guard();
+        Match after=Estimate(reference,observe(),true); guard();
+        r.afterError=after.valid ? after.error : -1;
+        r.events.Add("SERVICE_OBSERVED after_px="+F(r.afterError)+" support="+after.support+
+            " image_position_verified=0 needs_task_proof=1");
+    }
+
     private byte[] WaitStable()
     {
         long begin=clock.ElapsedMilliseconds, stable=begin;
@@ -428,8 +461,35 @@ internal sealed class WashPosition : Form
             delegate(int ms){},delegate{},delegate(Match m,int ms){},r,true);
         if(r.pulses!=4)throw new Exception("ONE_DELAYED_SAMPLE_MUST_NOT_ABORT");
     }
+    private static void ServicePulseSelfTest()
+    {
+        byte[] scene=new byte[W*H]; var random=new Random(771);
+        for(int i=0;i<scene.Length;i++) scene[i]=(byte)random.Next(20,230);
+        Func<int,byte[]> shifted=delegate(int shift) {
+            byte[] b=new byte[W*H];
+            for(int y=0;y<H;y++) for(int x=0;x<W;x++) b[y*W+x]=scene[y*W+Math.Max(0,x-shift)];
+            return b;
+        };
+        int calls=0; var report=new Report();
+        ServicePulse(scene,shifted(2),delegate{return shifted(4);},delegate(int ms){
+            if(ms<30 || ms>80)throw new Exception("SERVICE_PULSE_BUDGET_TEST"); calls++;
+        },delegate{},report);
+        if(calls!=1 || report.pulses!=1 || report.afterError<=report.beforeError)
+            throw new Exception("SERVICE_CAMERA_RESIDUAL_TEST");
+        report=new Report(); calls=0;
+        ServicePulse(scene,scene,delegate{return scene;},delegate(int ms){calls++;},delegate{},report);
+        if(calls!=0)throw new Exception("SERVICE_ZERO_DRIFT_TEST");
+        calls=0; bool cancelled=false;
+        try { ServicePulse(scene,shifted(2),delegate{return scene;},delegate(int ms){calls++;},
+            delegate{throw new Exception("CANCELLED");},new Report()); }
+        catch(Exception e){cancelled=e.Message=="CANCELLED";}
+        if(!cancelled || calls!=0)throw new Exception("SERVICE_CANCEL_TEST");
+    }
+
     internal static string SelfTest()
     {
+        ServicePulseSelfTest();
+
         var random=new Random(4412);var a=new byte[W*H];for(int n=0;n<a.Length;n++)a[n]=(byte)random.Next(25,205);
         if(!AtAnchor(Estimate(a,a)) || !AtAnchor(Estimate(a,Shift(a,0,0,20))))throw new Exception("STABLE_BRIGHTNESS_TEST");
         var dark=new byte[a.Length];

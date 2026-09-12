@@ -235,3 +235,122 @@ ValidateNearbyWashRecovery() {
     }
     return true
 }
+
+
+; At most one native micro-return per confirmed reward, enclosed by fresh task
+; observations. Numeric image error is advisory, not a world-space direction.
+IsNearbyWashService(generation) {
+    global State, Config
+    return IsCurrentRun(generation) && State.runMode = "washing"
+        && Config.washForwardCorrection && Config.vehicleStorageEnabled
+        && ExeStorageMethod("washing") = "stationary"
+        && ExeRouteBindingValid("washing", State.serverEpoch)
+}
+
+ReadNearbyWashReadiness(generation, guard) {
+    global State
+    if !guard.Call()
+        return "ERROR CANCELLED"
+    started := MonotonicMs()
+    knownPort := State.lastDevConPort = 29200 || State.lastDevConPort = 29300
+        ? State.lastDevConPort : 0
+    result := RunBackgroundBridgeCancelable(generation, "wash-task-ready", State.serverEpoch, knownPort)
+    if !guard.Call()
+        return "ERROR CANCELLED"
+    if RegExMatch(result, "^READY (WASH_STORAGE|STORAGE_ONLY) (29200|29300) ([0-9]+)$", &ready) {
+        State.lastDevConPort := ready[2] + 0
+        State.backgroundTargetActive := false
+        State.backgroundDevConPort := 0
+        WriteDiagnostic("WASH_TASK_READY controls=" ready[1] " progress=idle inventory=closed samples=3 durationMs=" (MonotonicMs()-started))
+        return "READY " ready[1]
+    }
+    WriteDiagnostic("WASH_TASK_WAIT result=" result " durationMs=" (MonotonicMs()-started))
+    return result
+}
+
+NearbyWashServiceReady(result, rawCount) {
+    return rawCount >= 0 && (result = "READY WASH_STORAGE"
+        || (rawCount = 0 && result = "READY STORAGE_ONLY"))
+}
+
+; Shared compiled decision: stage results do not stand in for storage/reward
+; receipts. No callback can inject a second pulse during a failed attempt.
+EvaluateNearbyWashService(rawCount, guard, readiness, move) {
+    if rawCount < 0 || !guard.Call()
+        return "ERROR CANCELLED"
+    if !NearbyWashServiceReady(readiness.Call(), rawCount) || !guard.Call()
+        return "ERROR TASK_NOT_READY_BEFORE_INPUT"
+    proposal := move.Call()
+    if !guard.Call()
+        return "ERROR CANCELLED"
+    if !RegExMatch(proposal, "^WASH_SERVICE ([01]) ([0-9]{1,2}) ([0-9]+)$", &parts)
+        return InStr(proposal, "ERROR ") = 1 ? proposal : "ERROR INVALID_SERVICE_RECEIPT"
+    if (parts[1]+0 = 0 && parts[2]+0 != 0) || (parts[1]+0 = 1 && parts[2]+0 < 30) || parts[2]+0 > 80
+        return "ERROR INVALID_SERVICE_RECEIPT"
+    if !NearbyWashServiceReady(readiness.Call(), rawCount) || !guard.Call()
+        return "ERROR TASK_NOT_READY_AFTER_INPUT"
+    return rawCount = 0 ? "NEARBY_REFILL_READY" : "NEARBY_WASH_READY"
+}
+
+PerformNearbyWashService(generation, task, attempt) {
+    global State, Config, LocalNav
+    phase := "WASH_CORRECTING"
+    identityGuard := NearbyWashRunGuard.Bind(generation, task, phase, State.serverEpoch,
+        Config.vehicleStorageId, Config.vehicleStorageType)
+    guard := () => identityGuard.Call()
+        && State.washRecoveryGeneration = generation && State.washRecoveryAttemptId = attempt
+        && IsNearbyWashService(generation)
+    started := MonotonicMs()
+    State.statusLabel.Text := "●  荷台前：洗浄終了・操作可能状態を確認中（W未送信）"
+    UpdateRuntimeStatusOverlay()
+    result := EvaluateNearbyWashService(State.lastRawStoneCount, guard,
+        ReadNearbyWashReadiness.Bind(generation, guard),
+        RunObservedWashHelper.Bind("wash-service", generation))
+    if !IsCurrentFarmTask(generation, task, phase)
+        return false
+    State.washCorrectionInFlight := false
+    WriteDiagnostic("WASH_SERVICE_END decision=" result " totalMs=" (MonotonicMs()-started)
+        " image_position_verified=0 attempt=" attempt)
+    if result != "NEARBY_WASH_READY" && result != "NEARBY_REFILL_READY" {
+        StopAutomationWithFault("荷台前の再開条件を確認できないため停止しました（" result "）", "routes", "WASH_SERVICE_UNCONFIRMED")
+        return false
+    }
+    LocalNav.washRecoveryOutcome := result
+    LocalNav.washFeedback := "荷台前：前進処理後、洗浄終了・荷台操作・所持品画面が閉じた状態を確認。次の作業へ進みます"
+    LocalNav.feedback := LocalNav.washFeedback
+    QueueWebUiFlush(true)
+    return true
+}
+
+ValidateNearbyWashService() {
+    if !NearbyWashServiceReady("READY WASH_STORAGE", 1)
+        || NearbyWashServiceReady("READY STORAGE_ONLY", 1)
+        || !NearbyWashServiceReady("READY STORAGE_ONLY", 0)
+        || NearbyWashServiceReady("READY WASH_STORAGE", -1)
+        return false
+    for count in [0, 1, 80] {
+        for value in ["WASH_SERVICE 1 80 300", "WASH_SERVICE 0 0 400", "ERROR MANUAL_OVERRIDE",
+            "ERROR GAME_NOT_FOREGROUND", "ERROR KEY_RELEASE_FAILED", "ERROR CANCELLED", "WASH_SERVICE 1 81 200",
+            "WASH_SERVICE 1 0 10", "NEARBY_WASH_READY", "WASH_SERVICE 0 30 100"] {
+            trace := []
+            probe := NearbyWashTestProbe.Bind(trace, count = 0 ? "READY STORAGE_ONLY" : "READY WASH_STORAGE")
+            move := NearbyWashTestProbe.Bind(trace, value)
+            result := EvaluateNearbyWashService(count, () => true, probe, move)
+            ok := value = "WASH_SERVICE 1 80 300" || value = "WASH_SERVICE 0 0 400"
+            if (InStr(result,"NEARBY_") = 1) != ok || trace.Length != (ok ? 3 : 2)
+                return false
+        }
+    }
+    for failAt in [1, 2, 3, 4] {
+        trace := []
+        guards := []
+        result := EvaluateNearbyWashService(1, NearbyWashTestGuard.Bind(guards, failAt),
+            NearbyWashTestProbe.Bind(trace,"READY WASH_STORAGE"), NearbyWashTestProbe.Bind(trace,"WASH_SERVICE 1 50 100"))
+        if InStr(result,"NEARBY_") = 1
+            return false
+    }
+    trace := []
+    result := EvaluateNearbyWashService(1, () => true, NearbyWashTestProbe.Bind(trace,"ERROR TASK_NOT_READY"),
+        NearbyWashTestProbe.Bind(trace,"WASH_SERVICE 1 50 100"))
+    return result = "ERROR TASK_NOT_READY_BEFORE_INPUT" && trace.Length = 1
+}

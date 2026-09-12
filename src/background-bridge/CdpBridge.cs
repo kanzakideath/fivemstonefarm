@@ -72,9 +72,10 @@ internal static class CdpBridge
             || mode == "try-probe-mining"
             || mode == "activate" || mode == "deactivate"
             || mode == "deactivate-29200" || mode == "deactivate-29300");
-        bool actionTryMode = args.Length == 3 && (mode == "try-mining"
+        bool actionTryMode = (args.Length == 3 || (args.Length == 4 && mode == "try-washing")) && (mode == "try-mining"
             || mode == "try-washing" || mode == "try-gold");
         bool nearbyWashProbeMode = args.Length == 3 && mode == "probe-wash-storage";
+        bool washReadyMode = args.Length == 4 && mode == "wash-task-ready";
         bool actionCompletionMode = args.Length == 4 && mode == "wait-action-completion";
         bool washCompletionMode = args.Length == 3 && mode == "wait-wash-completion";
         bool nudgeMode = (args.Length == 4 || args.Length == 5) && mode == "nudge-forward";
@@ -89,13 +90,18 @@ internal static class CdpBridge
         bool cancelOperationMode = args.Length == 3 && mode == "cancel-operation";
         bool companionCommandMode = (args.Length == 3 || args.Length == 4)
             && mode == "companion-command";
-        if (!twoArgumentMode && !actionTryMode && !nearbyWashProbeMode && !actionCompletionMode && !washCompletionMode
+        if (!washReadyMode && !twoArgumentMode && !actionTryMode && !nearbyWashProbeMode && !actionCompletionMode && !washCompletionMode
             && !nudgeMode && !routeMode && !routeHealthMode && !viewMode
             && !hotbarMode && !inventoryKeyMode
             && !testDeactivateMode && !depositMode && !withdrawMode && !cancelOperationMode
             && !companionCommandMode)
             return 64;
 
+        int preferredWashPort=0;
+        if ((washReadyMode || (actionTryMode && args.Length==4))
+            && (!Int32.TryParse(args[3],out preferredWashPort)
+                || (preferredWashPort!=0 && preferredWashPort!=29200 && preferredWashPort!=29300)))
+            return 64;
         string result;
         int exitCode;
         try
@@ -257,8 +263,13 @@ internal static class CdpBridge
                 if (actionTryMode && !IsValidServerEpoch(args[2]))
                     return 64;
                 result = actionTryMode
-                    ? TryAndWaitActionAsync(mode, args[2]).GetAwaiter().GetResult()
+                    ? TryAndWaitActionAsync(mode, args[2], preferredWashPort).GetAwaiter().GetResult()
                     : TryActionAsync(mode, null, null).GetAwaiter().GetResult();
+            }
+            else if (washReadyMode)
+            {
+                if (!IsValidServerEpoch(args[2])) return 64;
+                result=ProbeWashTaskReadyAsync(args[2],preferredWashPort).GetAwaiter().GetResult();
             }
             else if (nearbyWashProbeMode)
             {
@@ -331,6 +342,7 @@ internal static class CdpBridge
     {
         return result == Capabilities
             || result == "SELFTEST OK"
+            || Regex.IsMatch(result, @"^READY (WASH_STORAGE|STORAGE_ONLY) (29200|29300) [0-9]+$")
             || result.StartsWith("PRESENT ", StringComparison.Ordinal)
             || result.StartsWith("CLICKED ", StringComparison.Ordinal)
             || result.StartsWith("ACTIVATED ", StringComparison.Ordinal)
@@ -455,6 +467,15 @@ internal static class CdpBridge
 
     private static string RunSelfTest()
     {
+        foreach(string control in new[]{"PRESENT WASH_STORAGE","PRESENT STORAGE_ONLY","MISSING WASH_STORAGE","AMBIGUOUS WASH_STORAGE"})
+            foreach(string progress in new[]{"IDLE","BUSY","UNKNOWN"})
+                foreach(string inv in new[]{"CLOSED","OPEN","UNKNOWN"})
+                {
+                    bool expected=progress=="IDLE" && inv=="CLOSED" && control.StartsWith("PRESENT ",StringComparison.Ordinal);
+                    if(WashTaskReadiness(control,progress,inv).StartsWith("READY ",StringComparison.Ordinal)!=expected)
+                        return "ERROR TASK_READINESS_TEST";
+                }
+
         List<RouteStep> route = ParseRoute("150:65,25:0,150:136");
         Dictionary<string, int> baseline = ParseBaseline("0001.ore.e30=10");
         Dictionary<string, int> authorized = ParseExactCounts("ore.e30=2");
@@ -1070,7 +1091,7 @@ internal static class CdpBridge
     }
 
     private static async Task<string> TryActionAsync(string mode, string expectedEpoch,
-        Action<long> clickDispatchObserver)
+        Action<long> clickDispatchObserver, int preferredPort = 0)
     {
         bool probeOnly = mode == "try-probe-mining";
         bool washingMode = mode == "try-washing";
@@ -1090,9 +1111,9 @@ internal static class CdpBridge
         }
         try
         {
-            if (!SendRelease(0))
+            if (!SendRelease(preferredPort))
                 throw new InvalidOperationException("INPUT_RELEASE_UNAVAILABLE");
-            port = ActivatePort();
+            port = preferredPort!=0 ? ActivateKnownPort(preferredPort) : ActivatePort();
             int targetWaitMilliseconds = washingMode ? 7000 : goldMode ? 4000 : 8500;
             int sessionMilliseconds = targetWaitMilliseconds + 4000;
             using (var session = await CdpSession.OpenAsync(
@@ -1173,7 +1194,7 @@ internal static class CdpBridge
     }
 
     private static async Task<string> TryAndWaitActionAsync(
-        string mode, string expectedEpoch)
+        string mode, string expectedEpoch, int preferredPort = 0)
     {
         WorkAction action;
         if (!TryGetWorkActionForTryMode(mode, out action))
@@ -1205,7 +1226,7 @@ internal static class CdpBridge
         {
             long clickDispatchTimestamp = -1;
             string clickResult = await TryActionAsync(mode, expectedEpoch,
-                delegate(long timestamp) { clickDispatchTimestamp = timestamp; })
+                delegate(long timestamp) { clickDispatchTimestamp = timestamp; }, preferredPort)
                 .ConfigureAwait(false);
             string clickedResult = "CLICKED " + actionToken;
             if (!String.Equals(clickResult, clickedResult, StringComparison.Ordinal))
@@ -3105,6 +3126,75 @@ internal static class CdpBridge
             + "if(storage==='AMBIGUOUS')return 'AMBIGUOUS WASH_STORAGE';"
             + "if(storage!=='PRESENT')return 'MISSING WASH_STORAGE';"
             + "return wash?'PRESENT WASH_STORAGE':'PRESENT STORAGE_ONLY';})()";
+    }
+
+    private static int ActivateKnownPort(int port)
+    {
+        if ((port!=29200 && port!=29300) || !TrySendDevCon(port,"+ox_target"))
+            throw new InvalidOperationException("ACTIVATION_UNAVAILABLE");
+        return port;
+    }
+
+    private static string WashIdleStateExpression()
+    {
+        // Unknown/unmounted progress UI is NOT equivalent to idle.
+        return "(() => {const root=document.querySelector('#root');if(!root||!root.isConnected)return 'UNKNOWN';"
+            + "return " + WorkProgressExpression(WorkAction.Wash) + "?'BUSY':'IDLE';})()";
+    }
+
+    private static string ClosedInventoryStateExpression()
+    {
+        return "(() => {"+InventoryPrelude()+
+            "if(!findStore())return 'UNKNOWN';return inventoryVisible()?'OPEN':'CLOSED';})()";
+    }
+
+    internal static string WashTaskReadiness(string controls,string progress,string inventory)
+    {
+        if(progress!="IDLE" || inventory!="CLOSED")return "WAIT";
+        if(controls=="PRESENT WASH_STORAGE")return "READY WASH_STORAGE";
+        if(controls=="PRESENT STORAGE_ONLY")return "READY STORAGE_ONLY";
+        return "WAIT";
+    }
+
+    // Activation, all observations and release share one short-lived owner.
+    // Never click, refill, or start another wash here. The existing action path
+    // still captures inventory, arms progress, clicks once and verifies reward.
+    private static async Task<string> ProbeWashTaskReadyAsync(string expectedEpoch,int preferredPort)
+    {
+        string[] frames;
+        if(!TryDecodeServerEpoch(expectedEpoch,out frames))return "ERROR SERVER_SESSION_CHANGED";
+        int port=0;
+        try
+        {
+            if(!SendRelease(preferredPort))return "ERROR INPUT_RELEASE_UNAVAILABLE";
+            port=preferredPort!=0 ? ActivateKnownPort(preferredPort) : ActivatePort();
+            using(var targetSession=await CdpSession.OpenAsync(TargetFramePart,TimeSpan.FromSeconds(5),frames).ConfigureAwait(false))
+            using(var progressSession=await CdpSession.OpenAsync(ProgressFramePart,TimeSpan.FromSeconds(5),frames).ConfigureAwait(false))
+            using(var inventorySession=await CdpSession.OpenAsync(InventoryFramePart,TimeSpan.FromSeconds(5),frames).ConfigureAwait(false))
+            {
+                Stopwatch timer=Stopwatch.StartNew(); int stable=0; string last=null;
+                while(timer.ElapsedMilliseconds<1800)
+                {
+                    if(!await targetSession.MatchesServerEpochAsync().ConfigureAwait(false))return "ERROR SERVER_SESSION_CHANGED";
+                    string progressBefore=await progressSession.EvaluateStringAsync(WashIdleStateExpression(),false).ConfigureAwait(false);
+                    string inventory=await inventorySession.EvaluateStringAsync(ClosedInventoryStateExpression(),false).ConfigureAwait(false);
+                    string controls=await targetSession.EvaluateStringAsync(NearbyWashControlsExpression(),false).ConfigureAwait(false);
+                    string progressAfter=await progressSession.EvaluateStringAsync(WashIdleStateExpression(),false).ConfigureAwait(false);
+                    string value=progressBefore==progressAfter ? WashTaskReadiness(controls,progressAfter,inventory) : "WAIT";
+                    stable=value!="WAIT" && value==last ? stable+1 : value!="WAIT" ? 1 : 0;
+                    last=value;
+                    if(stable>=3)
+                    {
+                        if(!await targetSession.MatchesServerEpochAsync().ConfigureAwait(false))return "ERROR SERVER_SESSION_CHANGED";
+                        return value+" "+port+" "+timer.ElapsedMilliseconds;
+                    }
+                    await Task.Delay(60,targetSession.Token).ConfigureAwait(false);
+                }
+                return "ERROR TASK_NOT_READY";
+            }
+        }
+        finally { if(!(port!=0 ? SendRelease(port) : SendRelease(preferredPort)))
+            throw new InvalidOperationException("INPUT_RELEASE_UNAVAILABLE"); }
     }
 
     private static async Task<string> ProbeNearbyWashAsync(string expectedEpoch)

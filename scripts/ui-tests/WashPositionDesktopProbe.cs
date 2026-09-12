@@ -118,6 +118,17 @@ internal sealed class WashPositionDesktopProbe : Form
             Reset(3,false,false);
             Check(Execute("wash-maintain","nearby-pre-cancel",true)=="ERROR CANCELLED","NEARBY_CANCEL");
             Check(keyDowns==0,"NEARBY_CANCEL_INPUT");
+            Reset(0,false,false);
+            Check(Execute("wash-service","service-no-drift",false).StartsWith("WASH_SERVICE 0 0 "),"SERVICE_NO_DRIFT");
+            Reset(2,false,true);
+            Check(Execute("wash-service","service-camera-residual",false).StartsWith("WASH_SERVICE 1 "),"SERVICE_RESULT");
+            Check(keyDowns==1 && keyUps==1 && offset==3,"SERVICE_ONE_PULSE_ONLY");
+            Reset(2,true,false);
+            Check(Execute("wash-service","service-no-motion",false).StartsWith("WASH_SERVICE 1 "),"SERVICE_NEEDS_TASK_PROOF");
+            Check(keyDowns==1 && offset==2,"SERVICE_NO_MOTION_LIMIT");
+            Reset(2,false,false);
+            Check(Execute("wash-service","service-cancel",true)=="ERROR CANCELLED","SERVICE_CANCEL");
+            Check(keyDowns==0,"SERVICE_CANCEL_INPUT");
             evidence.AppendLine("DESKTOP_PROBE OK (synthetic Windows target, NOT FiveM)");status=0;
         }
         catch(Exception e){evidence.AppendLine("DESKTOP_PROBE ERROR "+e.Message);}

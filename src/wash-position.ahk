@@ -11,7 +11,7 @@ ObservedWashCorrectionOperation(generation) {
         && Config.washForwardCorrection && Config.vehicleStorageEnabled
         && ExeStorageMethod("washing") = "stationary"
         && ExeRouteBindingValid("washing", State.serverEpoch)
-        return "wash-maintain"
+        return "wash-service"
     return "wash-correct"
 }
 
