@@ -2,7 +2,7 @@ name: Validate stationary wait and resume
 on:
   push:
     branches: [fix/stationary-only-9.1.15]
-    paths: [.github/workflows/stationary-wait-repair.yml]
+    paths: [.github/workflows/stationary-wait-repair.yml, scripts/Apply-StationaryWait.py]
 permissions:
   contents: write
 concurrency:
