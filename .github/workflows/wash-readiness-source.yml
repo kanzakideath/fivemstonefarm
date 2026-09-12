@@ -1,0 +1,22 @@
+name: Washing readiness source
+on:
+  push:
+    branches: [fix/wash-task-readiness-9.1.14]
+    paths: [.github/workflows/wash-readiness-source.yml]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: c917f9f76d656ecb73ec06d188cd0ad7ec4b6dc7
+          persist-credentials: false
+      - run: git archive --format=zip -o source-v9.1.13.zip HEAD
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: source-wash-readiness
+          path: source-v9.1.13.zip
+          retention-days: 7
