@@ -1,0 +1,78 @@
+name: Verify update-only startup repair
+on:
+  push:
+    branches: [fix/update-validation-9.1.11]
+    paths: [.github/workflows/update-validation-repair.yml]
+permissions:
+  contents: write
+concurrency:
+  group: update-validation-repair-9.1.11
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Apply narrow fix to verified baseline
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git merge-base --is-ancestor 8ed65c3ace8144706ca854704448a64404851814 HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Wrong source baseline.' }
+          python scripts/Apply-UpdateValidationFix.py
+          if ($LASTEXITCODE -ne 0) { throw 'Patch boundaries changed.' }
+          git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'Source diff failed.' }
+      - name: Reproduce released behavior with non-default configuration too
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $old = Join-Path $env:RUNNER_TEMP 'released-v9.1.10.exe'
+          Invoke-WebRequest 'https://github.com/kanzakideath/fivemstonefarm/releases/download/v9.1.10/ai-miner-win-x64.exe' -OutFile $old
+          if ((Get-FileHash $old).Hash.ToLowerInvariant() -ne 'cbbe82396409e10e1dc8df50171a133bcc7a151eac78f0a44ef35fca220e074d') { throw 'Baseline hash mismatch.' }
+          ./scripts/Test-UpdateStartup.ps1 -ExecutablePath $old -OutputDirectory artifacts/update-baseline -ObserveOnly
+      - name: Full build including non-console updater launch regression
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force artifacts/update-startup | Out-Null
+          Start-Transcript artifacts/update-startup/build.txt
+          try { ./scripts/Build.ps1 -Version 9.1.11 } finally { Stop-Transcript }
+          ./scripts/Test-WashPositionDesktop.ps1 -OutputDirectory artifacts/update-startup
+      - name: Commit exactly tested application source and remove temporary patch tooling
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Remove-Item scripts/Apply-UpdateValidationFix.py,.github/workflows/update-validation-repair.yml,.github/workflows/update-startup-diagnosis.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- src/mining-auto.ahk README.md src/README.md 'docs/AI採掘機_使い方.txt' 'config/AI採掘機.ini' src/ui-web/package.json src/ui-web/package-lock.json scripts/Build.ps1 scripts/Test-UpdateStartup.ps1 scripts/Apply-UpdateValidationFix.py .github/workflows/update-validation-repair.yml .github/workflows/update-startup-diagnosis.yml
+          git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --cached --check
+          if ($LASTEXITCODE -ne 0) { throw 'Staged diff failed.' }
+          git commit -m 'Fix detached updater validation and isolate self-test settings [skip ci]'
+          if ($LASTEXITCODE -ne 0) { throw 'Commit failed.' }
+          git push origin HEAD:fix/update-validation-9.1.11
+          if ($LASTEXITCODE -ne 0) { throw 'Branch moved; do not force push.' }
+          git rev-parse HEAD | Set-Content artifacts/update-startup/SOURCE.txt
+          git diff 8ed65c3ace8144706ca854704448a64404851814 HEAD -- src/mining-auto.ahk scripts/Build.ps1 | Set-Content artifacts/update-startup/change.diff
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: update-validation-9.1.11-evidence
+          path: |
+            artifacts/update-startup/
+            artifacts/update-baseline/
+            build/staging/*.log
+            build/staging/*.txt
+          retention-days: 14
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: success()
+        with:
+          name: update-validation-9.1.11-candidate
+          path: dist/ai-miner-win-x64.exe
+          retention-days: 14
+          if-no-files-found: error
