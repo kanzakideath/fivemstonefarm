@@ -1316,6 +1316,13 @@ input:focus-visible,
 .fast-wash-action:disabled .press-surface { background: #a8a8ad; }
 .fast-wash-description { margin: 0 8px 24px; line-height: 1.5; }
 
+/* Bounded dual-target washing: separate from cargo-skipping fast wash. */
+.endless-wash-action { margin: 0 0 8px; }
+.endless-wash-action .press-surface { background: #007aff; }
+.endless-wash-action:active .press-surface { background: #0062cc; }
+.endless-wash-action:disabled .press-surface { background: #a8a8ad; }
+.endless-wash-description { margin: 0 8px 24px; line-height: 1.5; }
+
 /* Verified release chooser: an iOS grouped list, never a native combo box. */
 .update-version-list { min-height: 64px; }
 .update-version-empty {

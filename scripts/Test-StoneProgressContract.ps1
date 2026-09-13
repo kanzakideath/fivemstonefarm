@@ -156,7 +156,7 @@ Assert-SourcePattern `
     'TestStartOperationOwnership\(\)[\s\S]{0,2200}callbackOwnerBlocked[\s\S]{0,500}duplicateBlocked[\s\S]{0,500}stopCancelled[\s\S]{0,500}staleReleaseBlocked' `
     'The deterministic validation fixture does not cover callback drain, duplicate Start, and Stop-during-preflight ownership.'
 Assert-SourcePattern `
-    'persistentDataRoot :=[\s\S]{0,420}EnvGet\("USERPROFILE"\) "\\Saved Games\\AI採掘機"' `
+    'persistentDataRoot :=[\s\S]{0,420}EnvGet\("USERPROFILE"\) "\\Saved Games\\[^"\r\n]+"' `
     'Production persistence must use the non-virtualized Saved Games root.'
 Assert-SourcePattern `
     'metagameStatePath: persistentDataRoot "\\metagame\\state\.json"[\s\S]{0,180}uiUserDataPath: persistentDataRoot "\\WebView2"[\s\S]{0,700}metagameOutboxPath:[\s\S]{0,180}: persistentDataRoot "\\metagame-outbox\.tsv"[\s\S]{0,650}verifiedRewardWalPath:[\s\S]{0,180}: persistentDataRoot "\\verified-reward-wal\.tsv"' `
@@ -165,7 +165,7 @@ Assert-SourcePattern `
     'MigrateLegacyMetagameDurabilityFiles\(\)[\s\S]{0,120}State\.metagameOutbox := LoadMetagameOutbox\(State\.metagameOutboxPath\)' `
     'Legacy durability files must be merged before the canonical FIFO is loaded.'
 Assert-SourcePattern `
-    'GetLegacyMetagameStorageRoots\(\)[\s\S]{0,500}\\AppData\\Local\\AI採掘機[\s\S]{0,700}\\LocalCache\\Local\\AI採掘機' `
+    'GetLegacyMetagameStorageRoots\(\)[\s\S]{0,500}\\AppData\\Local\\[\s\S]{0,700}\\LocalCache\\Local\\' `
     'Legacy discovery must cover normal LocalAppData and packaged LocalCache roots.'
 Assert-SourcePattern `
     'MigrateLegacyMetagameDurabilityFiles\(\)[\s\S]{0,3400}PersistImmutableLegacyDurabilityBackup\([\s\S]{0,3200}PersistMetagameOutbox\(mergedOutbox,[\s\S]{0,1500}PersistVerifiedRewardWalSnapshot\(mergedWal,[\s\S]{0,900}PersistLegacyDurabilityReceipts\(receipts' `

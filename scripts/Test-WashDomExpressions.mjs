@@ -312,7 +312,7 @@ console.log('Work DOM expression tests passed.');
 
 // Paired task-area evidence must not click, confuse a partial match, or accept
 // multiple cargo options. Washing may disappear legitimately at raw stone 0.
-for (const label of ['ストレージを開く', 'トランクを開く', '荷台を開く']) {
+for (const label of ['ストレージを開く', 'トランクを開く', '荷台を開く', 'インベントリを開く']) {
   const f = targetFixture();
   const cargo = washOption(label, 300, { states: ['hover'] });
   f.root.append(cargo.hit);
@@ -334,9 +334,45 @@ for (const label of ['ストレージを開く', 'トランクを開く', '荷�
 {
   const f = targetFixture();
   f.root.append(washOption('インベントリを開く', 300).hit);
-  assert(evaluate(expressions.nearby, f.document) === 'MISSING WASH_STORAGE', 'A generic inventory control is not registered cargo.');
+  assert(evaluate(expressions.nearby, f.document) === 'PRESENT WASH_STORAGE', 'The exact inventory label must be accepted at the registered cargo gate.');
 }
 console.log('Paired nearby wash/storage DOM probes passed (no clicks or item transfers).');
+
+// Closed-loop recovery classifies both controls in one non-mutating DOM turn.
+function recoveryState(document) {
+  const counts = JSON.parse(evaluate(expressions.recoveryStructure, document));
+  if (counts.storage > 1) return 'AMBIGUOUS';
+  if (counts.wash > 0 && counts.storage === 1) return 'BOTH';
+  if (counts.storage === 1) return 'STORAGE_ONLY';
+  if (counts.wash > 0) return 'WASH_ONLY';
+  return 'NEITHER';
+}
+{
+  const f = targetFixture();
+  const cargo = washOption('インベントリを開く', 300);
+  f.root.append(cargo.hit);
+  assert(recoveryState(f.document) === 'BOTH', 'Recovery must classify paired work and cargo.');
+  assert(cargo.hit.clicked + f.first.hit.clicked + f.second.hit.clicked === 0, 'BOTH classification must not click.');
+  f.first.hit.style.display = f.second.hit.style.display = 'none';
+  assert(recoveryState(f.document) === 'STORAGE_ONLY', 'Recovery must classify cargo-only state.');
+  assert(cargo.hit.clicked === 0, 'STORAGE_ONLY classification must not click.');
+}
+{
+  const f = targetFixture();
+  assert(recoveryState(f.document) === 'WASH_ONLY', 'Recovery must classify wash-only state.');
+  f.first.hit.style.display = f.second.hit.style.display = 'none';
+  assert(recoveryState(f.document) === 'NEITHER', 'Recovery must classify empty state.');
+  assert(f.first.hit.clicked + f.second.hit.clicked === 0, 'Work-only/empty classification must not click.');
+}
+{
+  const f = targetFixture();
+  const cargoA = washOption('ストレージを開く', 300);
+  const cargoB = washOption('荷台を開く', 50);
+  f.root.append(cargoA.hit, cargoB.hit);
+  assert(recoveryState(f.document) === 'AMBIGUOUS', 'Recovery must reject multiple cargo controls.');
+  assert(cargoA.hit.clicked + cargoB.hit.clicked + f.first.hit.clicked + f.second.hit.clicked === 0, 'AMBIGUOUS classification must not click.');
+}
+console.log('WASH_RECOVERY_DOM_PASS: five structural states, exact inventory label, zero clicks');
 
 // Readiness must distinguish a live idle progress UI from active/unmounted UI.
 {
@@ -378,9 +414,9 @@ for (const state of ['missing', 'disabled', 'ambiguous', 'generic']) {
   if (state === 'ambiguous') cargo.push(washOption('ストレージを開く',300),washOption('ストレージを開く',50));
   if (state === 'generic') cargo.push(washOption('インベントリを開く',300,{states:['hover']}));
   for (const c of cargo) f.root.append(c.hit);
-  assert(evaluate(expressions.ordinaryWashClick,f.document) === false, state + ': ordinary cargo guard');
+  assert(evaluate(expressions.ordinaryWashClick,f.document) === (state === 'generic'), state + ': ordinary cargo guard');
   assert(evaluate(expressions.fastWashClick,f.document) === true, state + ': fast washing without cargo');
-  assert(f.first.hit.clicked + f.second.hit.clicked === 1, state + ': exactly one wash');
+  assert(f.first.hit.clicked + f.second.hit.clicked === (state === 'generic' ? 2 : 1), state + ': exact wash clicks only');
   assert(cargo.every(c => c.hit.clicked === 0), state + ': never click cargo/inventory');
 }
 {

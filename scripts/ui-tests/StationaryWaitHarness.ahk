@@ -3,6 +3,15 @@
 #Warn All, Off
 #Include %A_ScriptDir%/../../src/stationary-only.ahk
 
+; The production entry point also includes endless-wash.ahk.  This isolated
+; stationary-policy harness deliberately keeps that module disabled.
+EndlessWashBridgeMotionAuthorized() {
+    return false
+}
+EndlessWashModeEnabled() {
+    return false
+}
+
 ; Execute the actual production wait loop; only I/O adapters are scripted.
 ; No FiveM, screen capture, game input or item transfer is performed by this test.
 global State := 0, LocalNav := 0, Config := 0, Scenario := "", Responses := [], Calls := [], Events := [], Fault := "", CargoCalls := 0, CloseCalls := 0, EpochChanges := 0

@@ -56,6 +56,16 @@ def main():
             page.wait_for_function("() => !window.aiMinerTest.getState().running")
             assert page.evaluate("window.aiMinerTest.getState().fastWashActive === false")
             assert quick.is_enabled()
+            endless = page.locator('#endless-wash-start')
+            assert endless.is_visible() and endless.is_enabled()
+            endless.click()
+            page.wait_for_function("() => window.aiMinerTest.getState().running && window.aiMinerTest.getState().endlessWashActive === true")
+            assert page.evaluate("window.__sent.filter(m => m.action === 'washing.endless.start').length === 1")
+            assert endless.is_disabled()
+            page.locator('#run-button').click()
+            page.wait_for_function("() => !window.aiMinerTest.getState().running")
+            assert page.evaluate("window.aiMinerTest.getState().endlessWashActive === false")
+            assert endless.is_enabled()
             page.locator('#run-button').click()
             page.wait_for_function("() => window.aiMinerTest.getState().running")
             assert page.evaluate("window.aiMinerTest.getState().fastWashActive === false")
@@ -123,10 +133,10 @@ def main():
             }''')
             page.evaluate("""() => {
                 const s = window.aiMinerTest.getState(); s.revision += 1;
-                s.routes.washFeedback = '移動・視点入力なし / 操作範囲: READY WORK_STORAGE';
+                s.routes.washFeedback = '通常・高速は移動なし / エンドレス石洗いは上限付き補正 / 操作範囲: READY WORK_STORAGE';
                 window.aiMinerTest.setState(s);
             }""")
-            assert '移動・視点入力なし' in page.locator('#route-wash-position').inner_text()
+            assert 'エンドレス石洗いは上限付き補正' in page.locator('#route-wash-position').inner_text()
             assert page.locator('#route-teach').is_hidden()
             assert '物理を固定する機能ではありません' in page.locator('#stationary-policy').inner_text()
             assert '近接' in page.locator('#route-trial').inner_text()
@@ -160,7 +170,7 @@ def main():
             page.locator('#tab-update').click()
             assert page.locator('#screen-update').is_visible()
             version_list = page.locator('#update-version-list')
-            assert version_list.get_by_role('radio').count() == 4
+            assert version_list.get_by_role('radio').count() == 5
             assert version_list.locator('input, select, textarea').count() == 0
             old_version = version_list.locator('[data-version="9.1.17"]')
             assert old_version.is_visible() and old_version.is_enabled()
