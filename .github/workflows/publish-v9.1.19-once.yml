@@ -1,0 +1,577 @@
+name: Publish v9.1.19 truck-side endless washing
+
+run-name: Publish v9.1.19 from ${{ inputs.expected_source_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_source_sha:
+        description: Exact 40-character main commit SHA to build and publish
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ai-miner-publish-stable
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    environment: release
+    steps:
+      - name: Check out explicitly approved source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact source and unchanged stable channel
+        shell: pwsh
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expected = $env:EXPECTED_SOURCE_SHA
+          if ($expected -cnotmatch '^[0-9a-f]{40}$') {
+            throw 'expected_source_sha must be one exact lowercase 40-character commit SHA.'
+          }
+          if ($env:GITHUB_REF -cne 'refs/heads/main') {
+            throw 'This publisher may only be dispatched from main.'
+          }
+          if ($expected -cne $env:GITHUB_SHA) {
+            throw 'The approved source SHA does not equal the workflow dispatch SHA.'
+          }
+          if ((git rev-parse HEAD).Trim() -cne $expected) {
+            throw 'The checked-out source does not equal the approved source SHA.'
+          }
+          $originMain = @(git ls-remote --heads origin refs/heads/main)
+          if ($LASTEXITCODE -ne 0 -or $originMain.Count -ne 1 -or
+              ([string]$originMain[0]).TrimEnd() -cne "$expected`trefs/heads/main") {
+            throw 'The current origin/main does not equal the approved source SHA.'
+          }
+          $main = gh api "repos/$env:GH_REPO/branches/main" --jq '.commit.sha'
+          if ($LASTEXITCODE -ne 0 -or $main.Trim() -cne $expected) {
+            throw 'Main does not equal the approved source SHA.'
+          }
+          $latest = gh api "repos/$env:GH_REPO/releases/latest" --jq '.tag_name'
+          if ($LASTEXITCODE -ne 0 -or $latest.Trim() -cne 'v9.1.18') {
+            throw 'Stable Latest is no longer v9.1.18.'
+          }
+          $refsText = gh api "repos/$env:GH_REPO/git/matching-refs/tags/v9.1.19"
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect release tags.' }
+          $exactTags = @($refsText | ConvertFrom-Json | Where-Object { $_.ref -ceq 'refs/tags/v9.1.19' })
+          if ($exactTags.Count -ne 0) { throw 'Never overwrite an existing v9.1.19 tag.' }
+          if (-not (Test-Path -LiteralPath 'docs/RELEASE_v9.1.19.md' -PathType Leaf) -or
+              (Get-Item -LiteralPath 'docs/RELEASE_v9.1.19.md').Length -le 0) {
+            throw 'v9.1.19 release notes are missing or empty.'
+          }
+          New-Item -ItemType Directory -Force artifacts/v9.1.19-release-validation | Out-Null
+          $expected | Set-Content artifacts/v9.1.19-release-validation/SOURCE.txt -Encoding ascii
+
+      - name: Build and test exact source, then sign release assets
+        timeout-minutes: 20
+        shell: pwsh
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          UPDATE_SIGNING_KEY_PKCS8_B64: ${{ secrets.UPDATE_SIGNING_KEY_PKCS8_B64 }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ((git rev-parse HEAD).Trim() -cne $env:EXPECTED_SOURCE_SHA) {
+            throw 'Source changed before the release build.'
+          }
+          Start-Transcript artifacts/v9.1.19-release-validation/build.txt
+          try {
+            ./scripts/Make-Release.ps1 -Version 9.1.19
+            ./scripts/Verify-Release.ps1 -ArtifactDirectory artifacts/v9.1.19
+            git diff --ignore-space-at-eol --exit-code
+            if ($LASTEXITCODE -ne 0) {
+              throw 'The release build changed tracked source or generated files.'
+            }
+          }
+          finally {
+            Stop-Transcript
+          }
+
+      - name: Verify published updater path, live catalog, UI, and runtime contracts
+        timeout-minutes: 12
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Start-Transcript artifacts/v9.1.19-release-validation/current-tests.txt
+          try {
+            ./scripts/Test-UpdateApply.ps1 `
+              -ArtifactDirectory artifacts/v9.1.19 `
+              -OutputDirectory artifacts/v9.1.19-release-validation/actual-apply
+            ./scripts/Test-UpdateCatalog.ps1 `
+              -UpdaterPath (Join-Path $PWD 'build/staging/AI採掘機_Updater.exe') `
+              -Live
+            ./scripts/Test-FastWashContract.ps1
+            ./scripts/Test-FastWashRuntime.ps1 `
+              -OutputDirectory artifacts/v9.1.19-release-validation/fast-runtime
+            ./scripts/Test-StationaryWait.ps1 `
+              -OutputDirectory artifacts/v9.1.19-release-validation/wait
+            ./scripts/Test-SupportExport.ps1 `
+              -OutputDirectory artifacts/v9.1.19-release-validation/diagnostic-export
+            ./scripts/Test-WashPositionDesktop.ps1 `
+              -OutputDirectory artifacts/v9.1.19-release-validation/wash-position
+
+            $overlayResult = Join-Path $PWD 'artifacts/v9.1.19-release-validation/overlay-result.txt'
+            $overlayImage = Join-Path $PWD 'artifacts/v9.1.19-release-validation/overlay.png'
+            $overlay = Start-Process `
+              -FilePath (Join-Path $PWD 'build/staging/LocalNavigation.exe') `
+              -ArgumentList @('overlay-preview', "`"$overlayResult`"", "`"$overlayImage`"") `
+              -PassThru
+            [void]$overlay.Handle
+            try {
+              if (-not $overlay.WaitForExit(15000)) {
+                try { $overlay.Kill($true) } catch { try { $overlay.Kill() } catch { } }
+                try { [void]$overlay.WaitForExit(5000) } catch { }
+                throw 'Native overlay preview timed out.'
+              }
+              $overlay.WaitForExit()
+              $overlay.Refresh()
+              $overlayExitCode = $overlay.ExitCode
+            }
+            finally {
+              $overlay.Dispose()
+            }
+            if ($overlayExitCode -ne 0 -or
+                -not (Test-Path -LiteralPath $overlayResult -PathType Leaf) -or
+                (Get-Content -LiteralPath $overlayResult -Raw).Trim() -cne 'OVERLAY_PREVIEW_OK' -or
+                -not (Test-Path -LiteralPath $overlayImage -PathType Leaf) -or
+                (Get-Item -LiteralPath $overlayImage).Length -lt 1000) {
+              throw 'Native overlay preview failed.'
+            }
+
+            python -m pip install playwright==1.57.0
+            if ($LASTEXITCODE -ne 0) { throw 'Browser dependency install failed.' }
+            $edge = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+            if (-not (Test-Path -LiteralPath $edge -PathType Leaf)) {
+              $edge = 'C:\Program Files\Microsoft\Edge\Application\msedge.exe'
+            }
+            if (Test-Path -LiteralPath $edge -PathType Leaf) {
+              python scripts/ui-tests/Test-RouteSetupBrowser.py `
+                --browser $edge `
+                --output artifacts/v9.1.19-release-validation/browser
+            }
+            else {
+              python -m playwright install chromium
+              if ($LASTEXITCODE -ne 0) { throw 'Browser install failed.' }
+              python scripts/ui-tests/Test-RouteSetupBrowser.py `
+                --output artifacts/v9.1.19-release-validation/browser
+            }
+            if ($LASTEXITCODE -ne 0) { throw 'Browser interaction tests failed.' }
+          }
+          finally {
+            Stop-Transcript
+          }
+
+      - name: Create exact tag and upload draft assets only
+        shell: pwsh
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expected = $env:EXPECTED_SOURCE_SHA
+          if ((git rev-parse HEAD).Trim() -cne $expected) {
+            throw 'Source changed before tagging.'
+          }
+          $main = gh api "repos/$env:GH_REPO/branches/main" --jq '.commit.sha'
+          if ($LASTEXITCODE -ne 0 -or $main.Trim() -cne $expected) {
+            throw 'Main changed before tagging.'
+          }
+          $latest = gh api "repos/$env:GH_REPO/releases/latest" --jq '.tag_name'
+          if ($LASTEXITCODE -ne 0 -or $latest.Trim() -cne 'v9.1.18') {
+            throw 'Stable Latest changed before tagging.'
+          }
+          $refsText = gh api "repos/$env:GH_REPO/git/matching-refs/tags/v9.1.19"
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect release tags before tagging.' }
+          if (@($refsText | ConvertFrom-Json | Where-Object { $_.ref -ceq 'refs/tags/v9.1.19' }).Count -ne 0) {
+            throw 'The v9.1.19 tag appeared before tagging.'
+          }
+
+          $assets = @(
+            'ai-miner-win-x64.exe',
+            'AI-Miner-v9.1.19.zip',
+            'update-manifest.json',
+            'update-manifest.sig',
+            'SHA256SUMS.txt'
+          ) | ForEach-Object { Join-Path $PWD "artifacts/v9.1.19/$_" }
+          foreach ($asset in $assets) {
+            if (-not (Test-Path -LiteralPath $asset -PathType Leaf) -or
+                (Get-Item -LiteralPath $asset).Length -le 0) {
+              throw "Missing release asset: $asset"
+            }
+          }
+
+          # This deliberately creates the tag with GITHUB_TOKEN. Events created
+          # by that workflow token cannot recursively trigger release.yml.
+          $createdTag = gh api --method POST "repos/$env:GH_REPO/git/refs" `
+            -f ref='refs/tags/v9.1.19' `
+            -f sha=$expected
+          if ($LASTEXITCODE -ne 0) { throw 'Tag creation failed.' }
+          $created = $createdTag | ConvertFrom-Json
+          if ($created.ref -cne 'refs/tags/v9.1.19' -or
+              $created.object.sha -cne $expected) {
+            throw 'GitHub created an unexpected release tag.'
+          }
+          $remoteTag = gh api "repos/$env:GH_REPO/git/ref/tags/v9.1.19" --jq '.object.sha'
+          if ($LASTEXITCODE -ne 0 -or $remoteTag.Trim() -cne $expected) {
+            throw 'The remote v9.1.19 tag does not point to the approved source.'
+          }
+
+          gh release create v9.1.19 @assets `
+            --repo $env:GH_REPO `
+            --verify-tag `
+            --draft `
+            --title 'AI採掘機 v9.1.19' `
+            --notes-file docs/RELEASE_v9.1.19.md
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Draft upload failed; do not publish.'
+          }
+
+      - name: Re-download and verify every draft byte
+        shell: pwsh
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expected = $env:EXPECTED_SOURCE_SHA
+          $download = Join-Path $PWD 'artifacts/downloaded-v9.1.19'
+          New-Item -ItemType Directory -Path $download | Out-Null
+          gh release download v9.1.19 --repo $env:GH_REPO --dir $download
+          if ($LASTEXITCODE -ne 0) { throw 'Could not re-download draft assets.' }
+          ./scripts/Verify-Release.ps1 -ArtifactDirectory $download
+
+          $expectedNames = @(
+            'AI-Miner-v9.1.19.zip',
+            'ai-miner-win-x64.exe',
+            'SHA256SUMS.txt',
+            'update-manifest.json',
+            'update-manifest.sig'
+          ) | Sort-Object
+          $files = @(Get-ChildItem -LiteralPath $download -File)
+          $actualNames = @($files | ForEach-Object { $_.Name }) | Sort-Object
+          if ($files.Count -ne 5 -or (Compare-Object $expectedNames $actualNames)) {
+            throw 'Downloaded draft assets do not have the exact release allowlist.'
+          }
+          foreach ($file in $files) {
+            $original = Join-Path $PWD "artifacts/v9.1.19/$($file.Name)"
+            if (-not (Test-Path -LiteralPath $original -PathType Leaf) -or
+                (Get-FileHash -LiteralPath $file.FullName).Hash -cne
+                  (Get-FileHash -LiteralPath $original).Hash) {
+              throw "Uploaded bytes differ from the tested release: $($file.Name)"
+            }
+          }
+
+          $latest = gh api "repos/$env:GH_REPO/releases/latest" --jq '.tag_name'
+          if ($LASTEXITCODE -ne 0 -or $latest.Trim() -cne 'v9.1.18') {
+            throw 'Another release appeared; leave v9.1.19 as a draft.'
+          }
+          $main = gh api "repos/$env:GH_REPO/branches/main" --jq '.commit.sha'
+          if ($LASTEXITCODE -ne 0 -or $main.Trim() -cne $expected) {
+            throw 'Main changed; leave v9.1.19 as a draft.'
+          }
+          $remoteTag = gh api "repos/$env:GH_REPO/git/ref/tags/v9.1.19" --jq '.object.sha'
+          if ($LASTEXITCODE -ne 0 -or $remoteTag.Trim() -cne $expected) {
+            throw 'The release tag changed; leave v9.1.19 as a draft.'
+          }
+
+          $releasesText = gh api "repos/$env:GH_REPO/releases?per_page=100"
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect the draft release.' }
+          $releases = @($releasesText | ConvertFrom-Json)
+          $v918Matches = @($releases | Where-Object { $_.tag_name -ceq 'v9.1.18' })
+          $v919Matches = @($releases | Where-Object { $_.tag_name -ceq 'v9.1.19' })
+          if ($v918Matches.Count -ne 1 -or $v919Matches.Count -ne 1) {
+            throw 'Expected exactly one v9.1.18 release and one v9.1.19 draft.'
+          }
+          $stable = $v918Matches[0]
+          $draft = $v919Matches[0]
+          $draftNames = @($draft.assets | ForEach-Object { $_.name }) | Sort-Object
+          if ($stable.draft -or $stable.prerelease -or [long]$stable.id -le 0 -or
+              -not $draft.draft -or $draft.prerelease -or [long]$draft.id -le 0 -or
+              $draft.assets.Count -ne 5 -or
+              (Compare-Object $expectedNames $draftNames)) {
+            throw 'Draft release metadata does not match the tested asset set.'
+          }
+          [ordered]@{
+            stableReleaseId = [long]$stable.id
+            candidateReleaseId = [long]$draft.id
+          } | ConvertTo-Json | Set-Content `
+            artifacts/v9.1.19-release-validation/release-identities.json `
+            -Encoding utf8
+
+      - name: Publish verified draft as Latest
+        id: publish_release
+        shell: pwsh
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expected = $env:EXPECTED_SOURCE_SHA
+          $identities = Get-Content `
+            -LiteralPath artifacts/v9.1.19-release-validation/release-identities.json `
+            -Raw -Encoding UTF8 | ConvertFrom-Json
+          $stableId = [long]$identities.stableReleaseId
+          $candidateId = [long]$identities.candidateReleaseId
+          if ($stableId -le 0 -or $candidateId -le 0 -or $stableId -eq $candidateId) {
+            throw 'Recorded release identities are invalid.'
+          }
+
+          $latest = gh api "repos/$env:GH_REPO/releases/latest" --jq '.tag_name'
+          if ($LASTEXITCODE -ne 0 -or $latest.Trim() -cne 'v9.1.18') {
+            throw 'Another release appeared; leave v9.1.19 as a draft.'
+          }
+          $main = gh api "repos/$env:GH_REPO/branches/main" --jq '.commit.sha'
+          if ($LASTEXITCODE -ne 0 -or $main.Trim() -cne $expected) {
+            throw 'Main changed; leave v9.1.19 as a draft.'
+          }
+          $remoteTag = gh api "repos/$env:GH_REPO/git/ref/tags/v9.1.19" --jq '.object.sha'
+          if ($LASTEXITCODE -ne 0 -or $remoteTag.Trim() -cne $expected) {
+            throw 'The release tag changed; leave v9.1.19 as a draft.'
+          }
+
+          $stableText = gh api "repos/$env:GH_REPO/releases/$stableId"
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot verify the recorded v9.1.18 release.' }
+          $stable = $stableText | ConvertFrom-Json
+          $candidateText = gh api "repos/$env:GH_REPO/releases/$candidateId"
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot verify the recorded v9.1.19 draft.' }
+          $candidate = $candidateText | ConvertFrom-Json
+          $expectedNames = @(
+            'AI-Miner-v9.1.19.zip',
+            'ai-miner-win-x64.exe',
+            'SHA256SUMS.txt',
+            'update-manifest.json',
+            'update-manifest.sig'
+          ) | Sort-Object
+          $candidateNames = @($candidate.assets | ForEach-Object { $_.name }) | Sort-Object
+          if ($stable.tag_name -cne 'v9.1.18' -or $stable.draft -or $stable.prerelease -or
+              $candidate.tag_name -cne 'v9.1.19' -or -not $candidate.draft -or
+              $candidate.prerelease -or $candidate.assets.Count -ne 5 -or
+              (Compare-Object $expectedNames $candidateNames)) {
+            throw 'Recorded release identities or draft metadata changed before publication.'
+          }
+
+          $publishedText = gh api --method PATCH "repos/$env:GH_REPO/releases/$candidateId" `
+            -F draft=false `
+            -f make_latest=true
+          if ($LASTEXITCODE -ne 0) { throw 'Publication failed.' }
+          $published = $publishedText | ConvertFrom-Json
+          $publishedNames = @($published.assets | ForEach-Object { $_.name }) | Sort-Object
+          if ([long]$published.id -ne $candidateId -or $published.tag_name -cne 'v9.1.19' -or
+              $published.draft -or $published.prerelease -or $published.assets.Count -ne 5 -or
+              (Compare-Object $expectedNames $publishedNames)) {
+            throw 'Published release metadata does not match the verified draft.'
+          }
+          $latestText = gh api "repos/$env:GH_REPO/releases/latest"
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot verify published Latest.' }
+          $latestRelease = $latestText | ConvertFrom-Json
+          if ([long]$latestRelease.id -ne $candidateId -or
+              $latestRelease.tag_name -cne 'v9.1.19') {
+            throw 'The verified v9.1.19 release is not Latest.'
+          }
+          $publishedText | Set-Content `
+            artifacts/v9.1.19-release-validation/published.json `
+            -Encoding utf8
+
+      - name: Prove public Latest update
+        id: public_latest
+        timeout-minutes: 18
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $resultDirectory = Join-Path $PWD 'artifacts/v9.1.19-release-validation/public-latest-apply'
+          ./scripts/Test-UpdateApply.ps1 `
+            -ArtifactDirectory artifacts/downloaded-v9.1.19 `
+            -OutputDirectory $resultDirectory `
+            -UsePublicLatest `
+            -ExpectedVersion 9.1.19
+
+          $applyResultPath = Join-Path $resultDirectory 'apply-result.json'
+          $applyResult = Get-Content -LiteralPath $applyResultPath -Raw -Encoding UTF8 | ConvertFrom-Json
+          $expectedHash = (Get-FileHash `
+            -LiteralPath artifacts/downloaded-v9.1.19/ai-miner-win-x64.exe `
+            -Algorithm SHA256).Hash.ToLowerInvariant()
+          if (-not $applyResult.pass -or
+              $applyResult.version -cne '9.1.19' -or
+              $applyResult.source -cne 'public Latest check/download/apply' -or
+              $applyResult.sha256 -cne $expectedHash -or
+              $applyResult.fileVersion -cnotmatch '^9\.1\.19(?:\.0)?$' -or
+              $applyResult.productVersion -cnotmatch '^9\.1\.19(?:\.0)?$') {
+            throw 'Public Latest apply evidence does not match the published v9.1.19 executable.'
+          }
+
+          $latestText = gh api "repos/$env:GH_REPO/releases/latest"
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot verify Latest after the public updater test.' }
+          $latest = $latestText | ConvertFrom-Json
+          if ($latest.tag_name -cne 'v9.1.19' -or $latest.draft -or $latest.prerelease) {
+            throw 'v9.1.19 did not remain the public stable Latest release.'
+          }
+          $latestText | Set-Content `
+            artifacts/v9.1.19-release-validation/post-public-release.json `
+            -Encoding utf8
+
+      - name: Roll back a failed public update validation
+        if: >-
+          always() &&
+          (steps.publish_release.outcome == 'failure' ||
+           steps.publish_release.outcome == 'cancelled' ||
+           steps.public_latest.outcome == 'failure' ||
+           steps.public_latest.outcome == 'cancelled')
+        timeout-minutes: 5
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $rollbackIssues = [Collections.Generic.List[string]]::new()
+          $rollbackAllowed = $false
+          [string]$rollbackStartLatest = ''
+          [long]$stableId = 0
+          [long]$candidateId = 0
+          $v918 = $null
+          $v919 = $null
+          try {
+            $identities = Get-Content `
+              -LiteralPath artifacts/v9.1.19-release-validation/release-identities.json `
+              -Raw -Encoding UTF8 | ConvertFrom-Json
+            $stableId = [long]$identities.stableReleaseId
+            $candidateId = [long]$identities.candidateReleaseId
+            if ($stableId -le 0 -or $candidateId -le 0 -or $stableId -eq $candidateId) {
+              throw 'Rollback release IDs are invalid.'
+            }
+            $latestBeforeText = gh api "repos/$env:GH_REPO/releases/latest"
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot read Latest before rollback.' }
+            $latestBefore = $latestBeforeText | ConvertFrom-Json
+            $rollbackStartLatest = [string]$latestBefore.tag_name
+            if ([long]$latestBefore.id -cnotin @($stableId,$candidateId)) {
+              throw "A different release became Latest ($rollbackStartLatest); refusing to overwrite it."
+            }
+            $v918Text = gh api "repos/$env:GH_REPO/releases/$stableId"
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect v9.1.18 before rollback.' }
+            $v918 = $v918Text | ConvertFrom-Json
+            $v919Text = gh api "repos/$env:GH_REPO/releases/$candidateId"
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect v9.1.19 before rollback.' }
+            $v919 = $v919Text | ConvertFrom-Json
+            if ($v918.tag_name -cne 'v9.1.18' -or $v919.tag_name -cne 'v9.1.19' -or
+                [long]$v918.id -ne $stableId -or [long]$v919.id -ne $candidateId) {
+              throw 'Recorded rollback release identities no longer match their tags.'
+            }
+            $rollbackAllowed = $true
+          }
+          catch {
+            $rollbackIssues.Add('rollback precondition: ' + $_.Exception.Message)
+          }
+
+          if ($rollbackAllowed) {
+            try {
+              $restoreText = gh api --method PATCH "repos/$env:GH_REPO/releases/$($v918.id)" `
+                -f make_latest=true
+              if ($LASTEXITCODE -ne 0) { throw "gh exited with $LASTEXITCODE" }
+              $restored = $restoreText | ConvertFrom-Json
+              if ([long]$restored.id -ne $stableId -or
+                  $restored.tag_name -cne 'v9.1.18' -or $restored.draft) {
+                throw 'GitHub returned unexpected v9.1.18 release state.'
+              }
+            }
+            catch {
+              $rollbackIssues.Add('v9.1.18 Latest command: ' + $_.Exception.Message)
+            }
+            try {
+              if ([bool]$v919.immutable) {
+                throw 'v9.1.19 is immutable and cannot be returned to draft.'
+              }
+              $draftText = gh api --method PATCH "repos/$env:GH_REPO/releases/$($v919.id)" `
+                -F draft=true
+              if ($LASTEXITCODE -ne 0) { throw "gh exited with $LASTEXITCODE" }
+              $drafted = $draftText | ConvertFrom-Json
+              if ([long]$drafted.id -ne $candidateId -or
+                  $drafted.tag_name -cne 'v9.1.19' -or -not $drafted.draft) {
+                throw 'GitHub returned unexpected v9.1.19 release state.'
+              }
+            }
+            catch {
+              $rollbackIssues.Add('v9.1.19 draft command: ' + $_.Exception.Message)
+            }
+          }
+
+          $rollbackVerified = $false
+          [string]$rollbackLatest = ''
+          $v919IsDraft = $false
+          if ($rollbackAllowed) {
+            try {
+              $rollbackLatestText = gh api "repos/$env:GH_REPO/releases/latest"
+              if ($LASTEXITCODE -ne 0) { throw 'Cannot read Latest during rollback verification.' }
+              $rollbackLatestRelease = $rollbackLatestText | ConvertFrom-Json
+              $rollbackLatest = [string]$rollbackLatestRelease.tag_name
+              $v919AfterText = gh api "repos/$env:GH_REPO/releases/$candidateId"
+              if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect v9.1.19 during rollback verification.' }
+              $v919After = $v919AfterText | ConvertFrom-Json
+              $v919IsDraft = [long]$v919After.id -eq $candidateId -and
+                $v919After.tag_name -ceq 'v9.1.19' -and [bool]$v919After.draft
+              $rollbackVerified = [long]$rollbackLatestRelease.id -eq $stableId -and
+                $rollbackLatest -ceq 'v9.1.18' -and $v919IsDraft
+              if (-not $rollbackVerified) {
+                throw 'Rollback state is not v9.1.18 Latest with v9.1.19 draft.'
+              }
+            }
+            catch {
+              $rollbackIssues.Add('rollback verification: ' + $_.Exception.Message)
+            }
+          }
+
+          [ordered]@{
+            rollbackVerified = $rollbackVerified
+            startingLatest = $rollbackStartLatest.Trim()
+            latest = $rollbackLatest.Trim()
+            v919Draft = $v919IsDraft
+            v918ReleaseId = if($null -ne $v918){[long]$v918.id}else{$null}
+            v919ReleaseId = if($null -ne $v919){[long]$v919.id}else{$null}
+            issues = @($rollbackIssues)
+          } | ConvertTo-Json -Depth 4 | Set-Content `
+            artifacts/v9.1.19-release-validation/post-public-rollback.json `
+            -Encoding utf8
+
+          if (-not $rollbackVerified) {
+            throw "Automatic release rollback was incomplete: $($rollbackIssues -join '; ')"
+          }
+          Write-Host 'ROLLBACK_OK: v9.1.18 is Latest and v9.1.19 is draft.'
+
+      - name: Retain release and update evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: v9.1.19-release-validation
+          path: |
+            artifacts/v9.1.19-release-validation/
+            artifacts/update-startup/
+            build/staging/*.txt
+            build/staging/*.log
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Retain exact published files
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: success()
+        with:
+          name: v9.1.19-published-assets
+          path: artifacts/downloaded-v9.1.19/
+          retention-days: 14
+          if-no-files-found: error

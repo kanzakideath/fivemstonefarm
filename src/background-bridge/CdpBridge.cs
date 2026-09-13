@@ -30,6 +30,12 @@ internal static class CdpBridge
     private const int RouteHealthIntervalMilliseconds = 2500;
     private const int MaximumMetadataBytes = 8192;
     private const int MaximumMetadataTokenLength = 10923;
+    private const int MaximumWashRecoveryPulses = 12;
+    private const int MinimumWashRecoveryDeadlineMilliseconds = 500;
+    private const int MaximumWashRecoveryDeadlineMilliseconds = 8000;
+    private const int WashRecoveryStableSamples = 3;
+    private const int WashRecoveryPulseControlReserveMilliseconds = 150;
+    private const int WashRecoveryPostPulseSettleMilliseconds = 80;
     private const string TestPortEnvironmentVariable = "AI_MINER_BRIDGE_TEST_PORT";
     private const string TestTokenEnvironmentVariable = "AI_MINER_BRIDGE_TEST_TOKEN";
     private static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = 1024 * 1024 };
@@ -93,11 +99,13 @@ internal static class CdpBridge
         bool cancelOperationMode = args.Length == 3 && mode == "cancel-operation";
         bool companionCommandMode = (args.Length == 3 || args.Length == 4)
             && mode == "companion-command";
+        bool washRecoveryMode = (args.Length == 6 || args.Length == 7)
+            && mode == "recover-wash-zone";
         if (!stationaryReadyMode && !washReadyMode && !twoArgumentMode && !actionTryMode && !nearbyWashProbeMode && !actionCompletionMode && !washCompletionMode
             && !nudgeMode && !routeMode && !routeHealthMode && !viewMode
             && !hotbarMode && !inventoryKeyMode
             && !testDeactivateMode && !depositMode && !withdrawMode && !cancelOperationMode
-            && !companionCommandMode)
+            && !companionCommandMode && !washRecoveryMode)
             return 64;
 
         int preferredWashPort=0;
@@ -115,6 +123,29 @@ internal static class CdpBridge
                 if (!IsValidServerEpoch(args[2]) || !TryParseWorkAction(args[3], out action)
                     || !Int32.TryParse(args[4], out preferred) || (preferred!=0 && preferred!=29200 && preferred!=29300)) return 64;
                 result = ProbeStationaryTaskReadyAsync(args[2], preferred, action).GetAwaiter().GetResult().Replace("WASH_STORAGE", "WORK_STORAGE");
+            }
+            else if (washRecoveryMode)
+            {
+                int preferred;
+                int maximumPulses;
+                int deadlineMilliseconds;
+                string phase = args.Length == 7 ? args[6] : "verify";
+                if (!IsValidServerEpoch(args[2])
+                    || !Int32.TryParse(args[3], NumberStyles.None,
+                        CultureInfo.InvariantCulture, out preferred)
+                    || (preferred != 0 && preferred != 29200 && preferred != 29300)
+                    || !Int32.TryParse(args[4], NumberStyles.None,
+                        CultureInfo.InvariantCulture, out maximumPulses)
+                    || maximumPulses < 1 || maximumPulses > MaximumWashRecoveryPulses
+                    || !Int32.TryParse(args[5], NumberStyles.None,
+                        CultureInfo.InvariantCulture, out deadlineMilliseconds)
+                    || deadlineMilliseconds < MinimumWashRecoveryDeadlineMilliseconds
+                    || deadlineMilliseconds > MaximumWashRecoveryDeadlineMilliseconds
+                    || (phase != "verify" && phase != "post-wash"
+                        && phase != "storage" && phase != "post-wash-storage"))
+                    return 64;
+                result = RecoverWashZoneAsync(args[2], preferred, maximumPulses,
+                    deadlineMilliseconds, phase).GetAwaiter().GetResult();
             }
             else if (mode == "capabilities")
             {
@@ -364,6 +395,7 @@ internal static class CdpBridge
             || result.StartsWith("HEALTH READY ", StringComparison.Ordinal)
             || result.StartsWith("COMPANION 1 ", StringComparison.Ordinal)
             || result.StartsWith("COMPANION_DONE ", StringComparison.Ordinal)
+            || result.StartsWith("WASH_RECOVERY ", StringComparison.Ordinal)
             || IsActionCompletionResult(result)
             || IsWashCompletionResult(result)
             || result.StartsWith("SNAPSHOT ", StringComparison.Ordinal)
@@ -477,6 +509,8 @@ internal static class CdpBridge
 
     private static string RunSelfTest()
     {
+        if (!WashRecoveryPureSelfTest())
+            return "ERROR WASH_RECOVERY_TEST";
         foreach(string control in new[]{"PRESENT WASH_STORAGE","PRESENT STORAGE_ONLY","MISSING WASH_STORAGE","AMBIGUOUS WASH_STORAGE"})
             foreach(string progress in new[]{"IDLE","BUSY","UNKNOWN"})
                 foreach(string inv in new[]{"CLOSED","OPEN","UNKNOWN"})
@@ -3236,6 +3270,657 @@ internal static class CdpBridge
             throw new InvalidOperationException("INPUT_RELEASE_UNAVAILABLE"); }
     }
 
+    private static async Task<string> RecoverWashZoneAsync(string expectedEpoch,
+        int preferredPort, int maximumPulses, int deadlineMilliseconds, string phase)
+    {
+        var outcome = new WashRecoveryOutcome();
+        outcome.Phase = phase;
+        outcome.Reason = "OBSERVATION_UNAVAILABLE";
+        var timer = Stopwatch.StartNew();
+        string[] expectedFrames;
+        int port = 0;
+        CdpSession targetSession = null;
+        CdpSession progressSession = null;
+        CdpSession inventorySession = null;
+
+        try
+        {
+            if (!TryDecodeServerEpoch(expectedEpoch, out expectedFrames))
+            {
+                outcome.Reason = "SERVER_SESSION_CHANGED";
+            }
+            else if (!SendRelease(preferredPort))
+            {
+                outcome.Reason = "INPUT_RELEASE_UNAVAILABLE";
+            }
+            else if (WashRecoveryDeadlineReached(timer, deadlineMilliseconds))
+            {
+                outcome.Reason = "DEADLINE";
+            }
+            else
+            {
+                port = preferredPort != 0 ? ActivateKnownPort(preferredPort) : ActivatePort();
+                outcome.Port = port;
+                if (!await WashRecoveryDelayAsync(timer, deadlineMilliseconds, 120,
+                        CancellationToken.None).ConfigureAwait(false))
+                {
+                    outcome.Reason = "DEADLINE";
+                }
+                else
+                {
+                    targetSession = await CdpSession.OpenAsync(TargetFramePart,
+                        WashRecoveryRemainingTime(timer, deadlineMilliseconds),
+                        expectedFrames).ConfigureAwait(false);
+                    progressSession = await CdpSession.OpenAsync(ProgressFramePart,
+                        WashRecoveryRemainingTime(timer, deadlineMilliseconds),
+                        expectedFrames).ConfigureAwait(false);
+                    inventorySession = await CdpSession.OpenAsync(InventoryFramePart,
+                        WashRecoveryRemainingTime(timer, deadlineMilliseconds),
+                        expectedFrames).ConfigureAwait(false);
+
+                    WashRecoveryObservation observation = await ObserveWashRecoveryAsync(
+                        targetSession, progressSession, inventorySession, timer,
+                        "NONE", 0, "UNKNOWN")
+                        .ConfigureAwait(false);
+                    outcome.Observations.Add(observation);
+                    outcome.State = observation.State;
+                    if (!observation.EpochMatches)
+                    {
+                        outcome.Reason = "SERVER_SESSION_CHANGED";
+                    }
+                    else if (!WashRecoveryObservationIsIdle(observation))
+                    {
+                        outcome.Reason = WashRecoveryGuardReason(observation);
+                    }
+                    else
+                    {
+                        bool compulsoryRequired = WashRecoveryRequiresCompulsoryCorrection(phase);
+                        string stableState = null;
+                        if (!compulsoryRequired && WashRecoveryAcceptsState(phase, observation.State))
+                        {
+                            stableState = observation.State;
+                            outcome.StableSamples = 1;
+                        }
+
+                        while (!outcome.Recovered)
+                        {
+                            if (outcome.StableSamples >= WashRecoveryStableSamples)
+                            {
+                                outcome.Recovered = true;
+                                outcome.Reason = "STABLE_" + stableState;
+                                break;
+                            }
+                            if (WashRecoveryDeadlineReached(timer, deadlineMilliseconds))
+                            {
+                                outcome.Reason = "DEADLINE";
+                                break;
+                            }
+
+                            bool acceptable = WashRecoveryAcceptsState(phase, outcome.State);
+                            WashRecoveryPulse pulse = null;
+                            if (!(acceptable && (!compulsoryRequired
+                                    || outcome.CompulsoryCorrectionApplied)))
+                            {
+                                pulse = PlanWashRecoveryPulse(phase, outcome.State,
+                                    outcome.MovementPulses, outcome.LookPulses,
+                                    outcome.CompulsoryCorrectionApplied);
+                            }
+
+                            if (pulse != null)
+                            {
+                                if (outcome.Pulses >= maximumPulses)
+                                {
+                                    outcome.Reason = "PULSE_LIMIT";
+                                    break;
+                                }
+                                string pulseFailure;
+                                bool pulseApplied;
+                                if (!DispatchWashRecoveryPulse(port, pulse, timer,
+                                        deadlineMilliseconds, out pulseFailure,
+                                        out pulseApplied))
+                                {
+                                    if (pulseApplied)
+                                    {
+                                        outcome.Pulses += 1;
+                                        if (pulse.IsMovement) outcome.MovementPulses += 1;
+                                        if (pulse.IsLook) outcome.LookPulses += 1;
+                                        if (pulse.IsCompulsory)
+                                            outcome.CompulsoryCorrectionApplied = true;
+                                    }
+                                    outcome.Reason = pulseFailure;
+                                    break;
+                                }
+                                outcome.Pulses += 1;
+                                if (pulse.IsMovement) outcome.MovementPulses += 1;
+                                if (pulse.IsLook) outcome.LookPulses += 1;
+                                if (pulse.IsCompulsory)
+                                    outcome.CompulsoryCorrectionApplied = true;
+                                outcome.StableSamples = 0;
+                                stableState = null;
+                                if (!await WashRecoveryDelayAsync(timer, deadlineMilliseconds,
+                                        WashRecoveryPostPulseSettleMilliseconds,
+                                        targetSession.Token).ConfigureAwait(false))
+                                {
+                                    outcome.Reason = "DEADLINE";
+                                    break;
+                                }
+                            }
+                            else if (outcome.State == "AMBIGUOUS")
+                            {
+                                outcome.Reason = "AMBIGUOUS";
+                                break;
+                            }
+                            else if (!acceptable)
+                            {
+                                outcome.Reason = outcome.Pulses >= maximumPulses
+                                    ? "PULSE_LIMIT" : "SEARCH_EXHAUSTED";
+                                break;
+                            }
+                            else if (!await WashRecoveryDelayAsync(timer,
+                                    deadlineMilliseconds, 60, targetSession.Token)
+                                    .ConfigureAwait(false))
+                            {
+                                outcome.Reason = "DEADLINE";
+                                break;
+                            }
+
+                            string observationAction = pulse == null ? "NONE"
+                                : pulse.ReceiptAction;
+                            int observationPulseMilliseconds = pulse == null ? 0
+                                : pulse.DurationMilliseconds;
+                            string observationBeforeState = outcome.State;
+                            observation = await ObserveWashRecoveryAsync(targetSession,
+                                progressSession, inventorySession, timer,
+                                observationAction, observationPulseMilliseconds,
+                                observationBeforeState)
+                                .ConfigureAwait(false);
+                            outcome.Observations.Add(observation);
+                            outcome.State = observation.State;
+                            if (!observation.EpochMatches)
+                            {
+                                outcome.Reason = "SERVER_SESSION_CHANGED";
+                                break;
+                            }
+                            if (!WashRecoveryObservationIsIdle(observation))
+                            {
+                                outcome.Reason = WashRecoveryGuardReason(observation);
+                                break;
+                            }
+                            if (WashRecoveryAcceptsState(phase, observation.State)
+                                && (!compulsoryRequired
+                                    || outcome.CompulsoryCorrectionApplied))
+                            {
+                                if (String.Equals(stableState, observation.State,
+                                        StringComparison.Ordinal))
+                                    outcome.StableSamples += 1;
+                                else
+                                {
+                                    stableState = observation.State;
+                                    outcome.StableSamples = 1;
+                                }
+                            }
+                            else
+                            {
+                                stableState = null;
+                                outcome.StableSamples = 0;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception error)
+        {
+            outcome.Recovered = false;
+            outcome.Reason = WashRecoveryDeadlineReached(timer, deadlineMilliseconds)
+                || error is OperationCanceledException ? "DEADLINE"
+                : error.Message == "SERVER_SESSION_CHANGED" ? "SERVER_SESSION_CHANGED"
+                : error.Message == "ACTIVATION_UNAVAILABLE" ? "ACTIVATION_UNAVAILABLE"
+                : error.Message.IndexOf("INPUT_RELEASE", StringComparison.Ordinal) >= 0
+                    ? "INPUT_RELEASE_UNAVAILABLE" : "OBSERVATION_UNAVAILABLE";
+        }
+        finally
+        {
+            if (inventorySession != null) inventorySession.Dispose();
+            if (progressSession != null) progressSession.Dispose();
+            if (targetSession != null) targetSession.Dispose();
+            bool released = port != 0 ? SendRelease(port) : SendRelease(preferredPort);
+            if (!released)
+            {
+                outcome.Recovered = false;
+                outcome.Reason = "INPUT_RELEASE_UNAVAILABLE";
+            }
+            outcome.ElapsedMilliseconds = WashRecoveryElapsedMilliseconds(timer);
+        }
+
+        return FormatWashRecoveryResult(outcome);
+    }
+
+    private static async Task<WashRecoveryObservation> ObserveWashRecoveryAsync(
+        CdpSession targetSession, CdpSession progressSession, CdpSession inventorySession,
+        Stopwatch timer, string afterPulse, int pulseMilliseconds,
+        string beforeState)
+    {
+        var observation = new WashRecoveryObservation();
+        observation.ElapsedMilliseconds = WashRecoveryElapsedMilliseconds(timer);
+        observation.State = "UNKNOWN";
+        observation.ProgressBefore = "UNKNOWN";
+        observation.ProgressAfter = "UNKNOWN";
+        observation.InventoryBefore = "UNKNOWN";
+        observation.InventoryAfter = "UNKNOWN";
+        observation.AfterPulse = afterPulse ?? "NONE";
+        observation.PulseMilliseconds = Math.Max(0, pulseMilliseconds);
+        observation.BeforeState = beforeState ?? "UNKNOWN";
+        if (!await targetSession.MatchesServerEpochAsync().ConfigureAwait(false))
+            return observation;
+
+        observation.ProgressBefore = await progressSession.EvaluateStringAsync(
+            WashIdleStateExpression(), false).ConfigureAwait(false);
+        observation.InventoryBefore = await inventorySession.EvaluateStringAsync(
+            ClosedInventoryStateExpression(), false).ConfigureAwait(false);
+        string structure = await targetSession.EvaluateStringAsync(
+            WashZoneStructureExpression(), false).ConfigureAwait(false);
+        int washCount;
+        int storageCount;
+        ParseWashZoneStructure(structure, out washCount, out storageCount);
+        observation.WashCount = washCount;
+        observation.StorageCount = storageCount;
+        observation.State = ClassifyWashZone(washCount, storageCount);
+        observation.InventoryAfter = await inventorySession.EvaluateStringAsync(
+            ClosedInventoryStateExpression(), false).ConfigureAwait(false);
+        observation.ProgressAfter = await progressSession.EvaluateStringAsync(
+            WashIdleStateExpression(), false).ConfigureAwait(false);
+        observation.EpochMatches = await targetSession.MatchesServerEpochAsync()
+            .ConfigureAwait(false);
+        observation.ElapsedMilliseconds = WashRecoveryElapsedMilliseconds(timer);
+        return observation;
+    }
+
+    private static bool WashRecoveryObservationIsIdle(WashRecoveryObservation observation)
+    {
+        return observation != null && observation.EpochMatches
+            && observation.ProgressBefore == "IDLE"
+            && observation.ProgressAfter == "IDLE"
+            && observation.InventoryBefore == "CLOSED"
+            && observation.InventoryAfter == "CLOSED";
+    }
+
+    private static string WashRecoveryGuardReason(WashRecoveryObservation observation)
+    {
+        if (observation == null || !observation.EpochMatches)
+            return "SERVER_SESSION_CHANGED";
+        if (observation.ProgressBefore != "IDLE"
+            || observation.ProgressAfter != "IDLE")
+            return "WASH_PROGRESS_NOT_IDLE";
+        if (observation.InventoryBefore != "CLOSED"
+            || observation.InventoryAfter != "CLOSED")
+            return "INVENTORY_NOT_CLOSED";
+        return "OBSERVATION_UNAVAILABLE";
+    }
+
+    private static string WashZoneStructureExpression()
+    {
+        // One non-mutating DOM turn classifies exact usable work/cargo controls.
+        // Multiple wash controls are permitted because overlapping wash zones can
+        // legitimately publish duplicate options; cargo must remain unique.
+        return "(() => {"
+            + "const washLabel='石を洗う',storageLabels=['ストレージを開く','トランクを開く','荷台を開く','インベントリを開く'],n=s=>String(s||'').replace(/\\s+/g,' ').trim(),body=document.body;"
+            + "const shown=e=>{if(!e||!e.isConnected)return false;for(let p=e;p;p=p.parentElement){const s=getComputedStyle(p);if(s.visibility==='hidden'||s.display==='none'||Number(s.opacity)<=0)return false;}return true;};"
+            + "const visible=e=>{if(!shown(e))return false;const r=e.getBoundingClientRect();return r.width>0&&r.height>0;};"
+            + "const usable=e=>visible(e)&&getComputedStyle(e).pointerEvents!=='none'&&!e.matches(':disabled')&&e.getAttribute('aria-disabled')!=='true';"
+            + "if(!shown(body))return JSON.stringify({wash:0,storage:0});const root=document.querySelector('#options-wrapper');if(!shown(root))return JSON.stringify({wash:0,storage:0});"
+            + "const count=labels=>{const match=t=>labels.includes(t),leaves=[...root.querySelectorAll('*')].filter(e=>{const t=n(e.textContent);return match(t)&&![...e.children].some(c=>match(n(c.textContent)));}),seen=new Set();for(const leaf of leaves){const hit=leaf.closest('.option-container,li,button,[role=button]')||leaf.closest('a')||leaf;if(root.contains(hit)&&!seen.has(hit)&&usable(leaf)&&usable(hit))seen.add(hit);}return seen.size;};"
+            + "return JSON.stringify({wash:count([washLabel]),storage:count(storageLabels)});})()";
+    }
+
+    private static void ParseWashZoneStructure(string value, out int washCount,
+        out int storageCount)
+    {
+        washCount = 0;
+        storageCount = 0;
+        Dictionary<string, object> payload;
+        try { payload = Json.DeserializeObject(value) as Dictionary<string, object>; }
+        catch { throw new InvalidOperationException("WASH_ZONE_STATE_INVALID"); }
+        if (payload == null || payload.Count != 2
+            || !TryStrictNonnegativeInt(payload, "wash", out washCount)
+            || !TryStrictNonnegativeInt(payload, "storage", out storageCount)
+            || washCount > 128 || storageCount > 128)
+            throw new InvalidOperationException("WASH_ZONE_STATE_INVALID");
+    }
+
+    private static bool TryStrictNonnegativeInt(Dictionary<string, object> source,
+        string key, out int value)
+    {
+        value = 0;
+        object raw;
+        if (source == null || !source.TryGetValue(key, out raw)
+            || !(raw is int || raw is long || raw is decimal))
+            return false;
+        try { value = Convert.ToInt32(raw, CultureInfo.InvariantCulture); }
+        catch { return false; }
+        return value >= 0;
+    }
+
+    private static string ClassifyWashZone(int washCount, int storageCount)
+    {
+        if (washCount < 0 || storageCount < 0)
+            throw new ArgumentOutOfRangeException();
+        if (storageCount > 1) return "AMBIGUOUS";
+        bool wash = washCount > 0;
+        bool storage = storageCount == 1;
+        return wash && storage ? "BOTH" : storage ? "STORAGE_ONLY"
+            : wash ? "WASH_ONLY" : "NEITHER";
+    }
+
+    private static bool WashRecoveryAcceptsState(string phase, string state)
+    {
+        bool storagePhase = phase == "storage" || phase == "post-wash-storage";
+        return state == "BOTH" || (storagePhase && state == "STORAGE_ONLY");
+    }
+
+    private static bool WashRecoveryRequiresCompulsoryCorrection(string phase)
+    {
+        return phase == "post-wash" || phase == "post-wash-storage";
+    }
+
+    private static WashRecoveryPulse PlanWashRecoveryPulse(string phase, string state,
+        int movementPulses, int lookPulses, bool compulsoryCorrectionApplied)
+    {
+        if (state == "AMBIGUOUS")
+            return null;
+        if (WashRecoveryRequiresCompulsoryCorrection(phase)
+            && !compulsoryCorrectionApplied)
+            return new WashRecoveryPulse("move_up_only", 80, true, false, true);
+        if (state == "BOTH"
+            || (WashRecoveryAcceptsState(phase, state)))
+            return null;
+        if (lookPulses == 0)
+            // A tiny tap was not enough to undo accumulated third-person camera
+            // drift on production clients.  Use the same bounded pulse length as
+            // the previously validated view-lock default, but only after the
+            // dual-target structure is actually lost.
+            return new WashRecoveryPulse("look_down", 450, false, true, false);
+
+        // The two exact controls are also a coarse position sensor at the
+        // supported truck-side washing spot.  After the camera has been restored,
+        // STORAGE_ONLY means root motion left us on the truck side, so move back
+        // toward the wash point.  WASH_ONLY means the last correction crossed the
+        // shared interaction band, so reverse toward the truck.  Re-observe after
+        // every pulse; never continue a precomputed walk after the state changes.
+        if (state == "STORAGE_ONLY")
+            return new WashRecoveryPulse("move_up_only", 50, true, false, false);
+        if (state == "WASH_ONLY")
+            return new WashRecoveryPulse("move_down_only", 50, true, false, false);
+
+        // With neither control visible there is no directional evidence.  Search
+        // center-out around the last verified band, discounting the compulsory
+        // post-wash W pulse because it is the new center rather than a search step:
+        // +1, 0, -1, 0, +1, +2, +1, 0, -1, -2, -1, 0.
+        string[] controls = { "move_up_only", "move_down_only", "move_down_only",
+            "move_up_only", "move_up_only", "move_up_only", "move_down_only",
+            "move_down_only", "move_down_only", "move_down_only", "move_up_only",
+            "move_up_only" };
+        int[] durations = { 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50 };
+        int searchIndex = movementPulses;
+        if (WashRecoveryRequiresCompulsoryCorrection(phase)
+            && compulsoryCorrectionApplied)
+            searchIndex -= 1;
+        if (searchIndex < 0 || searchIndex >= controls.Length)
+            return null;
+        return new WashRecoveryPulse(controls[searchIndex],
+            durations[searchIndex], true, false, false);
+    }
+
+    private static bool DispatchWashRecoveryPulse(int port, WashRecoveryPulse pulse,
+        Stopwatch timer, int deadlineMilliseconds, out string failureReason,
+        out bool pulseApplied)
+    {
+        failureReason = "PULSE_UNAVAILABLE";
+        pulseApplied = false;
+        if (pulse == null || pulse.DurationMilliseconds < 1
+            || (pulse.IsMovement && pulse.DurationMilliseconds > 80)
+            || (pulse.IsLook && pulse.DurationMilliseconds > 500)
+            || !WashRecoveryPulseFitsDeadline(timer.ElapsedMilliseconds,
+                deadlineMilliseconds, pulse.DurationMilliseconds))
+        {
+            failureReason = "DEADLINE";
+            return false;
+        }
+        // ox_target consumes/suppresses movement on supported clients. Close it and
+        // release every possible held input before issuing exactly one pulse.
+        if (!SendRelease(port))
+        {
+            failureReason = "TARGET_RELEASE_UNAVAILABLE";
+            return false;
+        }
+        if (WashRecoveryDeadlineReached(timer, deadlineMilliseconds))
+        {
+            failureReason = "DEADLINE";
+            return false;
+        }
+        if (!TrySendDevCon(port, "+" + pulse.Control, 0))
+        {
+            SendInputRelease(port);
+            return false;
+        }
+        pulseApplied = true;
+        Thread.Sleep(pulse.DurationMilliseconds);
+        if (!SendInputRelease(port))
+        {
+            failureReason = "INPUT_RELEASE_UNAVAILABLE";
+            return false;
+        }
+        if (WashRecoveryDeadlineReached(timer, deadlineMilliseconds))
+        {
+            failureReason = "DEADLINE";
+            return false;
+        }
+        if (!TrySendDevCon(port, "+ox_target", 0))
+        {
+            failureReason = "TARGET_REACTIVATION_UNAVAILABLE";
+            return false;
+        }
+        return true;
+    }
+
+    private static bool WashRecoveryPulseFitsDeadline(long elapsedMilliseconds,
+        int deadlineMilliseconds, int pulseMilliseconds)
+    {
+        if (elapsedMilliseconds < 0 || pulseMilliseconds < 1)
+            return false;
+        // Reserve the fixed target-close delay, loopback command round trips,
+        // target reactivation, and the mandatory post-pulse settle before starting.
+        long required = (long)pulseMilliseconds
+            + WashRecoveryPulseControlReserveMilliseconds
+            + WashRecoveryPostPulseSettleMilliseconds;
+        return elapsedMilliseconds + required < deadlineMilliseconds;
+    }
+
+    private static bool WashRecoveryDeadlineReached(Stopwatch timer,
+        int deadlineMilliseconds)
+    {
+        return timer == null || timer.ElapsedMilliseconds >= deadlineMilliseconds;
+    }
+
+    private static TimeSpan WashRecoveryRemainingTime(Stopwatch timer,
+        int deadlineMilliseconds)
+    {
+        long remaining = deadlineMilliseconds - timer.ElapsedMilliseconds;
+        if (remaining <= 0) throw new OperationCanceledException();
+        return TimeSpan.FromMilliseconds(remaining);
+    }
+
+    private static async Task<bool> WashRecoveryDelayAsync(Stopwatch timer,
+        int deadlineMilliseconds, int requestedMilliseconds, CancellationToken token)
+    {
+        long remaining = deadlineMilliseconds - timer.ElapsedMilliseconds;
+        if (remaining <= 0) return false;
+        int delay = (int)Math.Min(requestedMilliseconds, remaining);
+        await Task.Delay(delay, token).ConfigureAwait(false);
+        return !WashRecoveryDeadlineReached(timer, deadlineMilliseconds);
+    }
+
+    private static int WashRecoveryElapsedMilliseconds(Stopwatch timer)
+    {
+        if (timer == null) return 0;
+        long elapsed = timer.ElapsedMilliseconds;
+        return elapsed >= Int32.MaxValue ? Int32.MaxValue : (int)Math.Max(0, elapsed);
+    }
+
+    private static string FormatWashRecoveryResult(WashRecoveryOutcome outcome)
+    {
+        if (outcome == null) throw new ArgumentNullException("outcome");
+        var text = new StringBuilder();
+        text.Append(outcome.Recovered ? "WASH_RECOVERY " : "ERROR WASH_RECOVERY ");
+        text.Append("{\"version\":1,\"status\":");
+        text.Append(Json.Serialize(outcome.Recovered ? "RECOVERED" : "FAILED"));
+        text.Append(",\"reason\":"); text.Append(Json.Serialize(outcome.Reason ?? "UNKNOWN"));
+        text.Append(",\"state\":"); text.Append(Json.Serialize(outcome.State ?? "UNKNOWN"));
+        text.Append(",\"phase\":"); text.Append(Json.Serialize(outcome.Phase ?? "verify"));
+        text.Append(",\"compulsoryCorrectionApplied\":");
+        text.Append(outcome.CompulsoryCorrectionApplied ? "true" : "false");
+        text.Append(",\"port\":"); text.Append(outcome.Port.ToString(CultureInfo.InvariantCulture));
+        text.Append(",\"elapsedMs\":"); text.Append(outcome.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture));
+        text.Append(",\"pulses\":"); text.Append(outcome.Pulses.ToString(CultureInfo.InvariantCulture));
+        text.Append(",\"movementPulses\":"); text.Append(outcome.MovementPulses.ToString(CultureInfo.InvariantCulture));
+        text.Append(",\"lookPulses\":"); text.Append(outcome.LookPulses.ToString(CultureInfo.InvariantCulture));
+        text.Append(",\"stableSamples\":"); text.Append(outcome.StableSamples.ToString(CultureInfo.InvariantCulture));
+        text.Append(",\"observations\":[");
+        for (int index = 0; index < outcome.Observations.Count; index++)
+        {
+            if (index != 0) text.Append(',');
+            WashRecoveryObservation observation = outcome.Observations[index];
+            text.Append("{\"elapsedMs\":");
+            text.Append(observation.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture));
+            text.Append(",\"afterPulse\":"); text.Append(Json.Serialize(observation.AfterPulse));
+            text.Append(",\"pulseMs\":"); text.Append(observation.PulseMilliseconds.ToString(CultureInfo.InvariantCulture));
+            text.Append(",\"beforeState\":"); text.Append(Json.Serialize(observation.BeforeState));
+            text.Append(",\"state\":"); text.Append(Json.Serialize(observation.State));
+            text.Append(",\"washCount\":"); text.Append(observation.WashCount.ToString(CultureInfo.InvariantCulture));
+            text.Append(",\"storageCount\":"); text.Append(observation.StorageCount.ToString(CultureInfo.InvariantCulture));
+            text.Append(",\"progressBefore\":"); text.Append(Json.Serialize(observation.ProgressBefore));
+            text.Append(",\"progressAfter\":"); text.Append(Json.Serialize(observation.ProgressAfter));
+            text.Append(",\"inventoryBefore\":"); text.Append(Json.Serialize(observation.InventoryBefore));
+            text.Append(",\"inventoryAfter\":"); text.Append(Json.Serialize(observation.InventoryAfter));
+            text.Append(",\"epoch\":"); text.Append(observation.EpochMatches ? "true" : "false");
+            text.Append('}');
+        }
+        text.Append("]}");
+        return text.ToString();
+    }
+
+    private static bool WashRecoveryPureSelfTest()
+    {
+        int wash;
+        int storage;
+        ParseWashZoneStructure("{\"wash\":2,\"storage\":1}", out wash, out storage);
+        if (ClassifyWashZone(1, 1) != "BOTH"
+            || ClassifyWashZone(0, 1) != "STORAGE_ONLY"
+            || ClassifyWashZone(1, 0) != "WASH_ONLY"
+            || ClassifyWashZone(0, 0) != "NEITHER"
+            || ClassifyWashZone(2, 2) != "AMBIGUOUS"
+            || ClassifyWashZone(wash, storage) != "BOTH"
+            || !WashRecoveryAcceptsState("verify", "BOTH")
+            || WashRecoveryAcceptsState("verify", "STORAGE_ONLY")
+            || !WashRecoveryAcceptsState("post-wash", "BOTH")
+            || WashRecoveryAcceptsState("post-wash", "STORAGE_ONLY")
+            || !WashRecoveryAcceptsState("storage", "BOTH")
+            || !WashRecoveryAcceptsState("storage", "STORAGE_ONLY")
+            || !WashRecoveryAcceptsState("post-wash-storage", "BOTH")
+            || !WashRecoveryAcceptsState("post-wash-storage", "STORAGE_ONLY"))
+            return false;
+
+        WashRecoveryPulse verifyReady = PlanWashRecoveryPulse("verify", "BOTH",
+            0, 0, false);
+        WashRecoveryPulse compulsory = PlanWashRecoveryPulse("post-wash", "BOTH",
+            0, 0, false);
+        WashRecoveryPulse look = PlanWashRecoveryPulse("verify", "NEITHER",
+            0, 0, false);
+        WashRecoveryPulse firstMove = PlanWashRecoveryPulse("verify", "NEITHER",
+            0, 1, false);
+        WashRecoveryPulse secondMove = PlanWashRecoveryPulse("verify", "NEITHER",
+            1, 1, false);
+        WashRecoveryPulse truckSide = PlanWashRecoveryPulse("verify", "STORAGE_ONLY",
+            4, 1, false);
+        WashRecoveryPulse washSide = PlanWashRecoveryPulse("verify", "WASH_ONLY",
+            4, 1, false);
+        WashRecoveryPulse postWashUnknown = PlanWashRecoveryPulse("post-wash", "NEITHER",
+            1, 1, true);
+        if (verifyReady != null || compulsory == null || !compulsory.IsCompulsory
+            || compulsory.Control != "move_up_only" || compulsory.DurationMilliseconds != 80
+            || !compulsory.IsMovement
+            || look == null || !look.IsLook || look.Control != "look_down"
+            || look.DurationMilliseconds != 450
+            || firstMove == null || secondMove == null
+            || firstMove.Control != "move_up_only"
+            || secondMove.Control != "move_down_only"
+            || truckSide == null || truckSide.Control != "move_up_only"
+            || washSide == null || washSide.Control != "move_down_only"
+            || postWashUnknown == null || postWashUnknown.Control != "move_up_only"
+            || firstMove.DurationMilliseconds > 80 || secondMove.DurationMilliseconds > 80
+            || PlanWashRecoveryPulse("verify", "AMBIGUOUS", 0, 0, false) != null
+            || PlanWashRecoveryPulse("post-wash", "AMBIGUOUS", 0, 0, false) != null
+            || PlanWashRecoveryPulse("storage", "STORAGE_ONLY", 0, 0, false) != null)
+            return false;
+
+        string[] expectedControls = { "move_up_only", "move_down_only", "move_down_only",
+            "move_up_only", "move_up_only", "move_up_only", "move_down_only",
+            "move_down_only", "move_down_only", "move_down_only", "move_up_only",
+            "move_up_only" };
+        int[] expectedPositions = { 1, 0, -1, 0, 1, 2, 1, 0, -1, -2, -1, 0 };
+        int position = 0;
+        for (int movement = 0; movement < expectedControls.Length; movement++)
+        {
+            WashRecoveryPulse planned = PlanWashRecoveryPulse("verify", "NEITHER",
+                movement, 1, false);
+            if (planned == null || planned.Control != expectedControls[movement]
+                || !planned.IsMovement || planned.IsLook || planned.IsCompulsory
+                || planned.DurationMilliseconds < 50 || planned.DurationMilliseconds > 70)
+                return false;
+            position += planned.Control == "move_up_only" ? 1 : -1;
+            if (position != expectedPositions[movement])
+                return false;
+        }
+        if (PlanWashRecoveryPulse("verify", "NEITHER",
+                expectedControls.Length, 1, false) != null)
+            return false;
+        int requiredPulseWindow = 50 + WashRecoveryPulseControlReserveMilliseconds
+            + WashRecoveryPostPulseSettleMilliseconds;
+        if (!WashRecoveryPulseFitsDeadline(100, 100 + requiredPulseWindow + 1, 50)
+            || WashRecoveryPulseFitsDeadline(100, 100 + requiredPulseWindow, 50))
+            return false;
+
+        string expression = WashZoneStructureExpression();
+        if (expression.IndexOf("石を洗う", StringComparison.Ordinal) < 0
+            || expression.IndexOf("ストレージを開く", StringComparison.Ordinal) < 0
+            || expression.IndexOf("インベントリを開く", StringComparison.Ordinal) < 0
+            || expression.IndexOf(".click(", StringComparison.Ordinal) >= 0
+            || expression.IndexOf("fetch(", StringComparison.Ordinal) >= 0)
+            return false;
+
+        var receipt = new WashRecoveryOutcome();
+        receipt.Recovered = true;
+        receipt.Reason = "STABLE_BOTH";
+        receipt.State = "BOTH";
+        receipt.Phase = "post-wash";
+        receipt.CompulsoryCorrectionApplied = true;
+        receipt.Port = 29200;
+        receipt.ElapsedMilliseconds = 321;
+        receipt.Pulses = 2;
+        receipt.MovementPulses = 1;
+        receipt.LookPulses = 1;
+        receipt.StableSamples = 3;
+        receipt.Observations.Add(new WashRecoveryObservation {
+            ElapsedMilliseconds = 12, AfterPulse = "W", PulseMilliseconds = 50,
+            BeforeState = "STORAGE_ONLY",
+            State = "BOTH", WashCount = 2, StorageCount = 1,
+            ProgressBefore = "IDLE",
+            ProgressAfter = "IDLE", InventoryBefore = "CLOSED",
+            InventoryAfter = "CLOSED", EpochMatches = true });
+        const string expected = "WASH_RECOVERY {\"version\":1,\"status\":\"RECOVERED\",\"reason\":\"STABLE_BOTH\",\"state\":\"BOTH\",\"phase\":\"post-wash\",\"compulsoryCorrectionApplied\":true,\"port\":29200,\"elapsedMs\":321,\"pulses\":2,\"movementPulses\":1,\"lookPulses\":1,\"stableSamples\":3,\"observations\":[{\"elapsedMs\":12,\"afterPulse\":\"W\",\"pulseMs\":50,\"beforeState\":\"STORAGE_ONLY\",\"state\":\"BOTH\",\"washCount\":2,\"storageCount\":1,\"progressBefore\":\"IDLE\",\"progressAfter\":\"IDLE\",\"inventoryBefore\":\"CLOSED\",\"inventoryAfter\":\"CLOSED\",\"epoch\":true}]}";
+        return FormatWashRecoveryResult(receipt) == expected;
+    }
+
     private static async Task<string> ProbeNearbyWashAsync(string expectedEpoch)
     {
         string[] frames;
@@ -3278,7 +3963,7 @@ internal static class CdpBridge
         // ox_inventoryの標準ラベルに加え、同じ車両用途で使われる日本語表記だけを
         // 許可します。候補が複数なら何も押さないことで、近接車両を誤操作しません。
         return "(() => {"
-            + "const qs=['ストレージを開く','トランクを開く','荷台を開く'],n=s=>String(s||'').replace(/\\s+/g,' ').trim(),body=document.body;"
+            + "const qs=['ストレージを開く','トランクを開く','荷台を開く','インベントリを開く'],n=s=>String(s||'').replace(/\\s+/g,' ').trim(),body=document.body;"
             + "const shown=e=>{if(!e||!e.isConnected)return false;for(let p=e;p;p=p.parentElement){const s=getComputedStyle(p);"
             + "if(s.visibility==='hidden'||s.display==='none'||Number(s.opacity)<=0)return false;}return true;};"
             + "const visible=e=>{if(!shown(e))return false;const r=e.getBoundingClientRect();return r.width>0&&r.height>0;};"
@@ -3318,6 +4003,68 @@ internal static class CdpBridge
         Mine,
         Wash,
         Gold
+    }
+
+    private sealed class WashRecoveryPulse
+    {
+        public readonly string Control;
+        public readonly int DurationMilliseconds;
+        public readonly bool IsMovement;
+        public readonly bool IsLook;
+        public readonly bool IsCompulsory;
+
+        public WashRecoveryPulse(string control, int durationMilliseconds,
+            bool isMovement, bool isLook, bool isCompulsory)
+        {
+            Control = control;
+            DurationMilliseconds = durationMilliseconds;
+            IsMovement = isMovement;
+            IsLook = isLook;
+            IsCompulsory = isCompulsory;
+        }
+
+        public string ReceiptAction
+        {
+            get
+            {
+                return Control == "move_up_only" ? "W"
+                    : Control == "move_down_only" ? "S"
+                    : Control == "look_down" ? "LOOK_DOWN" : "UNKNOWN";
+            }
+        }
+    }
+
+    private sealed class WashRecoveryObservation
+    {
+        public int ElapsedMilliseconds;
+        public string AfterPulse;
+        public int PulseMilliseconds;
+        public string BeforeState;
+        public string State;
+        public int WashCount;
+        public int StorageCount;
+        public string ProgressBefore;
+        public string ProgressAfter;
+        public string InventoryBefore;
+        public string InventoryAfter;
+        public bool EpochMatches;
+    }
+
+    private sealed class WashRecoveryOutcome
+    {
+        public bool Recovered;
+        public string Reason;
+        public string State = "UNKNOWN";
+        public string Phase = "verify";
+        public bool CompulsoryCorrectionApplied;
+        public int Port;
+        public int ElapsedMilliseconds;
+        public int Pulses;
+        public int MovementPulses;
+        public int LookPulses;
+        public int StableSamples;
+        public readonly List<WashRecoveryObservation> Observations =
+            new List<WashRecoveryObservation>();
     }
 
     private sealed class CdpSession : IDisposable

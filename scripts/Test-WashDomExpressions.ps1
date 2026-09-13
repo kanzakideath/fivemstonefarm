@@ -20,8 +20,10 @@ $mainMethod = $bridgeType.GetMethod('Main', [Reflection.BindingFlags]'Public,Sta
 $targetMethod = $bridgeType.GetMethod('WashTargetExpression', $bindingFlags)
 $progressMethod = $bridgeType.GetMethod('WorkProgressExpression', $bindingFlags)
 $nearbyMethod = $bridgeType.GetMethod('NearbyWashControlsExpression', $bindingFlags)
+$recoveryStructureMethod = $bridgeType.GetMethod('WashZoneStructureExpression', $bindingFlags)
 $actionType = $assembly.GetType('CdpBridge+WorkAction', $true)
-if (-not $mainMethod -or -not $targetMethod -or -not $progressMethod -or -not $nearbyMethod) {
+if (-not $mainMethod -or -not $targetMethod -or -not $progressMethod `
+        -or -not $nearbyMethod -or -not $recoveryStructureMethod) {
     throw 'The work DOM expression methods were not found in the bridge.'
 }
 
@@ -70,6 +72,7 @@ try {
         stationaryClick = [string]$bridgeType.GetMethod('StationaryWorkClickExpression', $bindingFlags).Invoke($null, [object[]]@([string]$targetMethod.Invoke($null,[object[]]@($true))))
         idle = [string]$bridgeType.GetMethod('WashIdleStateExpression', $bindingFlags).Invoke($null, [object[]]@())
         nearby = [string]$nearbyMethod.Invoke($null, [object[]]@())
+        recoveryStructure = [string]$recoveryStructureMethod.Invoke($null, [object[]]@())
         probe = [string]$targetMethod.Invoke($null, [object[]]@($false))
         click = [string]$targetMethod.Invoke($null, [object[]]@($true))
         progressMine = [string]$progressMethod.Invoke($null, [object[]]@(

@@ -53,6 +53,7 @@ namespace AiMiner.UiHost
 
                     case "run.toggle":
                     case "washing.fast.start":
+                    case "washing.endless.start":
                     case "vehicle.register":
                     case "vehicle.route":
                     case "vehicle.delete":
@@ -254,11 +255,14 @@ namespace AiMiner.UiHost
                 AssertRejected(@"{""type"":""action"",""action"":""route.trial"",""payload"":{""mode"":""gold"",""command"":""bad""}}");
                 AssertAction(@"{""type"":""action"",""action"":""washing.fast.start"",""payload"":{}}",
                     "washing.fast.start", new string[0]);
+                AssertAction(@"{""type"":""action"",""action"":""washing.endless.start"",""payload"":{}}",
+                    "washing.endless.start", new string[0]);
                 AssertAction(@"{""type"":""action"",""action"":""washing.fast.toggle"",""payload"":{""enabled"":true}}",
                     "washing.fast.toggle", new[] { "1" });
                 AssertAction(@"{""type"":""action"",""action"":""washing.fast.toggle"",""payload"":{""enabled"":false}}",
                     "washing.fast.toggle", new[] { "0" });
                 AssertRejected(@"{""type"":""action"",""action"":""washing.fast.start"",""payload"":{""enabled"":true}}");
+                AssertRejected(@"{""type"":""action"",""action"":""washing.endless.start"",""payload"":{""mode"":""unsafe""}}");
                 AssertRejected(@"{""type"":""action"",""action"":""washing.fast.toggle"",""payload"":{}}");
                 AssertAction(@"{""type"":""action"",""action"":""update.install"",""payload"":{""version"":""9.1.15""}}",
                     "update.install", new[] { "9.1.15" });

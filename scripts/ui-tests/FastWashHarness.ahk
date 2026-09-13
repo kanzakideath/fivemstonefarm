@@ -128,6 +128,9 @@ FastWashModeEnabled() {
     global State
     return State.running && State.runFastWash && State.runMode = "washing"
 }
+EndlessWashModeEnabled() {
+    return false
+}
 AutomationStartAllowed(r, reg, starting, stopping, callbacks) {
     return !r && !reg && !starting && !stopping && callbacks = 0
 }

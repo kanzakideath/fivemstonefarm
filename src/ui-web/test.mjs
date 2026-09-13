@@ -119,7 +119,7 @@ for (const name of catalogFiles) {
 for (const action of [
   'nav', 'action.select', 'run.toggle', 'vehicle.toggle', 'vehicle.register',
   'vehicle.delete', 'settings.save', 'update.check', 'smoke.result',
-  'washing.fast.start', 'update.install', 'window.close',
+  'washing.fast.start', 'washing.endless.start', 'update.install', 'window.close',
 ]) {
   assert.ok(js.includes(`'${action}'`), `missing WebView action ${action}`);
 }
@@ -170,7 +170,8 @@ assert.match(js, /trialSaved === true/);
 assert.match(js, /routeTeach\.disabled = true/);
 assert.match(js, /routeTeach\.hidden = true/);
 assert.match(html, /id="stationary-policy"/);
-assert.match(html, /F8を押し直さず自動再開/);
+assert.match(html, /通常開始・高速石洗いでは移動・視点入力を送りません/);
+assert.match(html, /荷台前エンドレス石洗いでは、両操作の実測結果に応じて短い前後入力/);
 assert.match(js, /sendAction\('route\.stationary', \{ mode: state\.actionMode \}\)/);
 assert.match(css, /grid-auto-flow: column/);
 for (const [,body] of html.matchAll(/<button\b[^>]*class="[^"]*primary-action[^"]*"[^>]*>([\s\S]*?)<\/button>/g)) {
@@ -193,6 +194,15 @@ assert.doesNotMatch(html, /id="setting-fast-wash"/,
 assert.doesNotMatch(js, /sendAction\('washing\.fast\.toggle'/,
   'the web UI must not persist fast wash as a setting');
 assert.match(nativeProtocol, /case "washing\.fast\.start":/);
+assert.match(html, /id="endless-wash-start"/);
+assert.match(html, /id="endless-wash-description"/);
+assert.match(js, /sendAction\('washing\.endless\.start'\)/);
+assert.ok(
+  html.indexOf('id="fast-wash-start"') < html.indexOf('id="endless-wash-start"'),
+  'the dedicated endless-wash action must follow the fast entry',
+);
+assert.match(js, /endlessWashActive:\s*false/);
+assert.match(nativeProtocol, /case "washing\.endless\.start":/);
 
 assert.match(html, /id="update-version-list"[^>]+role="radiogroup"/);
 assert.match(html, /署名を確認できた公式リリースだけを表示します。手入力や未確認ファイルは使用しません。/);

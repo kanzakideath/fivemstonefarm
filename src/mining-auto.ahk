@@ -9,7 +9,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "9.1.18"
+global AppVersion := "9.1.19"
 ;@Ahk2Exe-SetVersion %A_PriorLine~U)^.*"([^"]+)".*$~$1%
 processId := DllCall("GetCurrentProcessId")
 global LocalNav := {busy: false, pid: 0, cancel: "", taskId: 0, dialog: 0, guide: 0, feedback: "", requestActive: false, cycle: 0, lastBatchKey: "", lastActionKey: ""}
@@ -51,6 +51,7 @@ FileInstall "AI採掘機_Updater.exe", updaterHelperPath, true
 #Include nearby-wash.ahk
 #Include stationary-only.ahk
 #Include fast-wash.ahk
+#Include endless-wash.ahk
 InitExeRouteAssets()
 settingsPath := isUiTestRun || isValidationRun
     ? A_Temp "\ai-miner-ui-test-" testRunId ".ini"
@@ -184,6 +185,7 @@ global State := {
     activeFarmCallbacks: 0,
     runMode: "mining",
     runFastWash: false,
+    runEndlessWash: false,
     generation: 0,
     timerFn: 0,
     pendingFarmTimerGeneration: 0,
@@ -301,6 +303,8 @@ global State := {
     washCorrectionSent: false,
     washCameraRestoreSent: false,
     washVerificationAttempts: 0,
+    endlessWashRecoveryFailures: 0,
+    endlessWashLastReceipt: "",
     storagePreSnapshot: 0,
     storageRetryCount: 0,
     storageMovementHistory: [],
@@ -453,6 +457,8 @@ if HasCommandLineArgument("--history-import-self-test") {
 if isValidationRun {
     if !ValidateStationaryOnlyPolicy()
         ExitApp(159)
+    if !ValidateEndlessWashPolicy()
+        ExitApp(160)
     try FileAppend "VALIDATION_PHASE proofs " A_TickCount "`n", "**", "UTF-8-RAW"
     if !ValidateStorageCycleProof() || !ValidateStationaryWorkflow() || !ValidateNearbyWashRecovery() || !ValidateNearbyWashService() || !ValidateSupportDiagnostics() {
         DeleteExtractedTemplates()
@@ -1205,7 +1211,10 @@ if isValidationRun {
     testRewardFrozenSessionId := State.farmSessionId
     testRewardEventId := BuildFarmRewardEventId(testRewardFrozenSessionId,
         "washing", 5, 17)
-    testRewardCompletedAt := testRewardStartedAt + 25
+    ; Keep the fixture timestamp at or before recovery time. Using start+25 made
+    ; the result depend on whether these fsync-backed steps happened to take 25 ms:
+    ; RecoverVerifiedRewardWal correctly clamps future timestamps to recovery time.
+    testRewardCompletedAt := testRewardStartedAt
     testRewardRetryOk := !EmitVerifiedFarmReward(191, "washing", 5, 17,
         testRewardCompletedAt, testRewardEventId, testRewardFrozenSessionId)
         && State.metagameOutbox.Length = 0
@@ -2392,11 +2401,24 @@ ProcessWebUiActions(*) {
                     if !State.running && !State.registrationActive {
                         Config.actionMode := "washing"
                         State.runFastWash := true
+                        State.runEndlessWash := false
                         State.actionControl.Choose(2)
                         ToggleVisualTestRun()
                     }
                 } else
                     StartMining("fast-washing")
+            } else if action = "washing.endless.start" && parts.Length = 3 {
+                if State.visualTest {
+                    if !State.running && !State.registrationActive
+                        && EndlessWashStartAvailable() {
+                        Config.actionMode := "washing"
+                        State.runFastWash := false
+                        State.runEndlessWash := true
+                        State.actionControl.Choose(2)
+                        ToggleVisualTestRun()
+                    }
+                } else
+                    StartMining("endless-washing")
             } else if action = "vehicle.toggle" && parts.Length = 4 {
                 if State.visualTest {
                     State.vehicleEnabledControl.Value := parts[4] = "1"
@@ -2664,6 +2686,10 @@ BuildWebUiStateJson() {
         . ',"startInProgress":' (State.startInProgress ? "true" : "false")
         . ',"fastWashStartAvailable":' (FastWashStartAvailable() ? "true" : "false")
         . ',"fastWashActive":' (State.running && State.runFastWash ? "true" : "false")
+        . ',"endlessWashStartAvailable":' (EndlessWashStartAvailable() ? "true" : "false")
+        . ',"endlessWashReady":' (EndlessWashRegistrationReady() ? "true" : "false")
+        . ',"endlessWashUnavailableReason":' JsonQuote(EndlessWashUnavailableReason())
+        . ',"endlessWashActive":' (State.running && State.runEndlessWash ? "true" : "false")
         . ',"actionMode":' JsonQuote(actionMode)
         . ',"farmState":' JsonQuote(State.farmState)
         . ',"farmStateReason":' JsonQuote(State.farmStateReason)
@@ -6510,7 +6536,9 @@ UpdateRuntimeStatusOverlay(*) {
         State.lastInventoryMaxWeight > 0, State.lastInventoryFreeWeight,
         State.storageTrips)
     if State.runMode = "washing"
-        meta .= " | 移動入力禁止"
+        meta .= EndlessWashModeEnabled()
+            ? " | 荷台前の閉ループ補正"
+            : " | 移動入力禁止"
     now := MonotonicMs()
     watchdogAge := State.farmWatchdogAt
         ? Max(0, now - State.farmWatchdogAt) : 0
@@ -8966,11 +8994,14 @@ StartMining(startMode := "", *) {
     ; Fast washing is a launch choice, not a sticky setting. Normal Start/F8
     ; always enters the ordinary path even if an older INI contains FastMode=1.
     State.runFastWash := startMode = "fast-washing"
+    State.runEndlessWash := startMode = "endless-washing"
     if IsObject(LocalNav.dialog)
         try LocalNav.dialog.Hide()
     runInitializationOwned := false
     try {
     if startMode = "fast-washing" && !ConfigureFastWashStart(startToken)
+        return
+    if startMode = "endless-washing" && !ConfigureEndlessWashStart(startToken)
         return
     if !ShowStartPreparationState(startToken)
         return
@@ -9138,6 +9169,8 @@ StartMining(startMode := "", *) {
     State.recoveryPreflightFailures := 0
     State.recoveryRestartCount := 0
     State.recoveryRestartPending := false
+    State.endlessWashRecoveryFailures := 0
+    State.endlessWashLastReceipt := ""
     State.lastTargetProbeResult := ""
     State.recoveryReturnState := "FARMING"
     State.recoveryReason := ""
@@ -9191,7 +9224,8 @@ StartMining(startMode := "", *) {
     UpdateActionUi()
     State.statusLabel.Text := "●  準備中"
     State.connectionLabel.Text := "FiveM: 接続済み"
-    State.modeLabel.Text := StationaryOnlyEnabled() ? "荷台前専用：移動・視点入力なし／一時不在は自動再開待ち" : State.runMode = "washing" && Config.washForwardCorrection
+    State.modeLabel.Text := EndlessWashModeEnabled() ? "荷台前エンドレス石洗い：バックグラウンド閉ループ補正＋自動収納・補充"
+        : StationaryOnlyEnabled() ? "荷台前専用：通常モードは移動・視点入力なし" : State.runMode = "washing" && Config.washForwardCorrection
         ? "石洗いの画面補正: FiveMを前面にしてください"
         : Config.backgroundMode
             ? "バックグラウンド操作: オン（徒歩・画面補正時は前面が必要）"
@@ -9219,10 +9253,12 @@ StartMining(startMode := "", *) {
     }
 
     primedInventory := 0
-    if Config.backgroundMode && (Config.autoEat || Config.vehicleStorageEnabled || FastWashModeEnabled()) {
+    if Config.backgroundMode && (Config.autoEat || Config.vehicleStorageEnabled || LiveWashCapacityModeEnabled()) {
         State.automationPhase := "priming_inventory"
         State.statusLabel.Text := FastWashModeEnabled()
             ? "●  高速石洗い：開始前の所持品データを確認（荷台探索なし）"
+            : EndlessWashModeEnabled()
+                ? "●  荷台前エンドレス石洗い：所持品と登録荷台を確認中"
             : "●  インベントリ状態を準備しています"
         inventoryReady := EnsureBackgroundInventoryReady(runGeneration,
             &primedInventory)
@@ -9345,6 +9381,8 @@ StartMining(startMode := "", *) {
             ReleaseFarmCallback()
         if !State.running
             State.runFastWash := false
+        if !State.running
+            State.runEndlessWash := false
     }
 }
 
@@ -9449,6 +9487,9 @@ StopMining(faultContext := 0, *) {
     State.workViewDirection := Config.workViewMouseDirection
     State.targetPid := 0
     State.runFastWash := false
+    State.runEndlessWash := false
+    State.endlessWashRecoveryFailures := 0
+    State.endlessWashLastReceipt := ""
     HideRuntimeStatusOverlay()
 
     if IsObject(State.timerFn) {
@@ -11194,8 +11235,23 @@ InitializeLocalVehicleRun(expectedGeneration, primedInventory := 0) {
         return false
     }
 
-    if !RequireExeRouteForRun(expectedGeneration)
+    if !RequireExeRouteForRun(expectedGeneration) {
+        ; A bounded site probe may fail without being a hard bridge fault. Once
+        ; State.running has been committed, returning silently here would leave a
+        ; run with no scheduled timer. Fail closed so F8 can start a fresh,
+        ; observable generation instead of stranding a hidden pseudo-run.
+        if IsCurrentRun(expectedGeneration) {
+            if EndlessWashModeEnabled()
+                StopAutomationWithFault(
+                    "開始位置で「石を洗う」と登録荷台を同時確認できないため開始を中止しました。両方が表示される位置で再度開始してください",
+                    "overview", "ENDLESS_WASH_START_SITE_NOT_VERIFIED")
+            else
+                StopAutomationWithFault(
+                    "開始位置と登録荷台を確認できないため開始を中止しました",
+                    "routes", "LOCAL_RUN_INITIALIZATION_FAILED")
+        }
         return false
+    }
     State.statusLabel.Text := "開始前の所持品を保護しています"
     if FastWashStartupObservationCurrent(expectedGeneration, primedInventory) {
         ; This object was read by the same startup stack before any work/transfer.
@@ -12222,6 +12278,11 @@ CompleteVerifiedStorageReturn(expectedGeneration) {
     if !IsCurrentRun(expectedGeneration)
         return false
     if !workRecovered {
+        if EndlessWashModeEnabled() {
+            EnterFarmRecovery(expectedGeneration, "RESUMING_FARM",
+                "endless_wash_storage_return_not_verified")
+            return false
+        }
         StopAutomationWithFault("復路終点の作業ボタンを確認できません。徒歩をやり直さず停止しました", "vehicle", "EXE_ROUTE_WORK_NOT_VERIFIED")
         return false
     }
@@ -12854,8 +12915,8 @@ AutomationCycleOwned(expectedGeneration, expectedTaskId := 0) {
     if MaybeHandleServerHealth(expectedGeneration)
         return
     if State.farmState = "FARMING" && Config.vehicleStorageEnabled
-        && (!FastWashModeEnabled() || State.storagePending) {
-        ; Fast washing checks capacity from its live pre-click reward baseline.
+        && (!LiveWashCapacityModeEnabled() || State.storagePending) {
+        ; Live washing checks capacity from its authoritative pre-click baseline.
         ; Pending transfers still enter the original reconciliation workflow.
         TransitionFarmState("CHECKING_INVENTORY", "定期所持品確認",
             expectedGeneration)
@@ -12906,6 +12967,21 @@ EnterFarmRecovery(expectedGeneration, returnState, reason) {
 }
 
 HandleFarmTargetMissing(expectedGeneration, actionMode) {
+    if EndlessWashModeEnabled() && actionMode = "washing" {
+        global State
+        if !IsCurrentRun(expectedGeneration)
+            return true
+        State.targetLostSince := State.targetLostSince
+            ? State.targetLostSince : MonotonicMs()
+        State.statusLabel.Text := "●  洗浄対象を見失いました。荷台前の復旧を開始します"
+        SupportWriteEvent("ENDLESS_WASH_TARGET_LOST",
+            "next=recovery controller=bounded")
+        returnState := State.farmState = "RESUMING_FARM"
+            ? "RESUMING_FARM" : "FARMING"
+        EnterFarmRecovery(expectedGeneration, returnState,
+            "endless_wash_target_missing")
+        return true
+    }
     if FastWashModeEnabled() && actionMode = "washing" {
         global State, Config
         if !IsCurrentRun(expectedGeneration)
@@ -13934,6 +14010,11 @@ IsWashCompletionRecoveryState(farmState) {
         || farmState = "WASH_CORRECTING"
 }
 
+WashCompletionCorrectionEnabled() {
+    global Config
+    return EndlessWashModeEnabled() || Config.washForwardCorrection
+}
+
 ResetWashCompletionRecoveryState() {
     global State
     State.washRecoveryGeneration := 0
@@ -13960,7 +14041,11 @@ BeginWashCompletionRecovery(expectedGeneration, attemptId) {
             transitionFailed := true
         } else {
             taskId := State.farmStateTaskId
-            settleDelay := StationaryOnlyEnabled() ? 1 : Config.washForwardCorrection ? 1 : Config.washPostCompletionSettleMs
+            settleDelay := EndlessWashModeEnabled()
+                ? EndlessWashPostMotionSettleMs()
+                : StationaryOnlyEnabled() ? 1
+                : Config.washForwardCorrection ? 1
+                : Config.washPostCompletionSettleMs
             settleDeadline := MonotonicMs() + settleDelay
             if !IsCurrentFarmTask(expectedGeneration, taskId, "WASH_SETTLING")
                 return false
@@ -13981,19 +14066,54 @@ BeginWashCompletionRecovery(expectedGeneration, attemptId) {
             "洗浄完了後の静止待ちへ移れないため安全停止しました")
         return false
     }
-    State.statusLabel.Text := Config.washForwardCorrection
+    correctionEnabled := WashCompletionCorrectionEnabled()
+    State.statusLabel.Text := EndlessWashModeEnabled()
+        ? "●  洗浄完了。約1秒の後退が止まってから荷台前へ自動補正します"
+        : Config.washForwardCorrection
         ? "●  前進補正ON：洗浄完了。静止確認後に微小後退を測ります（W未送信）"
         : "●  前進補正OFF：この設定では洗浄後にWを送りません"
     LocalNav.washFeedback := State.statusLabel.Text
     QueueWebUiFlush(true)
     WriteDiagnostic("attempt=" attemptId " WASH_SETTLE_BEGIN delay="
-        settleDelay " deadline=" settleDeadline " observed=" Config.washForwardCorrection)
-    ScheduleNext(expectedGeneration, StationaryOnlyEnabled() ? 1 : Config.washForwardCorrection ? 1 : Config.washPostCompletionSettleMs)
+        settleDelay " deadline=" settleDeadline " observed=" correctionEnabled)
+    ScheduleNext(expectedGeneration, settleDelay)
     return true
 }
 
 PerformWashCompletionCorrection(expectedGeneration, expectedTaskId,
     expectedAttemptId) {
+    if EndlessWashModeEnabled() {
+        global State, Config
+        Critical "On"
+        if !IsCurrentFarmTask(expectedGeneration, expectedTaskId,
+            "WASH_CORRECTING")
+            || State.washRecoveryGeneration != expectedGeneration
+            || State.washRecoveryAttemptId != expectedAttemptId {
+            Critical "Off"
+            return false
+        }
+        if State.washCorrectionSent {
+            Critical "Off"
+            return !State.washCorrectionInFlight
+        }
+        State.washCorrectionSent := true
+        State.washCorrectionInFlight := true
+        phase := Config.rawStoneItemName && State.lastRawStoneCount = 0
+            ? "post-wash-storage" : "post-wash"
+        Critical "Off"
+        recovered := RunEndlessWashZoneRecovery(expectedGeneration,
+            expectedTaskId, "WASH_CORRECTING", phase, 6, 8000,
+            &receipt)
+        if !IsCurrentFarmTask(expectedGeneration, expectedTaskId,
+            "WASH_CORRECTING")
+            return false
+        State.washCorrectionInFlight := false
+        if recovered
+            return true
+        return HandleEndlessWashCompletionRecoveryFailure(
+            expectedGeneration, expectedTaskId, expectedAttemptId,
+            State.endlessWashLastReceipt, receipt)
+    }
     if StationaryOnlyEnabled()
         return IsCurrentRun(expectedGeneration)
     global State, Config, LocalNav
@@ -14080,19 +14200,20 @@ RunWashCompletionRecoveryCycle(expectedGeneration, expectedTaskId) {
         return
     }
     attemptId := State.washRecoveryAttemptId
-    WriteDiagnostic("WASH_RECOVERY_TICK phase=" currentState " correction=" Config.washForwardCorrection
+    correctionEnabled := WashCompletionCorrectionEnabled()
+    WriteDiagnostic("WASH_RECOVERY_TICK phase=" currentState " correction=" correctionEnabled
         " stateAgeMs=" (MonotonicMs() - State.farmStateEnteredAt) " attempt=" attemptId)
 
     if currentState = "WASH_SETTLING" {
         remaining := State.washSettleDeadline - MonotonicMs()
         if remaining > 0 {
-            State.statusLabel.Text := (Config.washForwardCorrection ? "●  前進補正ON：開始待ち（" : "●  前進補正OFF：Wを送らず待機（")
+            State.statusLabel.Text := (correctionEnabled ? "●  洗浄後退の停止待ち（" : "●  前進補正OFF：Wを送らず待機（")
                 . (Ceil(remaining / 100) / 10) . "秒）"
             ScheduleNext(expectedGeneration, remaining)
             return
         }
         WriteDiagnostic("attempt=" attemptId " WASH_SETTLE_DONE")
-        if Config.washForwardCorrection {
+        if correctionEnabled {
             if !TransitionFarmState("WASH_CORRECTING",
                 "洗浄後退停止後の前進補正", expectedGeneration,
                 expectedTaskId)
@@ -14156,7 +14277,8 @@ ResumeAfterWashCompletionRecovery(expectedGeneration, expectedTaskId,
     State.targetLostSince := 0
     State.targetRecoveryAttempts := 0
     State.statusLabel.Text := LocalNav.HasOwnProp("washRecoveryOutcome")
-        && LocalNav.washRecoveryOutcome = "NEARBY_WASH_READY"
+        && (LocalNav.washRecoveryOutcome = "NEARBY_WASH_READY"
+            || LocalNav.washRecoveryOutcome = "ENDLESS_WASH_READY")
         ? "●  荷台前の操作範囲を確認。次の石洗いを開始します"
         : "●  作業状態を確認。移動せず次の石洗いへ"
     WriteDiagnostic("attempt=" attemptId " WASH_RECOVERY_DIRECT_RESUME")
@@ -14242,6 +14364,7 @@ CompleteVerifiedFarmReward(expectedGeneration, actionMode, completionAt,
         ; independent target loss may use its own single safe dispatcher restart.
         State.recoveryRestartCount := 0
         State.recoveryRestartPending := false
+        State.endlessWashRecoveryFailures := 0
 
         ; Learn the real unwashed-stone item id only from one verified washing
         ; transaction. A unique decrease in the before/after snapshots is stronger
@@ -14443,7 +14566,7 @@ WaitPendingBackgroundActionCompletion(expectedGeneration, suppliedResult := "") 
 
 WashAttemptBackground(expectedGeneration) {
     global State, Config
-    if StationaryOnlyEnabled() && !FastWashModeEnabled()
+    if StationaryOnlyEnabled() && !LiveWashCapacityModeEnabled()
         && !WaitStationaryTaskReady(expectedGeneration)
         return
     if !IsCurrentRun(expectedGeneration)
@@ -15128,6 +15251,9 @@ RunBackgroundBridgeCancelable(expectedGeneration, mode, bridgeArgs*) {
             timeoutMs := 52000
         } else if mode = "wait-action-completion" {
             timeoutMs := 35000
+        } else if mode = "recover-wash-zone" && bridgeArgs.Length >= 4 {
+            controllerDeadline := bridgeArgs[4] + 0
+            timeoutMs := Min(16000, Max(8000, controllerDeadline + 7000))
         } else if mode = "companion-command" && bridgeArgs.Length >= 1 {
             companionCommand := bridgeArgs[1]
             longCompanionCommand := companionCommand = "go-vehicle"
@@ -15152,7 +15278,8 @@ RunBackgroundBridgeCancelable(expectedGeneration, mode, bridgeArgs*) {
                 ReleaseBackgroundTarget(true)
                 return "ERROR TARGET_CLOSED"
             }
-            if InStr(mode, "play-route") && WinActive("ahk_id " State.targetHwnd)
+            if (InStr(mode, "play-route") || mode = "recover-wash-zone")
+                && WinActive("ahk_id " State.targetHwnd)
                 && (CurrentPhysicalRouteMask() || CurrentUnsupportedRegistrationKey()) {
                 CancelBridgeProcess(helperPid, mode, operationToken)
                 ReleaseBackgroundTarget(true)

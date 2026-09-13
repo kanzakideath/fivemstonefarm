@@ -171,6 +171,14 @@
                 </button>
                 <p id="fast-wash-description" class="group-footnote fast-wash-description">石洗いへ切り替えて開始。通常洗浄は荷台表示を待たず、収納・補充時だけ荷台を確認します。</p>
 
+                <button id="endless-wash-start" class="primary-action endless-wash-action pressable" type="button" aria-describedby="endless-wash-description">
+                  <span class="press-surface" aria-hidden="true"></span>
+                  <svg class="action-icon" aria-hidden="true"><use href="#icon-play"></use></svg>
+                  <span id="endless-wash-start-label">荷台前エンドレス石洗いを開始</span>
+                  <span class="button-spinner preloader preloader-white" aria-hidden="true"></span>
+                </button>
+                <p id="endless-wash-description" class="group-footnote endless-wash-description">「石を洗う」と登録荷台が両方出る位置専用。後退を実測補正し、満重量時は収納・石補充後に自動再開します。</p>
+
                 <section class="section-block metrics-section" aria-labelledby="overview-metrics-heading">
                   <h2 id="overview-metrics-heading" class="section-label">実績</h2>
                   <div class="grouped-list">
@@ -290,11 +298,11 @@
                   <strong>直近の収納サイクル</strong>
                   <p id="route-cycle-status">まだ実行記録はありません。接続確認だけでは収納しません。</p>
                 </section>
-                <section class="route-feedback" aria-live="polite" aria-label="移動なしと自動再開の状態">
-                  <strong>移動なし · 自動再開の確認</strong>
-                  <p id="route-wash-position">ツールから移動・視点入力は送りません。</p>
+                <section class="route-feedback" aria-live="polite" aria-label="位置補正と自動再開の状態">
+                  <strong>位置補正 · 自動再開の確認</strong>
+                  <p id="route-wash-position">通常開始・高速石洗いは移動なし。エンドレス石洗いだけ上限付きで補正します。</p>
                   <button id="route-diagnostics" class="support-button" type="button">不具合の診断ZIP・ログを開く</button>
-                  <p id="stationary-policy">移動・視点入力は0です。ゲームの物理を固定する機能ではありません。両ボタンが一時的に消えた場合は監視を続け、戻ればF8を押し直さず自動再開します。ゲーム側の移動で範囲外に出た場合は、その場で待機します。</p>
+                  <p id="stationary-policy">通常開始・高速石洗いでは移動・視点入力を送りません。荷台前エンドレス石洗いでは、両操作の実測結果に応じて短い前後入力と必要時1回の視点補正を行います。上限内で戻れなければ安全停止します。ゲームの物理を固定する機能ではありません。</p>
                 </section>
                 <div class="route-steps">
                   <article class="route-step" id="route-step-vehicle">

@@ -7,6 +7,15 @@ FastWashStartAvailable() {
         && !State.updateOperation && !LocalNav.busy && !LocalNav.requestActive
 }
 
+; Both low-latency washing launchers take their capacity decision from the
+; authoritative pre-click inventory snapshot.  Keeping this policy in one
+; predicate prevents the generic three-second inventory poll from interrupting
+; either wash loop while still routing an actual full/empty observation through
+; the existing verified storage ledger.
+LiveWashCapacityModeEnabled() {
+    return FastWashModeEnabled() || EndlessWashModeEnabled()
+}
+
 ConfigureFastWashStart(startToken) {
     global State, Config, LocalNav
     if !IsStartOperationCurrent(startToken) || State.updateOperation
@@ -40,7 +49,7 @@ ConfigureFastWashStart(startToken) {
 
 FastWashCapacityObservationCurrent(generation, snapshot) {
     global State
-    if !IsCurrentRun(generation) || !FastWashModeEnabled() || !IsObject(snapshot)
+    if !IsCurrentRun(generation) || !LiveWashCapacityModeEnabled() || !IsObject(snapshot)
         || snapshot != State.confirmedInventory
         return false
     if !snapshot.HasOwnProp("confirmedAt") || !snapshot.HasOwnProp("revision")
@@ -52,7 +61,7 @@ FastWashCapacityObservationCurrent(generation, snapshot) {
 
 MaybeHandleFastWashCapacity(generation) {
     global State, Config
-    if !FastWashModeEnabled() || !Config.vehicleStorageEnabled
+    if !LiveWashCapacityModeEnabled() || !Config.vehicleStorageEnabled
         return false
     if !IsCurrentRun(generation)
         return true
@@ -90,7 +99,7 @@ MaybeHandleFastWashCapacity(generation) {
 
 FastWashStartupObservationCurrent(generation, snapshot) {
     global State
-    if !IsCurrentRun(generation) || !FastWashModeEnabled() || !IsObject(snapshot)
+    if !IsCurrentRun(generation) || !LiveWashCapacityModeEnabled() || !IsObject(snapshot)
         return false
     if !snapshot.HasOwnProp("startupGeneration") || !snapshot.HasOwnProp("startupEpoch")
         || !snapshot.HasOwnProp("startupObservedAt")

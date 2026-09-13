@@ -11,6 +11,8 @@ FastWashModeEnabled() {
 }
 
 StationaryBridgeMotionBlocked(mode) {
+    if mode = "recover-wash-zone"
+        return !EndlessWashBridgeMotionAuthorized()
     return InStr("|nudge-forward|play-route|play-route-health|set-view|companion-command|", "|" mode "|") > 0
 }
 
@@ -68,6 +70,28 @@ WaitStationaryTaskReady(generation, allowStorageOnly := false, purpose := "作�
     if !IsCurrentRun(generation)
         return false
     task := State.farmStateTaskId
+    if EndlessWashModeEnabled() {
+        currentState := State.farmState
+        phase := allowStorageOnly ? "storage" : "verify"
+        ready := RunEndlessWashZoneRecovery(generation, task,
+            currentState, phase, 6, 8000, &receipt)
+        if !IsCurrentFarmTask(generation, task, currentState)
+            return false
+        if !ready {
+            reason := IsObject(receipt) ? receipt.reason
+                : DiagnosticToken(State.endlessWashLastReceipt)
+            LocalNav.washFeedback := purpose "：上限内で確認できません（"
+                reason "）"
+            if EndlessWashRecoveryHardFailure(
+                State.endlessWashLastReceipt, receipt)
+                StopAutomationWithFault(
+                    "荷台前の操作範囲を安全に確認できないため停止しました（"
+                        reason "）", "overview",
+                    "ENDLESS_WASH_SITE_UNSAFE")
+            return false
+        }
+        return true
+    }
     waited := false
     try {
         Loop {
@@ -129,6 +153,32 @@ WaitStationaryCargo(generation, &storageId, &storageType) {
     if !IsCurrentRun(generation)
         return false
     task := State.farmStateTaskId
+    if EndlessWashModeEnabled() {
+        if !WaitStationaryTaskReady(generation, true,
+            "登録荷台の操作範囲を復旧中")
+            return false
+        opened := OpenStorageAndCapture(&id, &kind, generation, &fatal)
+        if !IsCurrentFarmTask(generation, task)
+            return false
+        if opened && id == Config.vehicleStorageId
+            && kind == Config.vehicleStorageType {
+            storageId := id
+            storageType := kind
+            return true
+        }
+        if opened {
+            CloseLocalStorageUi()
+            StopAutomationWithFault(
+                "開いた荷台が登録先と異なります。別の車両へ転送しません",
+                "routes", "REGISTERED_CARGO_MISMATCH")
+        } else if fatal {
+            StopAutomationWithFault(
+                "登録荷台を安全に確認できません："
+                    State.lastStorageProbeResult,
+                "routes", "STATIONARY_CARGO_OBSERVATION_FAULT")
+        }
+        return false
+    }
     try {
         Loop {
             if !WaitStationaryTaskReady(generation, true, "荷台が再び操作可能になるまで監視中")
@@ -174,12 +224,20 @@ VerifyStationaryRunSite(generation) {
     if FastWashModeEnabled() {
         SupportWriteEvent("FAST_WASH_SITE", "startup_cargo_probe=deferred transfer_verification=required")
     } else {
+        if EndlessWashModeEnabled()
+            && !WaitStationaryTaskReady(generation, false,
+                "開始位置の洗浄・登録荷台を確認中")
+            return false
         if !WaitStationaryCargo(generation, &id, &kind)
             return false
         if !CloseLocalStorageUi() {
             StopAutomationWithFault("荷台画面の閉鎖を確認できません", "routes", "STATIONARY_UI_CLOSE_FAILED")
             return false
         }
+        if EndlessWashModeEnabled()
+            && !WaitStationaryTaskReady(generation, false,
+                "荷台を閉じた後の洗浄位置を最終確認中")
+            return false
     }
     if !IsCurrentRun(generation)
         return false
@@ -195,7 +253,9 @@ VerifyStationaryRunSite(generation) {
         if !IsCurrentRun(generation)
             return false
         FileMove temp, root "\route.ini", true
-        LocalNav.feedback := "荷台前専用。作業の一時的な不在は自動再開待ちにします。移動入力は送りません"
+        LocalNav.feedback := EndlessWashModeEnabled()
+            ? "荷台前エンドレス専用。ずれた時だけ短い位置・視点補正を行い、両操作を再確認します"
+            : "荷台前専用。作業の一時的な不在は自動再開待ちにします。移動入力は送りません"
         return true
     } finally {
         try FileDelete temp
@@ -210,6 +270,8 @@ StationaryRecover(generation, task) {
     global State
     if !IsCurrentFarmTask(generation, task, "RECOVERY")
         return false
+    if EndlessWashModeEnabled()
+        return RecoverEndlessWashFarmTask(generation, task)
     if !StationaryRecoveryCanWait(State.pendingFarmAttempt, State.storagePending, State.actionCompletionPending)
         return false
     if FastWashModeEnabled() {
@@ -239,6 +301,8 @@ ValidateStationaryOnlyPolicy() {
     for mode in ["nudge-forward", "play-route", "play-route-health", "set-view", "companion-command"]
         if !StationaryBridgeMotionBlocked(mode)
             return false
+    if !StationaryBridgeMotionBlocked("recover-wash-zone")
+        return false
     for mode in ["health", "deactivate", "inventory-snapshot", "stationary-task-ready", "deposit-delta", "withdraw-item", "try-washing"]
         if StationaryBridgeMotionBlocked(mode)
             return false

@@ -45,6 +45,10 @@
     registrationActive: false,
     actionMode: 'mining',
     fastWashActive: false,
+    endlessWashActive: false,
+    endlessWashReady: false,
+    endlessWashStartAvailable: false,
+    endlessWashUnavailableReason: '先に車両画面で荷台を登録してください',
     updateCatalog: {
       phase: 'idle',
       currentVersion: '',
@@ -58,12 +62,16 @@
   const fixtureState = {
     ...baseState,
     revision: 1,
-    version: '9.1.18',
+    version: '9.1.19',
+    endlessWashReady: true,
+    endlessWashStartAvailable: true,
+    endlessWashUnavailableReason: '',
     updateCatalog: {
       phase: 'ready',
-      currentVersion: '9.1.18',
-      latestVersion: '9.1.18',
+      currentVersion: '9.1.19',
+      latestVersion: '9.1.19',
       versions: [
+        { version: '9.1.19', publishedAt: '2026-09-14T00:00:00Z' },
         { version: '9.1.18', publishedAt: '2026-09-13T08:30:00Z' },
         { version: '9.1.17', publishedAt: '2026-09-12T12:00:00Z' },
         { version: '9.1.16', publishedAt: '2026-09-11T12:00:00Z' },
@@ -130,6 +138,7 @@
   let pickerKind = '';
   let runPendingRevision = null;
   let fastWashPendingRevision = null;
+  let endlessWashPendingRevision = null;
   let settingsPendingRevision = null;
   let updatePendingRevision = null;
   let updateInstallPendingRevision = null;
@@ -167,6 +176,7 @@
     'app-version', 'overview-subtitle', 'run-status', 'connection-status', 'operation-mode',
     'action-picker-button', 'action-value', 'run-button', 'run-button-label', 'run-icon-use',
     'fast-wash-start', 'fast-wash-start-label',
+    'endless-wash-start', 'endless-wash-start-label', 'endless-wash-description',
     'metric-primary-label', 'metric-primary-value', 'metric-correction-label',
     'metric-correction-value', 'metric-storage-value', 'shortcut-hint', 'vehicle-status',
     'vehicle-enabled', 'capacity-value', 'capacity-fill', 'capacity-detail',
@@ -410,6 +420,10 @@
       fastWashPendingRevision = null;
       clearPending(elements.fastWashStart, 'fast-wash');
     }
+    if (endlessWashPendingRevision !== null && revision > endlessWashPendingRevision) {
+      endlessWashPendingRevision = null;
+      clearPending(elements.endlessWashStart, 'endless-wash');
+    }
     if (updatePendingRevision !== null && revision > updatePendingRevision) {
       updatePendingRevision = null;
       clearPending(elements.updateCheck, 'update');
@@ -488,6 +502,19 @@
     setText(elements.fastWashStartLabel,
       state.running && state.actionMode === 'washing' && state.fastWashActive === true
         ? '高速石洗い 実行中（上のボタンで停止）' : '高速石洗いを開始', false);
+    const endlessAvailable = state.endlessWashStartAvailable === true && !state.running
+      && !state.registrationActive && !state.startInProgress && !state.routes?.busy
+      && enabledOf(runButton);
+    elements.endlessWashStart.disabled = !endlessAvailable;
+    setText(elements.endlessWashStartLabel,
+      state.running && state.actionMode === 'washing' && state.endlessWashActive === true
+        ? '荷台前エンドレス石洗い 実行中（上のボタンで停止）'
+        : '荷台前エンドレス石洗いを開始', false);
+    setText(elements.endlessWashDescription,
+      state.endlessWashReady === true
+        ? '「石を洗う」と登録荷台が両方出る位置専用。後退を実測補正し、満重量時は収納・石補充後に自動再開します。'
+        : String(state.endlessWashUnavailableReason || '先に車両画面で荷台を登録してください。'),
+      animate);
     actionButton.disabled = !enabledOf(control('actionPicker', 'actionControl'), !state.running);
 
     setText(elements.metricPrimaryLabel, textOf(primaryLabel, legacyPrimary.label || details.primaryMetric), animate);
@@ -544,7 +571,7 @@
       stopped: '途中で停止。収納サイクル完了とは扱いません。',
     };
     document.getElementById('route-wash-position').textContent = route.washFeedback
-      || '移動・視点入力なし。両操作が戻れば自動再開します。';
+      || '通常・高速は移動なし。エンドレス石洗いだけ両操作を見ながら上限付きで補正します。';
     const cycle = route.cycle;
     const evidenceText = cycle ? phaseLabels[cycle.phase] || '未確認の実行状態です。' : 'まだ実行記録はありません。接続確認だけでは収納しません。';
     document.getElementById('route-cycle-status').textContent = evidenceText + (cycle?.reason ? ` 理由：${cycle.reason}` : '');
@@ -568,7 +595,7 @@
       button.setAttribute('aria-pressed', String(button.dataset.routeMode === state.actionMode));
       button.disabled = busy;
     });
-    setText(elements.routeModeHint, `現在の設定対象：${modeDetails[state.actionMode].label}。方式：${stationary ? '近接収納（歩かない）' : '荷台前（移動なし）'}。作業ごとに別保存です。`, false);
+    setText(elements.routeModeHint, `現在の設定対象：${modeDetails[state.actionMode].label}。方式：${stationary ? '荷台前の近接収納' : '荷台前の近接設定'}。作業ごとに別保存です。`, false);
     setText(elements.routeFeedback, route.feedback || (busy
       ? '作業または登録中です。中止はF9。終了後に設定を変更できます。'
       : '荷台前で近接確認をしてください。作業中の一時不在は自動再開待ちになります。'), false);
@@ -1148,6 +1175,7 @@
     pendingTimeouts.set(key, setTimeout(() => clearPending(element, key), 6000));
     if (key === 'run') runPendingRevision = revision;
     if (key === 'fast-wash') fastWashPendingRevision = revision;
+    if (key === 'endless-wash') endlessWashPendingRevision = revision;
     if (key === 'settings') settingsPendingRevision = revision;
     if (key === 'update') updatePendingRevision = revision;
     if (key === 'update-install') updateInstallPendingRevision = revision;
@@ -1204,9 +1232,20 @@
       next.controls.runStatus = { text: '高速石洗い 実行中', tone: 'success' };
       next.controls.runButton = { text: '自動操作を停止', enabled: true };
     }
+    if (action === 'washing.endless.start' && !next.running
+      && !next.registrationActive && next.endlessWashStartAvailable === true) {
+      next.actionMode = 'washing';
+      next.fastWashActive = false;
+      next.endlessWashActive = true;
+      next.running = true;
+      next.controls.overviewSubtitle = { text: '荷台前で位置補正・収納・石補充を閉ループ実行' };
+      next.controls.runStatus = { text: '荷台前エンドレス石洗い 実行中', tone: 'success' };
+      next.controls.runButton = { text: '自動操作を停止', enabled: true };
+    }
     if (action === 'run.toggle') {
       next.running = !next.running;
       next.fastWashActive = false;
+      next.endlessWashActive = false;
       next.controls.runStatus = {
         text: next.running ? '実行中' : '停止中',
         tone: next.running ? 'success' : 'neutral',
@@ -1301,6 +1340,12 @@
       if (elements.fastWashStart.disabled || elements.fastWashStart.classList.contains('is-pending')) return;
       setPending(elements.fastWashStart, 'fast-wash', state.revision);
       sendAction('washing.fast.start');
+    });
+    elements.endlessWashStart.addEventListener('click', () => {
+      if (elements.endlessWashStart.disabled
+        || elements.endlessWashStart.classList.contains('is-pending')) return;
+      setPending(elements.endlessWashStart, 'endless-wash', state.revision);
+      sendAction('washing.endless.start');
     });
     elements.vehicleEnabled.addEventListener('change', () => {
       const previous = booleanOf(control('vehicleEnabled'));
