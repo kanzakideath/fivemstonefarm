@@ -29,6 +29,42 @@ try {
     Require(State.farmOutputLedger == ledger && State.storageDepositCheckpoint == checkpoint, "ledger and receipt identities preserved")
     Require(HasEvent("STATIONARY_WAIT") && HasEvent("STATIONARY_AUTO_RESUME"), "wait and resume evidence")
 
+    Reset("work-only-mining", ["READY WORK_ONLY 29200 25"], "mining", false)
+    started := A_TickCount
+    Require(WaitStationaryTaskReady(1), "storage-off mining must not wait for cargo")
+    Require(A_TickCount - started < 500 && Calls.Length = 1
+        && Calls[1].args.Length = 4 && Calls[1].args[2] = "mine"
+        && Calls[1].args[4] = "work-only", "mining work-only CLI and immediate start")
+    mineTryArgs := BuildStationaryWorkBridgeArgs("mining", State.serverEpoch)
+    Require(State.running && State.lastDevConPort = 29200
+        && mineTryArgs.Length = 2 && mineTryArgs[2] = "work-only",
+        "mining run remains active and try command receives work-only")
+    Require(!HasEvent("STATIONARY_WAIT") && Fault = "", "mining work-only does not enter cargo wait")
+
+    Reset("work-only-gold", ["READY WORK_ONLY 29300 25"], "gold", false)
+    Require(WaitStationaryTaskReady(1), "storage-off gold must not wait for cargo")
+    Require(Calls.Length = 1 && Calls[1].args.Length = 4
+        && Calls[1].args[2] = "gold" && Calls[1].args[4] = "work-only",
+        "gold work-only CLI")
+    goldTryArgs := BuildStationaryWorkBridgeArgs("gold", State.serverEpoch)
+    Require(goldTryArgs.Length = 2 && goldTryArgs[2] = "work-only",
+        "gold try command receives work-only")
+
+    Reset("storage-on-mining", ["READY WORK_STORAGE 29200 25"], "mining", true)
+    Require(WaitStationaryTaskReady(1), "storage-on mining keeps cargo gate")
+    Require(Calls.Length = 1 && Calls[1].args.Length = 3,
+        "storage-on mining must not request work-only")
+
+    Reset("storage-off-washing-gated", ["READY WORK_STORAGE 29200 25"], "washing", false)
+    Require(WaitStationaryTaskReady(1), "ordinary washing keeps cargo gate")
+    Require(Calls.Length = 1 && Calls[1].args.Length = 3,
+        "washing must not request work-only")
+
+    Reset("work-only-token-mismatch", ["READY WORK_STORAGE 29200 25"], "mining", false)
+    Require(!WaitStationaryTaskReady(1), "work-only must reject storage-gated readiness")
+    Require(Fault = "STATIONARY_OBSERVATION_FAULT" && Calls.Length = 1,
+        "mismatched helper contract fails closed without retry loop")
+
     Reset("refill-ready", ["READY STORAGE_ONLY 29300 160"])
     Require(WaitStationaryTaskReady(1, true), "raw-empty may proceed to cargo")
     Require(State.lastDevConPort = 29300 && Calls.Length = 1, "known port retained")
@@ -70,7 +106,7 @@ try {
     State.pendingFarmAttempt := {}
     Require(!StationaryRecover(1, 7) && Calls.Length = 0, "pending reward never discarded by resume")
 
-    FileAppend "STATIONARY_WAIT_PASS`nActual production AHK wait/cargo/recovery functions; scripted read-only adapters.`n11 cases, no game input or item-transfer adapter. F9-equivalent timer cancellation, generations, ledger preservation, errors, and auto-resume checked.`n", out, "UTF-8-RAW"
+    FileAppend "STATIONARY_WAIT_PASS`nActual production AHK wait/cargo/recovery functions; scripted read-only adapters.`n16 cases, no game input or item-transfer adapter. Storage-off mining/gold work-only start, cargo-gated storage/washing runs, F9-equivalent timer cancellation, generations, ledger preservation, errors, and auto-resume checked.`n", out, "UTF-8-RAW"
     ExitApp 0
 } catch as e {
     FileAppend "FAIL " e.Message "`n" e.Stack, out, "UTF-8-RAW"
@@ -85,12 +121,13 @@ Require(condition, message) {
     if !condition
         throw Error(message)
 }
-Reset(name, scriptedResponses) {
+Reset(name, scriptedResponses, runMode := "washing",
+    vehicleStorageEnabled := true) {
     global State, LocalNav, Config, Scenario, Responses, Calls, Events, Fault, CargoCalls, CloseCalls
     Scenario := name, Responses := scriptedResponses, Calls := [], Events := [], Fault := "", CargoCalls := 0, CloseCalls := 0
-    State := {running: true, generation: 1, farmStateTaskId: 7, farmState: "FARMING", runMode: "washing", runFastWash: false, lastDevConPort: 0, serverEpoch: "fixture-epoch", stationaryWaiting: false, statusLabel: {Text: "initial"}, targetLostSince: 10, targetRecoveryAttempts: 2, farmWatchdogAt: 1, watchdogRecoveryCount: 2, farmOutputLedger: {fixture: 7}, storageDepositCheckpoint: {moved: 7, receiptVerified: true}, storagePending: false, actionCompletionPending: false, pendingFarmAttempt: 0, resumeVerificationPending: false, lastStorageProbeResult: ""}
+    State := {running: true, generation: 1, farmStateTaskId: 7, farmState: "FARMING", runMode: runMode, runFastWash: false, lastDevConPort: 0, serverEpoch: "fixture-epoch", stationaryWaiting: false, statusLabel: {Text: "initial"}, targetLostSince: 10, targetRecoveryAttempts: 2, farmWatchdogAt: 1, watchdogRecoveryCount: 2, farmOutputLedger: {fixture: 7}, storageDepositCheckpoint: {moved: 7, receiptVerified: true}, storagePending: false, actionCompletionPending: false, pendingFarmAttempt: 0, resumeVerificationPending: false, lastStorageProbeResult: ""}
     LocalNav := {feedback: "", washFeedback: ""}
-    Config := {vehicleStorageId: "fixture-truck", vehicleStorageType: "trunk", vehicleCompanionProtocol: 0, fastWashMode: false}
+    Config := {vehicleStorageId: "fixture-truck", vehicleStorageType: "trunk", vehicleCompanionProtocol: 0, vehicleStorageEnabled: vehicleStorageEnabled, fastWashMode: false}
 }
 IsCurrentRun(generation) {
     global State
@@ -124,10 +161,16 @@ HasEvent(name) {
     return false
 }
 RunBackgroundBridgeCancelable(generation, mode, args*) {
-    global State, Responses, Calls, Scenario
+    global State, Config, Responses, Calls, Scenario
     Require(mode = "stationary-task-ready", "unexpected mutation/bridge command " mode)
-    Require(args.Length = 3 && args[2] = "wash", "real CLI protocol shape")
-    Calls.Push(mode)
+    expectedMode := State.runMode = "washing" ? "wash"
+        : State.runMode = "gold" ? "gold" : "mine"
+    workOnly := !Config.vehicleStorageEnabled
+        && (State.runMode = "mining" || State.runMode = "gold")
+    Require(args.Length = (workOnly ? 4 : 3)
+        && args[2] = expectedMode
+        && (!workOnly || args[4] = "work-only"), "real CLI protocol shape")
+    Calls.Push({mode: mode, args: args})
     if Scenario = "stale-generation" {
         State.generation := 2
         State.statusLabel.Text := "new owner"

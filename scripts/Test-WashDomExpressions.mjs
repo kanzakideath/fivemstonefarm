@@ -336,6 +336,23 @@ for (const label of ['ストレージを開く', 'トランクを開く', '荷�
   f.root.append(washOption('インベントリを開く', 300).hit);
   assert(evaluate(expressions.nearby, f.document) === 'PRESENT WASH_STORAGE', 'The exact inventory label must be accepted at the registered cargo gate.');
 }
+{
+  const f = targetFixture();
+  const specific = washOption('ストレージを開く', 300);
+  const generic = washOption('インベントリを開く', 70);
+  f.root.append(specific.hit, generic.hit);
+  assert(evaluate(expressions.nearby, f.document) === 'PRESENT WASH_STORAGE',
+    'A unique specific cargo label must outrank a simultaneous generic inventory label.');
+  assert(specific.hit.clicked + generic.hit.clicked === 0,
+    'Cargo priority probing must remain non-mutating.');
+}
+{
+  const f = targetFixture();
+  f.root.append(washOption('インベントリを開く', 300).hit,
+    washOption('インベントリを開く', 70).hit);
+  assert(evaluate(expressions.nearby, f.document) === 'AMBIGUOUS WASH_STORAGE',
+    'Multiple generic inventory fallback candidates must remain ambiguous.');
+}
 console.log('Paired nearby wash/storage DOM probes passed (no clicks or item transfers).');
 
 // Closed-loop recovery classifies both controls in one non-mutating DOM turn.
@@ -372,6 +389,20 @@ function recoveryState(document) {
   assert(recoveryState(f.document) === 'AMBIGUOUS', 'Recovery must reject multiple cargo controls.');
   assert(cargoA.hit.clicked + cargoB.hit.clicked + f.first.hit.clicked + f.second.hit.clicked === 0, 'AMBIGUOUS classification must not click.');
 }
+{
+  const f = targetFixture();
+  f.root.append(washOption('荷台を開く', 300).hit,
+    washOption('インベントリを開く', 50).hit);
+  assert(recoveryState(f.document) === 'BOTH',
+    'Recovery must prefer one specific cargo control over generic inventory.');
+}
+{
+  const f = targetFixture();
+  f.root.append(washOption('インベントリを開く', 300).hit,
+    washOption('インベントリを開く', 50).hit);
+  assert(recoveryState(f.document) === 'AMBIGUOUS',
+    'Recovery must reject multiple generic fallback controls.');
+}
 console.log('WASH_RECOVERY_DOM_PASS: five structural states, exact inventory label, zero clicks');
 
 // Readiness must distinguish a live idle progress UI from active/unmounted UI.
@@ -399,10 +430,13 @@ console.log('WASH_RECOVERY_DOM_PASS: five structural states, exact inventory lab
 }
 for (const [expression,label] of [[expressions.stationaryMine,'鉱石を採掘する'],[expressions.stationaryGold,'砂金採りトレイ']]) {
  const f=targetFixture(); f.first.hit.style.display=f.second.hit.style.display='none';
- f.root.append(washOption(label,240).hit, washOption('ストレージを開く',360).hit);
+ const generic=washOption('インベントリを開く',80);
+ f.root.append(washOption(label,240).hit, washOption('ストレージを開く',360).hit,
+   generic.hit);
  assert(evaluate(expression,f.document)==='PRESENT WASH_STORAGE','Each mode requires its work label and cargo');
  f.root.append(washOption('ストレージを開く',400).hit);
  assert(evaluate(expression,f.document)==='AMBIGUOUS WASH_STORAGE','Ambiguous cargo must not authorize work');
+ assert(generic.hit.clicked===0,'The ignored generic inventory option must never be clicked');
 }
 console.log('STATIONARY_DOM_PASS: three modes, same-turn cargo guard, no unintended clicks');
 
@@ -430,6 +464,34 @@ for (const state of ['missing', 'disabled', 'ambiguous', 'generic']) {
   const f = targetFixture();
   f.first.hit.style.display = f.second.hit.style.display = 'none';
   const mine = washOption('鉱石を採掘する',300); f.root.append(mine.hit);
-  assert(evaluate(expressions.fastFlagOnMineClick,f.document) === false && mine.hit.clicked === 0, 'Fast flag cannot relax other modes');
+  assert(evaluate(expressions.workOnlyMineClick || expressions.fastFlagOnMineClick,
+    f.document) === true && mine.hit.clicked === 1,
+  'Mining work-only policy must click the exact work target without cargo');
+}
+for (const [clickExpression, controlsExpression, label, mode] of [
+  [expressions.workOnlyMineClick || expressions.fastFlagOnMineClick,
+    expressions.workOnlyMineControls, '鉱石を採掘する', 'mine'],
+  [expressions.workOnlyGoldClick, expressions.workOnlyGoldControls,
+    '砂金採りトレイ', 'gold'],
+]) {
+  assert(typeof clickExpression === 'string' && typeof controlsExpression === 'string',
+    `${mode}: production work-only expressions must be exported by the harness`);
+  const f = targetFixture();
+  f.first.hit.style.display = f.second.hit.style.display = 'none';
+  const work = washOption(label, 300);
+  f.root.append(work.hit);
+  assert(evaluate(controlsExpression, f.document) === 'PRESENT WORK_ONLY',
+    `${mode}: exact work must be ready without cargo`);
+  assert(evaluate(clickExpression, f.document) === true && work.hit.clicked === 1,
+    `${mode}: work-only must click only its exact work target`);
+  work.hit.clicked = 0;
+  work.leaf.ownText = `${label} 追加`;
+  const suffixAllowed = mode === 'mine';
+  assert(evaluate(controlsExpression, f.document)
+      === (suffixAllowed ? 'PRESENT WORK_ONLY' : 'MISSING WORK_ONLY')
+      && evaluate(clickExpression, f.document) === suffixAllowed
+      && work.hit.clicked === (suffixAllowed ? 1 : 0),
+    `${mode}: work-only must preserve the mode's production label policy`);
 }
 console.log('FAST_WASH_DOM_PASS: actual dispatch expression, washing alone, exact single click');
+console.log('WORK_ONLY_DOM_PASS: mining/gold readiness and click, exact target, no cargo');

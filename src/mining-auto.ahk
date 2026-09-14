@@ -9,7 +9,7 @@ CoordMode "Pixel", "Screen"
 CoordMode "Mouse", "Screen"
 Thread "Interrupt", 0
 
-global AppVersion := "9.1.19"
+global AppVersion := "9.1.20"
 ;@Ahk2Exe-SetVersion %A_PriorLine~U)^.*"([^"]+)".*$~$1%
 processId := DllCall("GetCurrentProcessId")
 global LocalNav := {busy: false, pid: 0, cancel: "", taskId: 0, dialog: 0, guide: 0, feedback: "", requestActive: false, cycle: 0, lastBatchKey: "", lastActionKey: ""}
@@ -14775,8 +14775,9 @@ GoldAttemptBackground(expectedGeneration) {
     ; 毎回まず現在位置を検査します。bridgeが同じCDPセッションでtargetを
     ; 長時間監視するため、固定6秒待機や短い再起動ループは挟みません。
     State.statusLabel.Text := "●  「砂金採りトレイ」を確認中"
+    goldArguments := BuildStationaryWorkBridgeArgs("gold", State.serverEpoch)
     clickResult := RunBackgroundBridgeCancelable(expectedGeneration,
-        "try-gold", State.serverEpoch)
+        "try-gold", goldArguments*)
     if !IsCurrentRun(expectedGeneration)
         return
     WriteDiagnostic("attempt=" State.attempts " GOLD_TRY=" clickResult)
@@ -15101,8 +15102,10 @@ MineAttemptBackground(expectedGeneration) {
     ; bridgeが石の再出現を同じセッションで待ってから原子的にクリックします。
     ; 旧来の350ms probe・消失3票・再出現2票・固定5.2秒待機は使いません。
     State.statusLabel.Text := "●  採掘ボタンを待っています"
+    mineArguments := BuildStationaryWorkBridgeArgs("mining",
+        State.serverEpoch)
     clickResult := RunBackgroundBridgeCancelable(expectedGeneration,
-        "try-mining", State.serverEpoch)
+        "try-mining", mineArguments*)
     if !IsCurrentRun(expectedGeneration)
         return
     WriteDiagnostic("attempt=" State.attempts " BG_TRY=" clickResult)

@@ -21,9 +21,12 @@ $targetMethod = $bridgeType.GetMethod('WashTargetExpression', $bindingFlags)
 $progressMethod = $bridgeType.GetMethod('WorkProgressExpression', $bindingFlags)
 $nearbyMethod = $bridgeType.GetMethod('NearbyWashControlsExpression', $bindingFlags)
 $recoveryStructureMethod = $bridgeType.GetMethod('WashZoneStructureExpression', $bindingFlags)
+$workOnlyClickMethod = $bridgeType.GetMethod('WorkOnlyClickExpression', $bindingFlags)
+$workOnlyControlsMethod = $bridgeType.GetMethod('WorkOnlyControlsExpression', $bindingFlags)
 $actionType = $assembly.GetType('CdpBridge+WorkAction', $true)
 if (-not $mainMethod -or -not $targetMethod -or -not $progressMethod `
-        -or -not $nearbyMethod -or -not $recoveryStructureMethod) {
+        -or -not $nearbyMethod -or -not $recoveryStructureMethod `
+        -or -not $workOnlyClickMethod -or -not $workOnlyControlsMethod) {
     throw 'The work DOM expression methods were not found in the bridge.'
 }
 
@@ -31,6 +34,8 @@ if (-not $mainMethod -or -not $targetMethod -or -not $progressMethod `
 # captured target/inventory/progress three-frame epoch.
 foreach ($invalidCall in @(
     [string[]]@('stationary-task-ready', 'unused-result.txt', 'invalid-epoch', 'wash', '29200'),
+    [string[]]@('stationary-task-ready', 'unused-result.txt', 'invalid-epoch', 'mine', '29200', 'work-only'),
+    [string[]]@('stationary-task-ready', 'unused-result.txt', 'invalid-epoch', 'wash', '29200', 'work-only'),
     [string[]]@('wash-task-ready', 'unused-result.txt', 'invalid-epoch', '29200'),
     [string[]]@('wash-task-ready', 'unused-result.txt', 'invalid-epoch', '42'),
     [string[]]@('try-washing', 'unused-result.txt', 'invalid-epoch', '29200'),
@@ -38,6 +43,8 @@ foreach ($invalidCall in @(
     [string[]]@('try-washing', 'unused-result.txt', 'invalid-epoch', '42', 'work-only'),
     [string[]]@('try-washing', 'unused-result.txt', 'invalid-epoch', '29200', 'unrecognized'),
     [string[]]@('try-mining', 'unused-result.txt', 'invalid-epoch', '29200', 'work-only'),
+    [string[]]@('try-mining', 'unused-result.txt', 'invalid-epoch', 'work-only'),
+    [string[]]@('try-gold', 'unused-result.txt', 'invalid-epoch', 'work-only'),
     [string[]]@('probe-wash-storage', 'unused-result.txt'),
     [string[]]@('probe-wash-storage', 'unused-result.txt', 'invalid-epoch'),
     [string[]]@('try-mining', 'unused-result.txt'),
@@ -69,6 +76,10 @@ try {
         fastFlagOnMineClick = [string]$bridgeType.GetMethod('WorkClickExpressionForMode', $bindingFlags).Invoke($null, [object[]]@('try-mining', $true))
         stationaryMine = [string]$bridgeType.GetMethod('StationaryControlsExpression', $bindingFlags).Invoke($null, [object[]]@([Enum]::Parse($actionType, 'Mine')))
         stationaryGold = [string]$bridgeType.GetMethod('StationaryControlsExpression', $bindingFlags).Invoke($null, [object[]]@([Enum]::Parse($actionType, 'Gold')))
+        workOnlyMineClick = [string]$workOnlyClickMethod.Invoke($null, [object[]]@([Enum]::Parse($actionType, 'Mine')))
+        workOnlyGoldClick = [string]$workOnlyClickMethod.Invoke($null, [object[]]@([Enum]::Parse($actionType, 'Gold')))
+        workOnlyMineControls = [string]$workOnlyControlsMethod.Invoke($null, [object[]]@([Enum]::Parse($actionType, 'Mine')))
+        workOnlyGoldControls = [string]$workOnlyControlsMethod.Invoke($null, [object[]]@([Enum]::Parse($actionType, 'Gold')))
         stationaryClick = [string]$bridgeType.GetMethod('StationaryWorkClickExpression', $bindingFlags).Invoke($null, [object[]]@([string]$targetMethod.Invoke($null,[object[]]@($true))))
         idle = [string]$bridgeType.GetMethod('WashIdleStateExpression', $bindingFlags).Invoke($null, [object[]]@())
         nearby = [string]$nearbyMethod.Invoke($null, [object[]]@())
