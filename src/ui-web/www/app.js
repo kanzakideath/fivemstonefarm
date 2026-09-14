@@ -62,20 +62,20 @@
   const fixtureState = {
     ...baseState,
     revision: 1,
-    version: '9.1.19',
+    version: '9.1.20',
     endlessWashReady: true,
     endlessWashStartAvailable: true,
     endlessWashUnavailableReason: '',
     updateCatalog: {
       phase: 'ready',
-      currentVersion: '9.1.19',
-      latestVersion: '9.1.19',
+      currentVersion: '9.1.20',
+      latestVersion: '9.1.20',
       versions: [
+        { version: '9.1.20', publishedAt: '2026-09-14T03:00:00Z' },
         { version: '9.1.19', publishedAt: '2026-09-14T00:00:00Z' },
         { version: '9.1.18', publishedAt: '2026-09-13T08:30:00Z' },
         { version: '9.1.17', publishedAt: '2026-09-12T12:00:00Z' },
         { version: '9.1.16', publishedAt: '2026-09-11T12:00:00Z' },
-        { version: '9.1.15', publishedAt: '2026-09-10T12:00:00Z' },
       ],
     },
     controls: {

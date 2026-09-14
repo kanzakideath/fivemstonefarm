@@ -78,11 +78,20 @@ internal static class CdpBridge
             || mode == "try-probe-mining"
             || mode == "activate" || mode == "deactivate"
             || mode == "deactivate-29200" || mode == "deactivate-29300");
-        bool stationaryReadyMode = args.Length == 5 && mode == "stationary-task-ready";
+        bool stationaryWorkOnly = args.Length == 6 && mode == "stationary-task-ready"
+            && String.Equals(args[5], "work-only", StringComparison.Ordinal);
+        bool stationaryReadyMode = mode == "stationary-task-ready"
+            && (args.Length == 5 || stationaryWorkOnly);
         bool fastWashWorkOnly = mode == "try-washing" && args.Length == 5
             && String.Equals(args[4], "work-only", StringComparison.Ordinal);
-        bool actionTryMode = (args.Length == 3 || (args.Length == 4 && mode == "try-washing")
-            || fastWashWorkOnly) && (mode == "try-mining" || mode == "try-washing" || mode == "try-gold");
+        bool stationaryActionWorkOnly = (mode == "try-mining" || mode == "try-gold")
+            && args.Length == 4
+            && String.Equals(args[3], "work-only", StringComparison.Ordinal);
+        bool actionWorkOnly = fastWashWorkOnly || stationaryActionWorkOnly;
+        bool actionTryMode = (args.Length == 3
+            || (args.Length == 4 && mode == "try-washing")
+            || fastWashWorkOnly || stationaryActionWorkOnly)
+            && (mode == "try-mining" || mode == "try-washing" || mode == "try-gold");
         bool nearbyWashProbeMode = args.Length == 3 && mode == "probe-wash-storage";
         bool washReadyMode = args.Length == 4 && mode == "wash-task-ready";
         bool actionCompletionMode = args.Length == 4 && mode == "wait-action-completion";
@@ -109,7 +118,8 @@ internal static class CdpBridge
             return 64;
 
         int preferredWashPort=0;
-        if ((washReadyMode || (actionTryMode && args.Length>=4))
+        if ((washReadyMode || (actionTryMode && mode == "try-washing"
+                && args.Length >= 4))
             && (!Int32.TryParse(args[3],out preferredWashPort)
                 || (preferredWashPort!=0 && preferredWashPort!=29200 && preferredWashPort!=29300)))
             return 64;
@@ -121,8 +131,12 @@ internal static class CdpBridge
             {
                 WorkAction action; int preferred;
                 if (!IsValidServerEpoch(args[2]) || !TryParseWorkAction(args[3], out action)
-                    || !Int32.TryParse(args[4], out preferred) || (preferred!=0 && preferred!=29200 && preferred!=29300)) return 64;
-                result = ProbeStationaryTaskReadyAsync(args[2], preferred, action).GetAwaiter().GetResult().Replace("WASH_STORAGE", "WORK_STORAGE");
+                    || !Int32.TryParse(args[4], out preferred)
+                    || (preferred!=0 && preferred!=29200 && preferred!=29300)
+                    || (stationaryWorkOnly && action == WorkAction.Wash)) return 64;
+                result = ProbeStationaryTaskReadyAsync(args[2], preferred, action,
+                    stationaryWorkOnly).GetAwaiter().GetResult()
+                    .Replace("WASH_STORAGE", "WORK_STORAGE");
             }
             else if (washRecoveryMode)
             {
@@ -304,7 +318,8 @@ internal static class CdpBridge
                 if (actionTryMode && !IsValidServerEpoch(args[2]))
                     return 64;
                 result = actionTryMode
-                    ? TryAndWaitActionAsync(mode, args[2], preferredWashPort, fastWashWorkOnly).GetAwaiter().GetResult()
+                    ? TryAndWaitActionAsync(mode, args[2], preferredWashPort,
+                        actionWorkOnly).GetAwaiter().GetResult()
                     : TryActionAsync(mode, null, null).GetAwaiter().GetResult();
             }
             else if (washReadyMode)
@@ -383,7 +398,7 @@ internal static class CdpBridge
     {
         return result == Capabilities
             || result == "SELFTEST OK"
-            || Regex.IsMatch(result, @"^READY (WASH_STORAGE|WORK_STORAGE|STORAGE_ONLY) (29200|29300) [0-9]+$")
+            || Regex.IsMatch(result, @"^READY (WASH_STORAGE|WORK_STORAGE|WORK_ONLY|STORAGE_ONLY) (29200|29300) [0-9]+$")
             || result.StartsWith("PRESENT ", StringComparison.Ordinal)
             || result.StartsWith("CLICKED ", StringComparison.Ordinal)
             || result.StartsWith("ACTIVATED ", StringComparison.Ordinal)
@@ -518,6 +533,16 @@ internal static class CdpBridge
                     bool expected=progress=="IDLE" && inv=="CLOSED" && control.StartsWith("PRESENT ",StringComparison.Ordinal);
                     if(WashTaskReadiness(control,progress,inv).StartsWith("READY ",StringComparison.Ordinal)!=expected)
                         return "ERROR TASK_READINESS_TEST";
+                }
+        foreach(string control in new[]{"PRESENT WORK_ONLY","MISSING WORK_ONLY"})
+            foreach(string progress in new[]{"IDLE","BUSY","UNKNOWN"})
+                foreach(string inv in new[]{"CLOSED","OPEN","UNKNOWN"})
+                {
+                    bool expected=control=="PRESENT WORK_ONLY" && progress=="IDLE"
+                        && inv=="CLOSED";
+                    if(WorkOnlyTaskReadiness(control,progress,inv)
+                        .StartsWith("READY ",StringComparison.Ordinal)!=expected)
+                        return "ERROR WORK_ONLY_READINESS_TEST";
                 }
 
         List<RouteStep> route = ParseRoute("150:65,25:0,150:136");
@@ -1135,7 +1160,8 @@ internal static class CdpBridge
     }
 
     private static async Task<string> TryActionAsync(string mode, string expectedEpoch,
-        Action<long> clickDispatchObserver, int preferredPort = 0, bool fastWashWorkOnly = false)
+        Action<long> clickDispatchObserver, int preferredPort = 0,
+        bool workOnly = false)
     {
         bool probeOnly = mode == "try-probe-mining";
         bool washingMode = mode == "try-washing";
@@ -1184,8 +1210,8 @@ internal static class CdpBridge
                                 expectedTargetFrameId, StringComparison.Ordinal)
                             || !await session.MatchesServerEpochAsync().ConfigureAwait(false)))
                             return "ERROR SERVER_SESSION_CHANGED";
-                        // Fast washing omits cargo, not the exact work target or epoch.
-                        expression = WorkClickExpressionForMode(mode, fastWashWorkOnly);
+                        // Work-only omits cargo, not the exact work target or epoch.
+                        expression = WorkClickExpressionForMode(mode, workOnly);
                         bool clicked;
                         clickMayHaveBeenDispatched = true;
                         if (clickDispatchObserver != null)
@@ -1238,7 +1264,7 @@ internal static class CdpBridge
     }
 
     private static async Task<string> TryAndWaitActionAsync(
-        string mode, string expectedEpoch, int preferredPort = 0, bool fastWashWorkOnly = false)
+        string mode, string expectedEpoch, int preferredPort = 0, bool workOnly = false)
     {
         WorkAction action;
         if (!TryGetWorkActionForTryMode(mode, out action))
@@ -1270,7 +1296,8 @@ internal static class CdpBridge
         {
             long clickDispatchTimestamp = -1;
             string clickResult = await TryActionAsync(mode, expectedEpoch,
-                delegate(long timestamp) { clickDispatchTimestamp = timestamp; }, preferredPort, fastWashWorkOnly)
+                delegate(long timestamp) { clickDispatchTimestamp = timestamp; },
+                preferredPort, workOnly)
                 .ConfigureAwait(false);
             string clickedResult = "CLICKED " + actionToken;
             if (!String.Equals(clickResult, clickedResult, StringComparison.Ordinal))
@@ -3163,14 +3190,22 @@ internal static class CdpBridge
 
     // Non-mutating functional-area proof. The two labels are read in the same
     // JS turn; stale/alternating single-label samples cannot become a pair.
-    private static string WorkClickExpressionForMode(string mode, bool fastWashWorkOnly)
+    private static string WorkClickExpressionForMode(string mode, bool workOnly)
     {
         bool washing = mode == "try-washing";
         bool gold = mode == "try-gold";
         string workClick = washing ? WashTargetExpression(true)
-            : ClickExpression(gold ? "砂金採りトレイ" : "鉱石を採掘する", gold);
-        // This washing-only policy never authorizes an inventory transfer.
-        return washing && fastWashWorkOnly ? workClick : StationaryWorkClickExpression(workClick);
+            : ClickExpression(gold ? "砂金採りトレイ" : "鉱石を採掘する",
+                gold);
+        // This policy only removes the cargo-presence guard. It never authorizes
+        // an inventory transfer and leaves work-target matching unchanged.
+        return workOnly ? workClick : StationaryWorkClickExpression(workClick);
+    }
+
+    private static string WorkOnlyClickExpression(WorkAction action)
+    {
+        return WorkClickExpressionForMode(action == WorkAction.Wash ? "try-washing"
+            : action == WorkAction.Gold ? "try-gold" : "try-mining", true);
     }
 
     private static string StationaryWorkClickExpression(string workClick)
@@ -3185,8 +3220,23 @@ internal static class CdpBridge
 
     private static string StationaryControlsExpression(WorkAction action)
     {
+        return StationaryControlsExpressionForPolicy(action, false);
+    }
+
+    private static string WorkOnlyControlsExpression(WorkAction action)
+    {
+        return StationaryControlsExpressionForPolicy(action, true);
+    }
+
+    private static string StationaryControlsExpressionForPolicy(WorkAction action,
+        bool workOnly)
+    {
         string work = action==WorkAction.Wash ? WashTargetExpression(false)
-            : ProbeExpression(action==WorkAction.Gold ? "砂金採りトレイ" : "鉱石を採掘する", action==WorkAction.Gold);
+            : ProbeExpression(action==WorkAction.Gold ? "砂金採りトレイ" : "鉱石を採掘する",
+                action==WorkAction.Gold);
+        if (workOnly)
+            return "(() => {const work=" + work
+                + ";return work?'PRESENT WORK_ONLY':'MISSING WORK_ONLY';})()";
         return "(() => {const wash=" + work
             + ",storage=" + StorageTargetExpression(false) + ";"
             + "if(storage==='AMBIGUOUS')return 'AMBIGUOUS WASH_STORAGE';"
@@ -3232,7 +3282,8 @@ internal static class CdpBridge
     private static Task<string> ProbeWashTaskReadyAsync(string expectedEpoch,int preferredPort)
     { return ProbeStationaryTaskReadyAsync(expectedEpoch, preferredPort, WorkAction.Wash); }
 
-    private static async Task<string> ProbeStationaryTaskReadyAsync(string expectedEpoch,int preferredPort,WorkAction action)
+    private static async Task<string> ProbeStationaryTaskReadyAsync(string expectedEpoch,
+        int preferredPort, WorkAction action, bool workOnly = false)
     {
         string[] frames;
         if(!TryDecodeServerEpoch(expectedEpoch,out frames))return "ERROR SERVER_SESSION_CHANGED";
@@ -3251,9 +3302,16 @@ internal static class CdpBridge
                     if(!await targetSession.MatchesServerEpochAsync().ConfigureAwait(false))return "ERROR SERVER_SESSION_CHANGED";
                     string progressBefore=await progressSession.EvaluateStringAsync(StationaryIdleStateExpression(action),false).ConfigureAwait(false);
                     string inventory=await inventorySession.EvaluateStringAsync(ClosedInventoryStateExpression(),false).ConfigureAwait(false);
-                    string controls=await targetSession.EvaluateStringAsync(StationaryControlsExpression(action),false).ConfigureAwait(false);
+                    string controls=await targetSession.EvaluateStringAsync(
+                        workOnly ? WorkOnlyControlsExpression(action)
+                            : StationaryControlsExpression(action), false)
+                        .ConfigureAwait(false);
                     string progressAfter=await progressSession.EvaluateStringAsync(StationaryIdleStateExpression(action),false).ConfigureAwait(false);
-                    string value=progressBefore==progressAfter ? WashTaskReadiness(controls,progressAfter,inventory) : "WAIT";
+                    string value=progressBefore==progressAfter
+                        ? workOnly
+                            ? WorkOnlyTaskReadiness(controls, progressAfter, inventory)
+                            : WashTaskReadiness(controls, progressAfter, inventory)
+                        : "WAIT";
                     stable=value!="WAIT" && value==last ? stable+1 : value!="WAIT" ? 1 : 0;
                     last=value;
                     if(stable>=3)
@@ -3268,6 +3326,13 @@ internal static class CdpBridge
         }
         finally { if(!(port!=0 ? SendRelease(port) : SendRelease(preferredPort)))
             throw new InvalidOperationException("INPUT_RELEASE_UNAVAILABLE"); }
+    }
+
+    private static string WorkOnlyTaskReadiness(string controls, string progress,
+        string inventory)
+    {
+        return progress == "IDLE" && inventory == "CLOSED"
+            && controls == "PRESENT WORK_ONLY" ? "READY WORK_ONLY" : "WAIT";
     }
 
     private static async Task<string> RecoverWashZoneAsync(string expectedEpoch,
@@ -3564,13 +3629,13 @@ internal static class CdpBridge
         // Multiple wash controls are permitted because overlapping wash zones can
         // legitimately publish duplicate options; cargo must remain unique.
         return "(() => {"
-            + "const washLabel='石を洗う',storageLabels=['ストレージを開く','トランクを開く','荷台を開く','インベントリを開く'],n=s=>String(s||'').replace(/\\s+/g,' ').trim(),body=document.body;"
+            + "const washLabel='石を洗う',specificStorage=['ストレージを開く','トランクを開く','荷台を開く'],genericStorage=['インベントリを開く'],n=s=>String(s||'').replace(/\\s+/g,' ').trim(),body=document.body;"
             + "const shown=e=>{if(!e||!e.isConnected)return false;for(let p=e;p;p=p.parentElement){const s=getComputedStyle(p);if(s.visibility==='hidden'||s.display==='none'||Number(s.opacity)<=0)return false;}return true;};"
             + "const visible=e=>{if(!shown(e))return false;const r=e.getBoundingClientRect();return r.width>0&&r.height>0;};"
             + "const usable=e=>visible(e)&&getComputedStyle(e).pointerEvents!=='none'&&!e.matches(':disabled')&&e.getAttribute('aria-disabled')!=='true';"
             + "if(!shown(body))return JSON.stringify({wash:0,storage:0});const root=document.querySelector('#options-wrapper');if(!shown(root))return JSON.stringify({wash:0,storage:0});"
             + "const count=labels=>{const match=t=>labels.includes(t),leaves=[...root.querySelectorAll('*')].filter(e=>{const t=n(e.textContent);return match(t)&&![...e.children].some(c=>match(n(c.textContent)));}),seen=new Set();for(const leaf of leaves){const hit=leaf.closest('.option-container,li,button,[role=button]')||leaf.closest('a')||leaf;if(root.contains(hit)&&!seen.has(hit)&&usable(leaf)&&usable(hit))seen.add(hit);}return seen.size;};"
-            + "return JSON.stringify({wash:count([washLabel]),storage:count(storageLabels)});})()";
+            + "const specificCount=count(specificStorage),storage=specificCount||count(genericStorage);return JSON.stringify({wash:count([washLabel]),storage});})()";
     }
 
     private static void ParseWashZoneStructure(string value, out int washCount,
@@ -3963,16 +4028,16 @@ internal static class CdpBridge
         // ox_inventoryの標準ラベルに加え、同じ車両用途で使われる日本語表記だけを
         // 許可します。候補が複数なら何も押さないことで、近接車両を誤操作しません。
         return "(() => {"
-            + "const qs=['ストレージを開く','トランクを開く','荷台を開く','インベントリを開く'],n=s=>String(s||'').replace(/\\s+/g,' ').trim(),body=document.body;"
+            + "const specific=['ストレージを開く','トランクを開く','荷台を開く'],generic=['インベントリを開く'],n=s=>String(s||'').replace(/\\s+/g,' ').trim(),body=document.body;"
             + "const shown=e=>{if(!e||!e.isConnected)return false;for(let p=e;p;p=p.parentElement){const s=getComputedStyle(p);"
             + "if(s.visibility==='hidden'||s.display==='none'||Number(s.opacity)<=0)return false;}return true;};"
             + "const visible=e=>{if(!shown(e))return false;const r=e.getBoundingClientRect();return r.width>0&&r.height>0;};"
             + "const usable=e=>visible(e)&&getComputedStyle(e).pointerEvents!=='none'&&!e.matches(':disabled')&&e.getAttribute('aria-disabled')!=='true';"
             + "if(!shown(body))return 'MISSING';const root=document.querySelector('#options-wrapper');if(!shown(root))return 'MISSING';"
-            + "const match=t=>qs.includes(t),leaves=[...root.querySelectorAll('*')].filter(e=>{const t=n(e.textContent);"
-            + "return match(t)&&![...e.children].some(c=>match(n(c.textContent)));});"
-            + "const seen=new Set(),matches=[];for(const leaf of leaves){const hit=leaf.closest('.option-container,li,button,[role=button]')||leaf.closest('a')||leaf;"
-            + "if(!root.contains(hit)||seen.has(hit)||!usable(leaf)||!usable(hit))continue;seen.add(hit);matches.push(hit);}"
+            + "const collect=labels=>{const match=t=>labels.includes(t),leaves=[...root.querySelectorAll('*')].filter(e=>{const t=n(e.textContent);"
+            + "return match(t)&&![...e.children].some(c=>match(n(c.textContent)));}),seen=new Set(),matches=[];for(const leaf of leaves){const hit=leaf.closest('.option-container,li,button,[role=button]')||leaf.closest('a')||leaf;"
+            + "if(!root.contains(hit)||seen.has(hit)||!usable(leaf)||!usable(hit))continue;seen.add(hit);matches.push(hit);}return matches;};"
+            + "let matches=collect(specific);if(matches.length===0)matches=collect(generic);"
             + "if(matches.length>1)return 'AMBIGUOUS';if(matches.length!==1)return 'MISSING';const hit=matches[0];"
             + (click
                 ? "if(!usable(hit))return 'MISSING';hit.click();return 'CLICKED';"

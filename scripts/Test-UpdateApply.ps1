@@ -5,7 +5,13 @@ param(
     [string]$OutputDirectory='artifacts/update-apply',
     [switch]$UsePublicLatest,
     [ValidatePattern('^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')]
-    [string]$ExpectedVersion
+    [string]$ExpectedVersion,
+    [ValidatePattern('^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')]
+    [string]$SourceVersion='9.1.17',
+    [ValidatePattern('^[0-9a-fA-F]{64}$')]
+    [string]$SourceExecutableSha256='101978b9cf15b16f9a10b226afadf02089d69eef04b6f7980e7e16edcff29047',
+    [ValidatePattern('^[0-9a-fA-F]{64}$')]
+    [string]$SourceUpdaterSha256='a95fd856136fcfcc8cf4f9ac20247df0ad067b8cd74f7710e712b15c704f772f'
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -83,8 +89,9 @@ $log=Join-Path $env:LOCALAPPDATA 'AI採掘機/updater.log'
 $logOffset=if(Test-Path $log){[IO.File]::ReadAllText($log).Length}else{0}
 $launcher=$null
 try {
-    Invoke-WebRequest 'https://github.com/kanzakideath/fivemstonefarm/releases/download/v9.1.17/ai-miner-win-x64.exe' -OutFile $old
-    if ((Get-FileHash $old).Hash.ToLowerInvariant() -ne '101978b9cf15b16f9a10b226afadf02089d69eef04b6f7980e7e16edcff29047') { throw 'Old release hash mismatch.' }
+    $sourceUrl='https://github.com/kanzakideath/fivemstonefarm/releases/download/v'+$SourceVersion+'/ai-miner-win-x64.exe'
+    Invoke-WebRequest $sourceUrl -OutFile $old
+    if ((Get-FileHash $old).Hash.ToLowerInvariant() -ne $SourceExecutableSha256.ToLowerInvariant()) { throw "Source v$SourceVersion release hash mismatch." }
     Add-Type -TypeDefinition @'
 using System;
 using System.IO;
@@ -112,7 +119,7 @@ public static class ReadOldUpdaterResource {
 }
 '@
     [ReadOldUpdaterResource]::Extract($old,$updater)
-    if ((Get-FileHash $updater).Hash.ToLowerInvariant() -ne 'a95fd856136fcfcc8cf4f9ac20247df0ad067b8cd74f7710e712b15c704f772f') { throw 'Extracted old updater differs from published resource.' }
+    if ((Get-FileHash $updater).Hash.ToLowerInvariant() -ne $SourceUpdaterSha256.ToLowerInvariant()) { throw "Extracted v$SourceVersion updater differs from published resource." }
     Copy-Item $old $target
     $manifestPath=Join-Path $stage 'update-manifest.json'
     $signaturePath=Join-Path $stage 'update-manifest.sig'
@@ -125,7 +132,7 @@ public static class ReadOldUpdaterResource {
             $checkAttempts=$attempt
             $checkResultPath=Join-Path $out "latest-check-$attempt.txt"
             $invocation=Invoke-UpdaterCommand -Executable $updater `
-                -Arguments @('check',$checkResultPath,'9.1.17',$stage) `
+                -Arguments @('check',$checkResultPath,$SourceVersion,$stage) `
                 -ResultPath $checkResultPath -TimeoutMilliseconds 30000
             if($invocation.ExitCode -eq 0 -and
                $invocation.Values['Status'] -ceq 'UPDATE_AVAILABLE' -and
@@ -141,7 +148,7 @@ public static class ReadOldUpdaterResource {
             if($attempt -lt 12){Start-Sleep -Seconds 5}
         }
         if($null -eq $check) {
-            throw "Published Latest did not resolve to v$ExpectedVersion through the actual v9.1.17 updater after $checkAttempts attempts. Last result: $($invocation.Text)"
+            throw "Published Latest did not resolve to v$ExpectedVersion through the actual v$SourceVersion updater after $checkAttempts attempts. Last result: $($invocation.Text)"
         }
         if(-not [IO.Path]::GetFullPath($check.Values['ManifestPath']).Equals(
                 [IO.Path]::GetFullPath($manifestPath),[StringComparison]::OrdinalIgnoreCase) -or
@@ -175,7 +182,7 @@ public static class ReadOldUpdaterResource {
             if($attempt -lt 4){Start-Sleep -Seconds 5}
         }
         if($null -eq $download) {
-            throw "Actual v9.1.17 updater did not download public v$ExpectedVersion after $downloadAttempts attempts. Last result: $($invocation.Text)"
+            throw "Actual v$SourceVersion updater did not download public v$ExpectedVersion after $downloadAttempts attempts. Last result: $($invocation.Text)"
         }
         if(-not [IO.Path]::GetFullPath($download.Values['StagedPath']).Equals(
                 [IO.Path]::GetFullPath($stagedExecutablePath),[StringComparison]::OrdinalIgnoreCase)) {
@@ -283,12 +290,12 @@ class DetachedApply {
     if($UsePublicLatest -and
        (-not $newLog.Contains('UPDATE_AVAILABLE: '+$ExpectedVersion+'.') -or
         -not $newLog.Contains('Update download completed: '+$ExpectedVersion+'.'))) {
-        throw 'Actual v9.1.17 updater log does not prove public Latest check and download.'
+        throw "Actual v$SourceVersion updater log does not prove public Latest check and download."
     }
     $sourceMode=if($UsePublicLatest){'public Latest check/download/apply'}else{'verified local artifact apply'}
     [ordered]@{
         version=$manifest.version
-        oldUpdater='v9.1.17 embedded binary'
+        oldUpdater="v$SourceVersion embedded binary"
         source=$sourceMode
         checkAttempts=$checkAttempts
         downloadAttempts=$downloadAttempts
@@ -300,7 +307,7 @@ class DetachedApply {
         restartObserved=$true
         pass=$true
     }|ConvertTo-Json|Set-Content (Join-Path $out 'apply-result.json') -Encoding utf8
-    Write-Host ('PASS: actual v9.1.17 updater used '+$sourceMode+' for signed v'+$manifest.version+', validated without console, preserved custom INI and restarted --updated.')
+    Write-Host ('PASS: actual v'+$SourceVersion+' updater used '+$sourceMode+' for signed v'+$manifest.version+', validated without console, preserved custom INI and restarted --updated.')
 } finally {
     if(Test-Path $log){[IO.File]::ReadAllText($log)|Set-Content (Join-Path $out 'updater.log') -Encoding utf8}
     $owned=@(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root+'\',[StringComparison]::OrdinalIgnoreCase) })

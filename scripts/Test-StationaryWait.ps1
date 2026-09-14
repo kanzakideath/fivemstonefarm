@@ -3,6 +3,14 @@
 param([string]$OutputDirectory = 'artifacts/stationary-wait')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
+$main = Get-Content -LiteralPath (Join-Path $root 'src/mining-auto.ahk') -Raw
+$stationary = Get-Content -LiteralPath (Join-Path $root 'src/stationary-only.ahk') -Raw
+if ($stationary -notmatch 'BuildStationaryWorkBridgeArgs\(actionMode,[\s\S]{0,240}bridgeArgs\.Push\("work-only"\)' -or
+    $stationary -notmatch 'stationary-task-ready", bridgeArgs\*' -or
+    $main -notmatch 'goldArguments := BuildStationaryWorkBridgeArgs\("gold", State\.serverEpoch\)[\s\S]{0,180}"try-gold", goldArguments\*' -or
+    $main -notmatch 'mineArguments := BuildStationaryWorkBridgeArgs\("mining",[\s\S]{0,100}State\.serverEpoch\)[\s\S]{0,180}"try-mining", mineArguments\*') {
+    throw 'Storage-off work-only bridge arguments are not wired through readiness, mining, and gold dispatch.'
+}
 $ahk = Join-Path $root 'tools/AutoHotkey/AutoHotkey64.exe'
 if (-not (Test-Path -LiteralPath $ahk)) { throw 'Bootstrap the pinned AutoHotkey toolchain first.' }
 $out = [IO.Path]::GetFullPath((Join-Path $root $OutputDirectory))

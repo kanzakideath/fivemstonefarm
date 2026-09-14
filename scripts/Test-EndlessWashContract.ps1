@@ -76,8 +76,10 @@ Assert ($bridge.Contains('SendRelease(port)') -and
     $bridge.Contains('SendInputRelease(port)') -and
     $bridge.Contains('"+ox_target"')) 'Pulse transaction does not release/reactivate target safely.'
 Assert ($bridge.Contains('WashZoneStructureExpression()') -and
-    $bridge.Contains('storageLabels=[') -and
-    $bridge.Contains("const washLabel=")) 'Independent wash and storage label sets are missing.'
+    $bridge.Contains('specificStorage=[') -and
+    $bridge.Contains('genericStorage=[') -and
+    $bridge.Contains('specificCount||count(genericStorage)') -and
+    $bridge.Contains("const washLabel=")) 'Independent prioritized wash and storage label sets are missing.'
 Assert ($bridge.Contains('Never click, refill, or start another wash here.')) 'Recovery/click responsibility boundary is missing.'
 
 Assert ($html.Contains('id="endless-wash-start"') -and

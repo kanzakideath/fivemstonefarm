@@ -10,6 +10,23 @@ FastWashModeEnabled() {
         && State.runMode = "washing"
 }
 
+; Mining and gold do not need a registered cargo control when automatic
+; storage is disabled.  Keep the exception explicit on the bridge command so
+; the native helper cannot accidentally relax washing, endless washing, or a
+; storage-enabled run.
+StationaryWorkOnlyEnabled(actionMode) {
+    global Config
+    return StationaryOnlyEnabled() && !Config.vehicleStorageEnabled
+        && !EndlessWashModeEnabled()
+        && (actionMode = "mining" || actionMode = "gold")
+}
+
+BuildStationaryWorkBridgeArgs(actionMode, bridgeArgs*) {
+    if StationaryWorkOnlyEnabled(actionMode)
+        bridgeArgs.Push("work-only")
+    return bridgeArgs
+}
+
 StationaryBridgeMotionBlocked(mode) {
     if mode = "recover-wash-zone"
         return !EndlessWashBridgeMotionAuthorized()
@@ -21,7 +38,15 @@ StationaryMotionDenied(operation) {
     return "ERROR STATIONARY_MOTION_DISABLED"
 }
 
-StationaryWaitDecision(result, allowStorageOnly := false) {
+StationaryWaitDecision(result, allowStorageOnly := false,
+    workOnly := false) {
+    if workOnly {
+        if RegExMatch(result, "^READY WORK_ONLY (29200|29300) [0-9]+$")
+            return "READY"
+        ; A work-only request must never accept a storage-gated success token.
+        ; This makes an old or mismatched native helper fail closed.
+        return result = "ERROR TASK_NOT_READY" ? "WAIT" : "FAULT"
+    }
     if RegExMatch(result, "^READY WORK_STORAGE (29200|29300) [0-9]+$")
         return "READY"
     if allowStorageOnly && RegExMatch(result, "^READY STORAGE_ONLY (29200|29300) [0-9]+$")
@@ -97,12 +122,18 @@ WaitStationaryTaskReady(generation, allowStorageOnly := false, purpose := "作�
         Loop {
             if !IsCurrentFarmTask(generation, task)
                 return false
-            mode := State.runMode = "washing" ? "wash" : State.runMode = "gold" ? "gold" : "mine"
+            actionMode := State.runMode
+            mode := actionMode = "washing" ? "wash" : actionMode = "gold" ? "gold" : "mine"
             port := State.lastDevConPort = 29200 || State.lastDevConPort = 29300 ? State.lastDevConPort : 0
-            result := RunBackgroundBridgeCancelable(generation, "stationary-task-ready", State.serverEpoch, mode, port)
+            workOnly := StationaryWorkOnlyEnabled(actionMode)
+            bridgeArgs := BuildStationaryWorkBridgeArgs(actionMode,
+                State.serverEpoch, mode, port)
+            result := RunBackgroundBridgeCancelable(generation,
+                "stationary-task-ready", bridgeArgs*)
             if !IsCurrentFarmTask(generation, task)
                 return false
-            decision := StationaryWaitDecision(result, allowStorageOnly)
+            decision := StationaryWaitDecision(result, allowStorageOnly,
+                workOnly)
             if decision = "READY" {
                 criticalWasOn := A_IsCritical
                 if !criticalWasOn
@@ -119,10 +150,14 @@ WaitStationaryTaskReady(generation, allowStorageOnly := false, purpose := "作�
                         State.watchdogRecoveryCount := 0
                         SupportWriteEvent("STATIONARY_AUTO_RESUME", "purpose=" purpose " input=0 proof=task_ready")
                     }
-                    State.statusLabel.Text := "●  荷台前の操作範囲を確認。移動せず続行します"
-                    LocalNav.washFeedback := InStr(result, "READY STORAGE_ONLY ") = 1
-                        ? "移動・視点入力0。荷台操作の利用可能性を確認しました"
-                        : "移動・視点入力0。両操作の利用可能性を確認しました"
+                    State.statusLabel.Text := workOnly
+                        ? "●  作業範囲を確認。移動せず続行します"
+                        : "●  荷台前の操作範囲を確認。移動せず続行します"
+                    LocalNav.washFeedback := workOnly
+                        ? "移動・視点入力0。荷台を要求せず作業操作を確認しました"
+                        : InStr(result, "READY STORAGE_ONLY ") = 1
+                            ? "移動・視点入力0。荷台操作の利用可能性を確認しました"
+                            : "移動・視点入力0。両操作の利用可能性を確認しました"
                     return true
                 } finally {
                     if !criticalWasOn
@@ -303,7 +338,9 @@ ValidateStationaryOnlyPolicy() {
             return false
     if !StationaryBridgeMotionBlocked("recover-wash-zone")
         return false
-    for mode in ["health", "deactivate", "inventory-snapshot", "stationary-task-ready", "deposit-delta", "withdraw-item", "try-washing"]
+    for mode in ["health", "deactivate", "inventory-snapshot",
+        "stationary-task-ready", "deposit-delta", "withdraw-item",
+        "try-mining", "try-washing", "try-gold"]
         if StationaryBridgeMotionBlocked(mode)
             return false
     for mode in [false, true] {
@@ -317,6 +354,13 @@ ValidateStationaryOnlyPolicy() {
             if StationaryWaitDecision(hard, mode) != "FAULT"
                 return false
     }
+    if StationaryWaitDecision("READY WORK_ONLY 29200 130", false, true)
+        != "READY"
+        || StationaryWaitDecision("ERROR TASK_NOT_READY", false, true)
+            != "WAIT"
+        || StationaryWaitDecision("READY WORK_STORAGE 29200 130", false,
+            true) != "FAULT"
+        return false
     Loop 1000 {
         if StationaryWaitDecision("ERROR TASK_NOT_READY") != "WAIT"
             || StationaryWaitDelay(A_Index) < 500 || StationaryWaitDelay(A_Index) > 5000

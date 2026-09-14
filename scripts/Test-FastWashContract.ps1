@@ -34,7 +34,7 @@ Assert ($source.Contains('FAST_WASH_RESUME_DEFERRED')) 'Fast resume still waits 
 Write-Host 'FAST_WASH_NATIVE_WIRING_PASS'
 
 $bridgeSource = Get-Content (Join-Path $root 'src/background-bridge/CdpBridge.cs') -Raw
-Assert ($bridgeSource.Contains('expression = WorkClickExpressionForMode(mode, fastWashWorkOnly);')) 'Final click is not wired to fast policy.'
-Assert ($bridgeSource.Contains('washing && fastWashWorkOnly ? workClick : StationaryWorkClickExpression(workClick)')) 'Only fast washing may omit cargo guard.'
+Assert ($bridgeSource.Contains('expression = WorkClickExpressionForMode(mode, workOnly);')) 'Final click is not wired to the explicit work-only policy.'
+Assert ($bridgeSource.Contains('return workOnly ? workClick : StationaryWorkClickExpression(workClick);')) 'Only an explicit work-only request may omit the cargo guard.'
 Assert ($source.Contains('washArguments.Push("work-only")')) 'AHK does not request the native fast policy.'
 Write-Host 'FAST_WASH_FINAL_CLICK_WIRING_PASS'
