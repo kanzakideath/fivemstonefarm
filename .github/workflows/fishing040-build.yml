@@ -16,12 +16,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - name: Integrate reviewed recognition and storage components
+      - name: Integrate reviewed source with strict versioned patch checks
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
           New-Item -ItemType Directory -Force artifacts/fishing040 | Out-Null
-          foreach($script in @('Upgrade040.py','UpgradeUi040.py','Finalize040.py','ExistingCatch040.py')) {
+          foreach($script in @('Upgrade040.py','UpgradeUi040.py','Finalize040.py','ExistingCatch040.py','Harden040.py')) {
             python "portable/$script"
             if($LASTEXITCODE -ne 0){throw "Integration failed: $script"}
           }
@@ -30,37 +30,10 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Scene syntax failed'}
           node --check portable/ui/app.js
           if($LASTEXITCODE -ne 0){throw 'UI syntax failed'}
-      - name: Build executable and run Windows and real WebView2 tests
+      - name: Windows executable, real WebView2 and production expression tests
         shell: pwsh
-        run: |
-          $ErrorActionPreference='Stop'
-          Start-Transcript artifacts/fishing040/build.txt
-          try { ./portable/Build.ps1 -Test } finally { Stop-Transcript }
-          $output=Join-Path $PWD 'artifacts/fishing040/storage-expressions.json'
-          $p=Start-Process portable/dist/FishingPilot.exe -ArgumentList @('--storage-expressions',('"'+$output+'"')) -PassThru
-          if(!$p.WaitForExit(12000)){$p.Kill();throw 'Production expression export timed out'}
-          $p.Refresh()
-          if($p.ExitCode -ne 0 -or !(Test-Path $output)){throw 'Production expression export failed'}
-      - name: Test live expressions against simulated UI and transfer failures
-        shell: pwsh
-        run: |
-          $ErrorActionPreference='Stop'
-          python -m pip install playwright==1.57.0
-          if($LASTEXITCODE -ne 0){throw 'Browser test installation failed'}
-          $edge='C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
-          if(!(Test-Path $edge)){$edge='C:\Program Files\Microsoft\Edge\Application\msedge.exe'}
-          $browser=@()
-          if(Test-Path $edge){$browser=@('--browser',$edge)}else{
-            python -m playwright install chromium
-            if($LASTEXITCODE -ne 0){throw 'Browser installation failed'}
-          }
-          python portable/TestScene.py @browser --output artifacts/fishing040/scene
-          if($LASTEXITCODE -ne 0){throw 'Rendered circle regression failed'}
-          python portable/TestUi.py @browser --output artifacts/fishing040/ui
-          if($LASTEXITCODE -ne 0){throw 'Responsive storage UI regression failed'}
-          python portable/TestStorage.py @browser --expressions artifacts/fishing040/storage-expressions.json --output artifacts/fishing040/storage
-          if($LASTEXITCODE -ne 0){throw 'Production storage fault injection failed'}
-      - name: Save validated readable source on isolated branch only
+        run: ./portable/Verify040.ps1
+      - name: Preserve passing readable source on isolated branch only
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -69,44 +42,17 @@ jobs:
           git add -- portable
           git diff --cached --quiet
           if($LASTEXITCODE -ne 0){
-            git commit -m 'FishingPilot 0.4.0: validated recognition, registered nearby storage and resume'
-            if($LASTEXITCODE -ne 0){throw 'Validated source commit failed'}
+            git commit -m 'FishingPilot 0.4.0: tested recognition and registered nearby storage'
+            if($LASTEXITCODE -ne 0){throw 'Source commit failed'}
             git push origin HEAD:feat/fishing-verified-storage-0.4.0
-            if($LASTEXITCODE -ne 0){throw 'Source branch changed; reconcile before publishing'}
+            if($LASTEXITCODE -ne 0){throw 'Source branch changed; reconcile before distribution'}
           }
-      - name: Package only passing build and verify all ZIP contents
+      - name: Package exact tested binary and verify ZIP roundtrip
         shell: pwsh
         run: |
-          $ErrorActionPreference='Stop'
-          New-Item -ItemType Directory -Force artifacts/fishing040-download | Out-Null
-          @'
-          from pathlib import Path
-          import json,hashlib,subprocess,zipfile
-          root=Path('portable/dist'); evidence=Path('artifacts/fishing040'); out=Path('artifacts/fishing040-download')
-          native=(root/'test-evidence/RESULT.txt').read_text(encoding='utf-8-sig')
-          suites={n:json.loads((evidence/n/'RESULT.json').read_text(encoding='utf-8-sig')) for n in ('scene','ui','storage')}
-          assert native.startswith('PASS') and all(v.get('pass') for v in suites.values()), 'Missing passing test evidence'
-          sha=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
-          metadata={'version':'0.4.0-preview','source_sha':sha,'distribution':'standalone','live_fivem_tested':False,'framework7':'9.1.3'}
-          (root/'build.json').write_text(json.dumps(metadata,indent=2),encoding='utf-8')
-          files=sorted(p for p in root.rglob('*') if p.is_file() and 'test-evidence' not in p.parts and p.name!='SHA256SUMS.txt')
-          sums={p.relative_to(root).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in files}
-          (root/'SHA256SUMS.txt').write_text(''.join(h+'  '+n+'\n' for n,h in sums.items()),encoding='utf-8')
-          archive=out/'FishingPilot-0.4.0-preview-win-x64.zip'
-          with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED,compresslevel=9) as z:
-            for p in files+[root/'SHA256SUMS.txt']:z.write(p,p.relative_to(root).as_posix())
-          with zipfile.ZipFile(archive) as z:
-            for n,h in sums.items():assert hashlib.sha256(z.read(n)).hexdigest()==h,n
-          report=dict(metadata,windows_self_test=native,tests=suites,archive_roundtrip_verified=True,runtime_file_count=len(files),archive_sha256=hashlib.sha256(archive.read_bytes()).hexdigest())
-          (out/'FishingPilot-0.4.0-verification.json').write_text(json.dumps(report,indent=2,ensure_ascii=False),encoding='utf-8')
-          (out/'FishingPilot-0.4.0-native-ui.png').write_bytes((root/'test-evidence/ui.png').read_bytes())
-          (out/'FishingPilot-0.4.0-storage-ui.png').write_bytes((evidence/'ui/storage-1160.png').read_bytes())
-          print(json.dumps(metadata,indent=2))
-          '@ | python -
-          if($LASTEXITCODE -ne 0){throw 'Packaging/hash verification failed'}
-          git archive --format=zip -o artifacts/fishing040-download/FishingPilot-0.4.0-preview-source.zip HEAD portable
-          if($LASTEXITCODE -ne 0){throw 'Source archive failed'}
-      - name: Capture test evidence and exact attempted source
+          python portable/Package040.py
+          if($LASTEXITCODE -ne 0){throw 'Packaging or hash verification failed'}
+      - name: Capture test evidence and attempted source
         if: always()
         shell: pwsh
         run: |
@@ -116,9 +62,9 @@ jobs:
           import zipfile
           with zipfile.ZipFile('artifacts/fishing040/attempted-source.zip','w',zipfile.ZIP_DEFLATED) as z:
             for p in Path('portable').rglob('*'):
-              if p.is_file() and not any(v in p.parts for v in ('dist','node_modules','obj','bin','vendor')): z.write(p,p.as_posix())
+              if p.is_file() and not any(v in p.parts for v in ('dist','node_modules','obj','bin','vendor')):z.write(p,p.as_posix())
           '@ | python -
-      - name: Keep evidence
+      - name: Keep test evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
