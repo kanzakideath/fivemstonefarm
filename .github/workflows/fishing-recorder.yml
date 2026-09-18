@@ -1,0 +1,62 @@
+name: Fishing Recorder standalone build
+on:
+  push:
+    branches: [tools/fishing-recorder-1.0.0]
+    paths:
+      - tools/fishing-recorder/**
+      - .github/workflows/fishing-recorder.yml
+permissions:
+  contents: read
+concurrency:
+  group: fishing-recorder-standalone
+  cancel-in-progress: false
+jobs:
+  recorder:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Verify limited recorder surface
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $code=Get-Content tools/fishing-recorder/FishingRecorder.cs -Raw
+          foreach($pattern in @('extern\s+.*\bSendInput\s*\(','extern\s+.*\bkeybd_event\s*\(','extern\s+.*\bSetWindowsHookEx','extern\s+.*\bReadProcessMemory','new\s+HttpClient','new\s+WebClient','GetClipboard')) {
+            if($code -match $pattern){throw "Forbidden recorder operation: $pattern"}
+          }
+          if($code -notmatch 'GetAsyncKeyState\(i<10\?0x30\+i:0x60\+i-10\)'){throw 'Expected scoped digit poll not found.'}
+      - name: Compile and run production recorder against synthetic desktop
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          Start-Transcript artifacts/recorder-build.txt
+          try { ./tools/fishing-recorder/Build.ps1 -Test } finally { Stop-Transcript }
+      - name: Package verified standalone executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $dist='tools/fishing-recorder/dist'
+          Compress-Archive -Path "$dist/FishingRecorder.exe","$dist/FishingRecorder.exe.config","$dist/README.txt","$dist/SHA256SUMS.txt" -DestinationPath artifacts/FishingRecorder-v1.0.0.zip
+          git rev-parse HEAD | Set-Content artifacts/RECORDER-SOURCE-COMMIT.txt
+          git archive --format=zip -o artifacts/FishingRecorder-v1.0.0-source.zip HEAD tools/fishing-recorder .github/workflows/fishing-recorder.yml
+          if($LASTEXITCODE -ne 0){throw 'Source archive failed.'}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: FishingRecorder-validation
+          path: |
+            artifacts/recorder-build.txt
+            tools/fishing-recorder/dist/test-evidence/
+          retention-days: 14
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: success()
+        with:
+          name: FishingRecorder-package
+          path: |
+            artifacts/FishingRecorder-v1.0.0.zip
+            artifacts/FishingRecorder-v1.0.0-source.zip
+            artifacts/RECORDER-SOURCE-COMMIT.txt
+          retention-days: 14
+          if-no-files-found: error
