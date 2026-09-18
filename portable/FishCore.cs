@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -9,7 +9,7 @@ using System.Web.Script.Serialization;
 
 namespace FishingPilot {
  public sealed class Ring {
-  public bool Valid; public int Key; public double Radius, Pointer, Start, End, Confidence;
+  public bool Valid, Native; public string Identity=""; public int Key; public double Radius, Pointer, Start, End, Confidence;
  }
  public sealed class Pixels {
   public int W,H; public byte[] Data;
@@ -36,7 +36,7 @@ namespace FishingPilot {
   static readonly double[] Cos=Enumerable.Range(0,180).Select(i=>Math.Cos(i*2*Math.PI/180)).ToArray();
   public RingReader(string templateFile) {
    var map=new JavaScriptSerializer().Deserialize<Dictionary<string,string>>(File.ReadAllText(templateFile));
-   foreach(var e in map)templates[Int32.Parse(e.Key)]=new List<bool[]>{e.Value.Select(c=>c=='1').ToArray()};
+   foreach(var e in map){int k=Int32.Parse(e.Key);templates[k]=new List<bool[]>{e.Value.Select(c=>c=='1').ToArray()};AddResampledTemplates(k,e.Value);}
    for(int k=0;k<=9;k++) if(!templates.ContainsKey(k)) {
     templates[k]=new List<bool[]>();
     foreach(string font in new[]{"Segoe UI","Arial","Tahoma"}) using(Bitmap b=new Bitmap(320,320)) {
@@ -49,10 +49,22 @@ namespace FishingPilot {
     }
    }
   }
+  void AddResampledTemplates(int key,string mask) {
+   // Match the recorded glyph after the actual capture/resize pipeline, not by
+   // weakening the confidence or ambiguity threshold.
+   foreach(int width in new[]{key==1?22:36})foreach(int size in new[]{192,256,480,640}) {
+    using(var src=new Bitmap(320,320))using(var small=new Bitmap(size,size))using(var normalized=new Bitmap(320,320)) {
+     using(var g=Graphics.FromImage(src)){g.Clear(Color.Black);for(int y=0;y<50;y++)for(int x=0;x<width;x++)if(mask[(y*40/50)*24+x*24/width]=='1')g.FillRectangle(Brushes.White,160-width/2+x,135+y,1,1);}
+     using(var g=Graphics.FromImage(small))g.DrawImage(src,0,0,size,size);
+     using(var g=Graphics.FromImage(normalized)){g.InterpolationMode=System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear;g.DrawImage(small,new RectangleF(0,0,320,320),new RectangleF(0,0,size,size),GraphicsUnit.Pixel);}
+     var glyph=Glyph(new Pixels(normalized),60);if(glyph!=null)templates[key].Add(glyph);
+    }
+   }
+  }
   public Ring Read(Bitmap bitmap) {
    var p=new Pixels(bitmap);var result=new Ring();if(p.W!=320||p.H!=320)return result;
    double best=-1; int radius=0;int[] kinds=null;
-   for(int r=26;r<=104;r++) {
+   for(int r=18;r<=132;r++) {
     int n=0,w=0,green=0;var row=new int[180];
     for(int a=0;a<180;a++) {int c=p.Kind((int)Math.Round(160+r*Sin[a]),(int)Math.Round(160-r*Cos[a]));row[a]=c;if(c!=0)n++;if(c==1)w++;if(c==2)green++;}
     if(n<157 || w<1 || green<3)continue;
@@ -67,6 +79,7 @@ namespace FishingPilot {
     foreach(bool[] temp in e.Value) {int inter=0,union=0;for(int i=0;i<glyph.Length;i++){if(glyph[i]&&temp[i])inter++;if(glyph[i]||temp[i])union++;}score=Math.Max(score,inter/(double)Math.Max(1,union));}
     if(score>first){second=first;first=score;digit=e.Key;}else second=Math.Max(second,score);
    }
+   result.Key=digit;result.Confidence=first;
    if(first<.62 || first-second<.12)return result;
    int end=0,gap=0,lo=360,hi=-1;
    for(int a=0;a<180;a++) {if(kinds[a]==1){end=a*2;gap=0;}else if(++gap>=4)break;}
@@ -78,6 +91,16 @@ namespace FishingPilot {
    }
    if(hi-lo<4 || hi-lo>100)return result;
    result.Valid=true;result.Key=digit;result.Radius=radius;result.Pointer=end;result.Start=lo;result.End=hi;result.Confidence=first;return result;
+  }
+  public Ring ReadAuto(Bitmap bitmap) {
+   double[,] offsets={{0,0},{-.075,0},{.075,0},{0,-.075},{0,.075}};
+   for(int i=0;i<offsets.GetLength(0);i++)using(var normalized=new Bitmap(320,320)) {
+    using(var g=Graphics.FromImage(normalized)){g.Clear(Color.Black);g.InterpolationMode=System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear;
+     float side=Math.Min(bitmap.Width,bitmap.Height),x=(bitmap.Width-side)/2+(float)(side*offsets[i,0]),y=(bitmap.Height-side)/2+(float)(side*offsets[i,1]);
+     g.DrawImage(bitmap,new RectangleF(0,0,320,320),new RectangleF(x,y,side,side),GraphicsUnit.Pixel);}
+    var ring=Read(normalized);if(ring.Valid)return ring;
+   }
+   return new Ring();
   }
   public static bool[] Glyph(Pixels p,int radius) {
    int dx=(int)(radius*.48),dy=(int)(radius*.57),w=dx*2+1,h=dy*2+1;
@@ -98,19 +121,21 @@ namespace FishingPilot {
  }
  public sealed class RoundController {
   public int Round, Hits; public bool Latched; public double MissingSince=-1,LastSeen,LastHit=-1000;
-  int key=-1,stable;double areaStart,areaEnd,prevPointer;bool haveArea;
-  public void Reset(){Round=0;Hits=0;Latched=false;MissingSince=-1;LastSeen=0;LastHit=-1000;key=-1;stable=0;haveArea=false;}
+  int key=-1,stable;double areaStart,areaEnd,prevPointer;bool haveArea;string identity="";
+  public void Reset(){Round=0;Hits=0;Latched=false;MissingSince=-1;LastSeen=0;LastHit=-1000;key=-1;stable=0;haveArea=false;identity="";}
+  public void InputRejected(){Latched=false;Hits=Math.Max(0,Hits-1);LastHit=-1000;}
   public int Observe(Ring r,double now) {
    if(!r.Valid){if(MissingSince<0)MissingSince=now;stable=0;return -1;}
    bool reappeared=MissingSince>=0 && now-MissingSince>=100;
-   bool reset=key!=r.Key || (haveArea && r.Pointer<prevPointer-45) || (reappeared && r.Pointer<60 && now-LastHit>200);
+   bool reset=key!=r.Key || (r.Native && haveArea && (identity!=r.Identity || Math.Abs(r.Start-areaStart)>6)) || (haveArea && r.Pointer<prevPointer-45) || (reappeared && r.Pointer<60 && now-LastHit>200);
    if(reset && now-LastHit>=65){Round++;Latched=false;haveArea=false;stable=0;}
    MissingSince=-1;LastSeen=now;prevPointer=r.Pointer;
-   if(!haveArea){areaStart=r.Start;areaEnd=r.End;haveArea=true;key=r.Key;}
+   if(!haveArea){areaStart=r.Start;areaEnd=r.End;haveArea=true;key=r.Key;identity=r.Identity;}
    else if(!Latched && r.Start<areaStart){areaStart=r.Start;areaEnd=Math.Max(areaEnd,r.End);}
    stable++;
-   double margin=Math.Max(3,Math.Min(8,(areaEnd-areaStart)*.22));
-   if(!Latched && stable>=2 && now-LastHit>80 && r.Pointer>=areaStart+margin && r.Pointer<=areaEnd-margin) {Latched=true;LastHit=now;Hits++;return r.Key;}
+   double span=(areaEnd-areaStart+360)%360, progress=(r.Pointer-areaStart+360)%360;
+   double margin=Math.Max(3,Math.Min(8,span*.22));
+   if(!Latched && stable>=2 && now-LastHit>80 && progress>=margin && progress<=span-margin) {Latched=true;LastHit=now;Hits++;return r.Key;}
    return -1;
   }
  }

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -29,6 +29,10 @@ namespace FishingPilot {
   [DllImport("winmm.dll")]public static extern uint timeBeginPeriod(uint p);
   [DllImport("winmm.dll")]public static extern uint timeEndPeriod(uint p);
   public static IntPtr FishingWindow(){IntPtr h=GetForegroundWindow();var s=new StringBuilder(512);GetWindowText(h,s,512);if(!s.ToString().StartsWith("FiveM",StringComparison.OrdinalIgnoreCase))return IntPtr.Zero;uint id;GetWindowThreadProcessId(h,out id);try{if(Process.GetProcessById((int)id).ProcessName.IndexOf("FiveM",StringComparison.OrdinalIgnoreCase)<0)return IntPtr.Zero;}catch{return IntPtr.Zero;}return h;}
+  delegate bool EnumProc(IntPtr hwnd,IntPtr data);
+  [DllImport("user32.dll")]static extern bool EnumWindows(EnumProc callback,IntPtr data);
+  [DllImport("user32.dll")]static extern bool IsWindowVisible(IntPtr hwnd);
+  public static IntPtr FindFishingWindow(){IntPtr found=IntPtr.Zero;int count=0;EnumWindows(delegate(IntPtr h,IntPtr unused){if(!IsWindowVisible(h))return true;var title=new StringBuilder(512);GetWindowText(h,title,512);if(!title.ToString().StartsWith("FiveM",StringComparison.OrdinalIgnoreCase))return true;uint p;GetWindowThreadProcessId(h,out p);try{if(Process.GetProcessById((int)p).ProcessName.IndexOf("FiveM",StringComparison.OrdinalIgnoreCase)>=0){found=h;count++;}}catch{}return true;},IntPtr.Zero);return count==1?found:IntPtr.Zero;}
   public static Rectangle Client(IntPtr h){RECT r;POINT p=new POINT();if(!GetClientRect(h,out r)||!ClientToScreen(h,ref p))return Rectangle.Empty;return new Rectangle(p.X,p.Y,r.Right-r.Left,r.Bottom-r.Top);}
   public static Bitmap Capture(Rectangle area,int width,int height){using(var b=new Bitmap(area.Width,area.Height,PixelFormat.Format32bppArgb)){using(Graphics g=Graphics.FromImage(b))g.CopyFromScreen(area.Location,Point.Empty,area.Size,CopyPixelOperation.SourceCopy);var result=new Bitmap(width,height,PixelFormat.Format32bppArgb);using(Graphics g=Graphics.FromImage(result)){g.InterpolationMode=System.Drawing.Drawing2D.InterpolationMode.Bilinear;g.DrawImage(b,0,0,width,height);}return result;}}
   public static bool Press(IntPtr h,uint expectedPid,int digit,CancellationToken cancel){
