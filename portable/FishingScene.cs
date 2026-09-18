@@ -41,14 +41,18 @@ internal static partial class CdpBridge {
    string command=Json.Serialize(new Dictionary<string,object>{{"enabled",allowInput},{"cycle",cycle??""}});
    string raw=await Read(session,"window.__fpProbe3?window.__fpProbe3.sample("+(fast?"true":"false")+","+command+"): 'REINSTALL'").ConfigureAwait(false);
    if(raw=="REINSTALL"){installed.Remove(url);return new FishingPilot.Scene{Source="NUI reinitialize"};}
-   var d=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(raw);var r=(Dictionary<string,object>)d["ring"];
+   return DecodeScene(raw,url);
+  }
+  public static FishingPilot.Scene DecodeScene(string raw,string url){
+   var d=new JavaScriptSerializer().DeserializeObject(raw) as Dictionary<string,object>;if(d==null)throw new InvalidOperationException("INVALID_SCENE");
+   var r=GetObject(d,"ring");
    var scene=new FishingPilot.Scene{Frame=url,Present=Bool(r,"present"),Busy=Bool(d,"busy"),Width=NumI(d,"w"),Height=NumI(d,"h"),Hunger=Num(d,"hunger",-1),Water=Num(d,"water",-1),Source=Bool(r,"valid")?"NUI same-turn":"NUI candidate"};
    if(Bool(r,"ambiguous"))scene.Source="ambiguous NUI";
    scene.Key=NumI(r,"key",-1);scene.Stamp=GetString(r,"stamp");scene.X=Num(r,"x",0);scene.Y=Num(r,"y",0);scene.W=Num(r,"w",0);scene.H=Num(r,"h",0);
    if(Bool(r,"valid"))scene.Ring=new FishingPilot.Ring{Valid=true,Native=true,Key=scene.Key,Pointer=Num(r,"pointer",0),Start=Num(r,"start",0),End=Num(r,"end",0),Radius=Num(r,"radius",0),Identity=url+":"+scene.Stamp,Confidence=1};
    scene.Delivery=GetString(d,"delivery");var input=GetObject(d,"input");scene.InputReason=GetString(input,"reason");
    if(Bool(input,"sent")){scene.SentKey=NumI(input,"key",-1);scene.InputSequence=NumI(input,"seq");scene.InputRound=NumI(input,"round");scene.InputPointer=Num(input,"pointer",0);scene.InputStart=Num(input,"start",0);scene.InputEnd=Num(input,"end",0);}
-   if(d.ContainsKey("notices"))foreach(var n in (object[])d["notices"]){var v=(Dictionary<string,object>)n;scene.Notices.Add(new FishingPilot.Notice{Kind=GetString(v,"kind"),Id=url+":"+GetString(v,"id")});}
+   if(d.ContainsKey("notices")&&d["notices"] is object[])foreach(var n in (object[])d["notices"]){var v=(Dictionary<string,object>)n;scene.Notices.Add(new FishingPilot.Notice{Kind=GetString(v,"kind"),Id=url+":"+GetString(v,"id")});}
    return scene;
   }
   public async Task<FishingPilot.Scene> Poll(bool allowInput=false,string cycle="") {
@@ -86,6 +90,6 @@ internal static partial class CdpBridge {
   }
   public static int ConsolePort() { return FishingPilot.Native.FiveMConsolePort(); }
   public static bool Hotbar(int port,int digit,CancellationToken token){if(token.IsCancellationRequested||digit<1||digit>5||(port!=29200&&port!=29300))return false;string cmd="hotkey"+digit;bool sent=false;try{sent=TrySendDevCon(port,"-"+cmd+";+"+cmd,0);if(sent)token.WaitHandle.WaitOne(50);return sent;}finally{if(sent)TrySendDevCon(port,"-"+cmd,0);}}
-  public void Dispose(){if(dead)return;dead=true;foreach(var s in sessions.Values)try{s.Dispose();}catch{}sessions.Clear();}
+  public void Dispose(){if(dead)return;dead=true;foreach(var s in sessions.Values)try{s.FishingDeadline(200);s.EvaluateStringAsync("window.__fpProbe3?window.__fpProbe3.stop(): 'STOPPED'",false).GetAwaiter().GetResult();}catch{}finally{s.Dispose();}sessions.Clear();}
  }
 }

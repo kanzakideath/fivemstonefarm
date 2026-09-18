@@ -12,7 +12,8 @@ internal static partial class CdpBridge {
     if(!await session.MatchesServerEpochAsync().ConfigureAwait(false))return new FishingPilot.Telemetry{Error="接続が変わりました"};
     string raw=await session.EvaluateStringAsync(InventorySnapshotExpression(),false).ConfigureAwait(false);
     var inv=FishingPilot.Inventory.Parse(FormatInventorySnapshotResult(raw));
-    return new FishingPilot.Telemetry{Known=inv.Known,Inventory=inv,Epoch=epoch,Error=inv.Known?"":"所持品を一度開いて閉じると初期化されます"};
+    string inventoryState=await session.EvaluateStringAsync(ClosedInventoryStateExpression(),false).ConfigureAwait(false);
+    return new FishingPilot.Telemetry{Known=inv.Known,InventoryOpen=inventoryState!="CLOSED",Inventory=inv,Epoch=epoch,Error=inv.Known?"":"所持品を一度開いて閉じると初期化されます"};
    }finally {session.FishingDeadline(-1);}
   }
   public void Dispose(){dead=true;if(session!=null)session.Dispose();session=null;}

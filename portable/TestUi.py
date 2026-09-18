@@ -1,8 +1,8 @@
-from pathlib import Path
+﻿from pathlib import Path
 import json,argparse,mimetypes
 from playwright.sync_api import sync_playwright
 p=argparse.ArgumentParser();p.add_argument('--browser');p.add_argument('--inline',action='store_true');p.add_argument('--output',default='ui-evidence');a=p.parse_args();r=Path(__file__).parent/'ui';out=Path(a.output);out.mkdir(parents=True,exist_ok=True)
-state={'type':'state','version':'0.3.0-preview','busy':False,'countdown':0,'feedback':'','status':{'Phase':'停止中','Ring':'未検出','Backend':'未確認','Delivery':'未確認','ReadMs':0,'Inventory':'未確認','Hunger':'未確認','Thirst':'未確認'},'settings':{'ObserveOnly':True,'BackgroundMode':True,'AutoNeeds':True,'FoodKey':1,'DrinkKey':3,'ReserveGrams':500,'GaugeRadius':20,'MinRecastMs':1400}}
+state={'type':'state','version':'0.4.0-preview','busy':False,'countdown':0,'feedback':'','status':{'Phase':'停止中','Ring':'未検出','Backend':'未確認','Delivery':'未確認','ReadMs':0,'Inventory':'未確認','Hunger':'未確認','Thirst':'未確認'},'settings':{'ObserveOnly':True,'BackgroundMode':True,'AutoNeeds':True,'FoodKey':1,'DrinkKey':3,'ReserveGrams':500,'GaugeRadius':20,'MinRecastMs':1400}}
 results=[]
 with sync_playwright() as pw:
  b=pw.chromium.launch(headless=True,executable_path=a.browser,args=['--no-sandbox']);ctx=b.new_context();page=ctx.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
@@ -33,6 +33,11 @@ with sync_playwright() as pw:
   page.evaluate('(d)=>window.__receive({data:d})',{**state,'settings':{**state['settings'],'FoodKey':4},'feedback':'設定を保存しました'});assert page.locator('#FoodKey').input_value()=='4'
   page.screenshot(path=str(out/f'settings-{width}.png'),full_page=True)
   page.locator('[data-page=diagnostics]').click();page.wait_for_timeout(200);page.locator('#export').click();assert page.evaluate("__sent.some(m=>m.action==='diagnostics.export')")
+  storage={'registered':False,'candidateId':'trunk-test','candidateLabel':'Test truck','candidates':[{'name':'fish','count':3}],'selected':[]}
+  page.evaluate('(d)=>window.__receive({data:d})',{**state,'storage':storage});page.locator('[data-page=storage]').click();page.wait_for_timeout(100)
+  page.locator('[data-storage-item=fish]').check();page.locator('#storage-register').click();assert page.evaluate("__sent.some(m=>m.action==='storage.register'&&m.items[0]==='fish')")
+  assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'),width
+  page.screenshot(path=str(out/f'storage-{width}.png'),full_page=True)
   page.locator('[data-page=version]').click();page.wait_for_timeout(200);assert page.locator('#page-version').is_visible()
   page.locator('[data-page=overview]').click();page.wait_for_timeout(200);page.screenshot(path=str(out/f'overview-{width}.png'),full_page=True)
   results.append({'width':width,'no_horizontal_overflow':True,'start_stop_settings_diagnostics':True})

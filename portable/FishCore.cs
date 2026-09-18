@@ -9,7 +9,7 @@ using System.Web.Script.Serialization;
 
 namespace FishingPilot {
  public sealed class Ring {
-  public bool Valid, Native; public string Identity=""; public int Key; public double Radius, Pointer, Start, End, Confidence;
+  public bool Valid, Native; public string Identity=""; public int Key; public double Radius, Pointer, Start, End, Confidence, CenterX, CenterY;
  }
  public sealed class Pixels {
   public int W,H; public byte[] Data;

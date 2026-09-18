@@ -2015,7 +2015,16 @@ internal static partial class CdpBridge
             + IntegerField(capture, "used") + " " + IntegerField(capture, "slots");
     }
 
-    private static async Task<string> DepositDeltaAsync(
+    private static async Task<string> DepositDeltaAsync(string storageId, string storageType,
+        Dictionary<string,int> baseline, Dictionary<string,int> authorized, string operationToken,
+        string[] expectedServerFrames = null)
+    {
+        string expression = DepositDeltaExpression(storageId,storageType,baseline,authorized,operationToken);
+        string raw = await EvaluateInventoryStringAsync(expression,TimeSpan.FromSeconds(12),true,expectedServerFrames).ConfigureAwait(false);
+        return FormatDepositReceipt(raw,storageId,storageType,operationToken);
+    }
+
+    private static string DepositDeltaExpression(
         string storageId, string storageType, Dictionary<string, int> baseline,
         Dictionary<string, int> authorized, string operationToken)
     {
@@ -2090,8 +2099,7 @@ internal static partial class CdpBridge
             + "inv=validState();if(!inv)return 'ERROR AMBIGUOUS_TRANSFER';const afterLeft=metaTotal(inv.leftInventory.items,source.name,source.meta),afterRight=metaTotal(inv.rightInventory.items,source.name,source.meta),afterSlot=slotCount(inv.leftInventory.items,source.slot,source.name,source.meta);"
             + "if(beforeLeft-afterLeft===source.count&&beforeSlot-afterSlot===source.count&&afterRight-beforeRight===source.count){confirmed=true;break;}}if(!confirmed)return 'ERROR AMBIGUOUS_TRANSFER';moved+=source.count;stacks++;movedItems.push({name:source.name,meta:source.meta,count:source.count});}"
             + "try{if(globalThis.__aiMinerCancelledOperations)delete globalThis.__aiMinerCancelledOperations[operationToken];}catch(e){}return finish('');})()";
-        string raw = await EvaluateInventoryStringAsync(expression, TimeSpan.FromSeconds(45), true).ConfigureAwait(false);
-        return FormatDepositReceipt(raw, storageId, storageType, operationToken);
+        return expression;
     }
 
     private static string FormatDepositReceipt(string raw, string expectedStorageId,
@@ -2252,20 +2260,20 @@ internal static partial class CdpBridge
             TimeSpan.FromSeconds(45), true).ConfigureAwait(false);
     }
 
-    private static async Task<string> CancelOperationAsync(string operationToken)
+    private static async Task<string> CancelOperationAsync(string operationToken, string[] expectedServerFrames = null)
     {
         string token = Json.Serialize(operationToken);
         string expression = "(() => {try{const token=" + token
             + ",root=globalThis;if(!root.__aiMinerCancelledOperations)root.__aiMinerCancelledOperations=Object.create(null);"
             + "root.__aiMinerCancelledOperations[token]=true;return true;}catch(e){return false;}})()";
-        using (var session = await CdpSession.OpenAsync(InventoryFramePart, TimeSpan.FromSeconds(4)).ConfigureAwait(false))
+        using (var session = await CdpSession.OpenAsync(InventoryFramePart, TimeSpan.FromSeconds(4), expectedServerFrames).ConfigureAwait(false))
         {
             bool cancelled = await session.EvaluateBooleanAsync(expression, false).ConfigureAwait(false);
             return cancelled ? "CANCELLED" : "ERROR CANCEL_FAILED";
         }
     }
 
-    private static async Task<string> CloseInventoryAsync()
+    private static async Task<string> CloseInventoryAsync(string[] expectedServerFrames = null)
     {
         string expression = "(async () => {" + InventoryPrelude()
             + "if(!inventoryVisible())return 'CLOSED';const resource=typeof GetParentResourceName==='function'?String(GetParentResourceName()):'ox_inventory';"
@@ -2274,7 +2282,7 @@ internal static partial class CdpBridge
             + "if(response===false)return 'ERROR CLOSE_FAILED';}catch(e){return 'ERROR CLOSE_FAILED';}"
             + "const deadline=Date.now()+2000;while(Date.now()<deadline){if(!inventoryVisible())return 'CLOSED';await new Promise(resolve=>setTimeout(resolve,40));}"
             + "return 'ERROR CLOSE_FAILED';})()";
-        return await EvaluateInventoryStringAsync(expression, TimeSpan.FromSeconds(6), true).ConfigureAwait(false);
+        return await EvaluateInventoryStringAsync(expression, TimeSpan.FromSeconds(6), true, expectedServerFrames).ConfigureAwait(false);
     }
 
     private static string InventoryPrelude()
@@ -2291,9 +2299,9 @@ internal static partial class CdpBridge
             + "if(fiber.child)queue.push(fiber.child);if(fiber.sibling)queue.push(fiber.sibling);if(fiber.return)queue.push(fiber.return);}return null;};";
     }
 
-    private static async Task<string> EvaluateInventoryStringAsync(string expression, TimeSpan timeout, bool userGesture)
+    private static async Task<string> EvaluateInventoryStringAsync(string expression, TimeSpan timeout, bool userGesture, string[] expectedServerFrames = null)
     {
-        using (var session = await CdpSession.OpenAsync(InventoryFramePart, timeout).ConfigureAwait(false))
+        using (var session = await CdpSession.OpenAsync(InventoryFramePart, timeout, expectedServerFrames).ConfigureAwait(false))
             return await session.EvaluateStringAsync(expression, userGesture).ConfigureAwait(false);
     }
 

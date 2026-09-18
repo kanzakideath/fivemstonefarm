@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -37,6 +37,10 @@ internal static partial class CdpBridge {
   }
   static string Spec(string text){string[] a=text.Split(new[]{' '},6);return a.Length==6&&a[0]=="SNAPSHOT"?a[5]:"";}
   public async Task<string> OpenNearby(int port){
+   token.ThrowIfCancellationRequested();
+   string existing=await Eval(TargetFramePart,StorageTargetExpression(false),false,2000).ConfigureAwait(false);
+   if(existing=="AMBIGUOUS")return "AMBIGUOUS_STORAGE_TARGET";
+   if(existing=="PRESENT"){await Task.Delay(60,token).ConfigureAwait(false);return await Eval(TargetFramePart,StorageTargetExpression(true),true,2000).ConfigureAwait(false);}
    if(port==0||port!=FishingPilot.Native.FiveMConsolePort())return "NO_REGISTERED_TARGET_INPUT";
    token.ThrowIfCancellationRequested();bool pressed=false;
    try{
@@ -75,7 +79,7 @@ namespace FishingPilot {
    if(pending!=null){
     // Never resend an uncertain operation. Only a matching paired change can retire it.
     if(!pending.PairConfirmed(view))throw new InvalidOperationException("PENDING_STORAGE_UNCONFIRMED: 未確定の収納は再送しません");
-    journal.Confirm(pending);log("storage_reconciled","token="+pending.Token+" paired_delta=1 no_resend=1");
+    journal.Confirm(pending);moved+=pending.Count;log("storage_reconciled","token="+pending.Token+" paired_delta=1 no_resend=1");
    }
    for(int index=0;index<100;index++){
     token.ThrowIfCancellationRequested();view=await bridge.Pair().ConfigureAwait(false);
@@ -88,7 +92,7 @@ namespace FishingPilot {
     catch{log("storage_pending","token="+intent.Token+" no_retry=1");throw;}
     if(!intent.ReceiptConfirmed(receipt)){
      log("storage_receipt_rejected",receipt);
-     if(ProvablyNotSent(receipt)) {System.IO.File.Delete(System.IO.Path.Combine(root,"storage-pending.json"));break;}
+     if(ProvablyNotSent(receipt)) {System.IO.File.Delete(System.IO.Path.Combine(root,"storage-pending.json"));System.IO.File.Delete(System.IO.Path.Combine(root,"storage-pending.json.bak"));break;}
      throw new InvalidOperationException("STORAGE_RESULT_UNCONFIRMED: 転送結果を再確認してください");
     }
     StorageView after=await bridge.Pair().ConfigureAwait(false);

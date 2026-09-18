@@ -1,8 +1,8 @@
-/* Reads rendered controls; sends only ordinary key events. No game stores,
+﻿/* Reads rendered controls; sends only ordinary key events. No game stores,
  success callbacks, animation edits, focus stealing, or recurring input timers.
  Every key-down requires a live host call. */
 (() => {
-  if (window.__fpProbe3 && window.__fpProbe3.version==='0.3.0-final') return window.__fpProbe3.sample(false,null);
+  if (window.__fpProbe3 && window.__fpProbe3.version==='0.4.0-final') return window.__fpProbe3.sample(false,null);
   if(window.__fpProbe3 && window.__fpProbe3.stop)window.__fpProbe3.stop();
   const norm = a => (a % 360 + 360) % 360;
   const delta = (a,b) => (a-b+540)%360-180;
@@ -47,13 +47,13 @@
   let selection=null,scanAt=0;
   function readRing(){
     const W=innerWidth,H=innerHeight;
-    function pair(d,g,a){if(!d||!visible(d)||!g||!a)return null;const text=(d.textContent||'').trim();if(!/^[0-9]$/.test(text))return null;const b=box(d);if(Math.hypot(b.x+b.w/2-g.c.x,b.y+b.h/2-g.c.y)>g.r*.55||g.sweep<4||g.sweep>130||a.sweep<.2)return null;if(Math.hypot(a.c.x-g.c.x,a.c.y-g.c.y)>Math.max(4,g.r*.04)||Math.abs(a.r-g.r)>g.r*.15)return null;
+    function pair(d,g,a){if(!d||!visible(d)||!g||!a||g.k!=='green'||a.k!=='white')return null;const text=(d.textContent||'').trim();if(!/^[0-9]$/.test(text))return null;const b=box(d);if(Math.hypot(b.x+b.w/2-g.c.x,b.y+b.h/2-g.c.y)>g.r*.55||g.sweep<2||g.sweep>130||a.sweep<.2)return null;if(Math.hypot(a.c.x-g.c.x,a.c.y-g.c.y)>Math.max(4,g.r*.04)||Math.abs(a.r-g.r)>g.r*.15)return null;
       return {valid:true,present:true,key:+text,pointer:a.end,start:g.start,end:norm(g.start+g.sweep),span:g.sweep,radius:g.r,stamp:id(a.e)+':'+id(g.e),x:g.c.x-g.r*1.5,y:g.c.y-g.r*1.5,w:g.r*3,h:g.r*3};}
     if(selection){const g=arc(selection.g),a=arc(selection.a),r=pair(selection.d,g,a);if(r)return r;selection=null;}
     const t=performance.now();if(t<scanAt)return {valid:false,present:false};scanAt=t+20;
     const digits=[...document.querySelectorAll('body *')].filter(e=>e.children.length===0&&/^[0-9]$/.test((e.textContent||'').trim())&&visible(e)).map(e=>({e,b:box(e)})).filter(d=>Math.abs(d.b.x+d.b.w/2-W/2)<W*.28&&Math.abs(d.b.y+d.b.h/2-H/2)<H*.28&&d.b.h>9&&d.b.h<H*.23);
     const arcs=[...document.querySelectorAll('svg circle,svg path')].map(arc).filter(Boolean),matches=[];
-    for(const d of digits)for(const g of arcs.filter(a=>a.k==='green'&&a.sweep>=4&&a.sweep<=130)){
+    for(const d of digits)for(const g of arcs.filter(a=>a.k==='green'&&a.sweep>=2&&a.sweep<=130)){
       const whites=arcs.filter(a=>a.k==='white'&&Math.hypot(a.c.x-g.c.x,a.c.y-g.c.y)<Math.max(4,g.r*.04)&&Math.abs(a.r-g.r)<g.r*.15);
       if(whites.length!==1)continue;const r=pair(d.e,g,whites[0]);if(r)matches.push({r,s:{d:d.e,g:g.e,a:whites[0].e}});
     }
@@ -82,7 +82,7 @@
     const changed=state.stamp!==r.stamp||state.key!==r.key||Math.abs(delta(r.start,state.start))>5||Math.abs(r.span-state.span)>5||(state.lastAt>0&&r.pointer<state.lastPointer-45&&!(state.lastPointer>300&&r.pointer<60&&now-state.lastAt<200));
     if(changed){if(state.latched)state.delivery='transition_observed';state.stamp=r.stamp;state.key=r.key;state.start=r.start;state.span=r.span;state.round++;state.latched=false;state.stable=0;}
     state.stable++;state.lastPointer=r.pointer;state.lastAt=now;
-    const progress=norm(r.pointer-r.start),margin=Math.max(1.2,Math.min(3,r.span*.10));
+    const progress=norm(r.pointer-r.start),margin=Math.max(.35,Math.min(3,r.span*.10));
     if(state.latched||state.stable<2||progress<margin||progress>r.span-margin)return {sent:false,reason:state.latched?'latched':'tracking'};
     const active=document.activeElement;if(active&&active.matches('input,textarea,[contenteditable="true"]'))return {sent:false,reason:'editing'};
     if(state.release){state.release();state.release=null;}
@@ -95,7 +95,7 @@
     state.lastSent={key:r.key,round:state.round,pointer:r.pointer,start:r.start,end:r.end,at:now,seq:state.seq};
     return {sent:true,...state.lastSent,reason:'inside_observed_window'};
   }
-  const api={version:'0.3.0-final',
+  const api={version:'0.4.0-final',
     sample(fast,command){
       const begin=performance.now(),r=readRing();let input={sent:false,reason:'observe'};
       if(command&&command.enabled===true&&typeof command.cycle==='string')input=keyboard(r,command.cycle);

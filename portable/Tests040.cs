@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -41,9 +41,20 @@ namespace FishingPilot {
    try{var j=new StorageJournal(root);intent.State="dispatched_or_unknown";j.Write(intent);Check(new StorageJournal(root).Pending().Token==intent.Token,"pending survives process restart");j.Confirm(intent);Check(j.Pending()==null&&File.Exists(Path.Combine(root,"storage-receipts.jsonl")),"confirmation archived");}finally{Directory.Delete(root,true);}
    var gate=new PixelEvidenceGate();var a=new Ring{Valid=true,Key=4,Start=190,End=230,Pointer=210,Confidence=.85};Check(!gate.Accept(a,0)&&gate.Accept(a,15),"two consistent image observations required");
    var b=new Ring{Valid=true,Key=1,Start=190,End=230,Pointer=212,Confidence=.85};Check(!gate.Accept(b,30),"digit disagreement does not become immediate input");Check(!gate.Accept(new Ring(),40),"unknown breaks agreement");
+   var explicitInitial=new CatchLedger(view.Left,new[]{"fish"});Check(StorageIntent.Plan(reg,view,explicitInitial).Count==13,"initial fish require explicit opt-in");
    var options=new Options{AutoStorage=true,HighAccuracy=true};UiCommands.Validate(options);Check(options.AutoStorage&&options.HighAccuracy,"optional settings available");
    Check((string)UiCommands.Parse("{\"action\":\"storage.register\",\"items\":[\"fish\"]}")["action"]=="storage.register","explicit authorization message");
    bool rejected=false;try{UiCommands.Parse("{\"action\":\"storage.register\",\"items\":[\"../other\"]}");}catch{rejected=true;}Check(rejected,"malformed item blocked");
+   var nativeScene=CdpBridge.FishingConnection.DecodeScene("{\"ring\":{\"present\":true,\"valid\":true,\"key\":4,\"pointer\":210,\"start\":190,\"end\":230},\"notices\":[{\"kind\":\"CAUGHT\",\"id\":\"sample\"}],\"input\":{\"sent\":false}}","synthetic-scene");
+   Check(nativeScene.Ring.Valid&&nativeScene.Ring.Key==4&&nativeScene.Notices.Count==1,"actual scene JSON array decoding");
+   var emptyScene=CdpBridge.FishingConnection.DecodeScene("{\"ring\":{\"present\":false},\"notices\":[],\"input\":{}}","synthetic-scene");
+   Check(!emptyScene.Present&&emptyScene.Notices.Count==0,"empty notice array decoding");
+   string templates=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"digit-templates.json");
+   foreach(int digit in new[]{1,2,3})using(var fixture=new Bitmap(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"fixtures","ring-"+digit+"-60.png")))using(var shifted=new Bitmap(420,420)){
+    using(var g=Graphics.FromImage(shifted)){g.Clear(Color.Black);g.DrawImage(fixture,new Rectangle(70,40,320,320));}
+    var reader=new AdaptiveRingReader(templates);var found=reader.ReadAuto(shifted);Check(found.Valid&&found.Key==digit,"off-center adaptive image acquisition "+digit);
+    found=reader.ReadAuto(shifted);Check(found.Valid&&found.Key==digit,"cached local tracking "+digit);
+   }
    File.WriteAllText(Path.Combine(output,"storage040.txt"),"PASS\nassertions="+count+"\nModel and production receipt checks only; not live FiveM storage.\n");return count;
   }
  }

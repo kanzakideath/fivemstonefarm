@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -44,7 +44,7 @@ namespace FishingPilot {
  public sealed class CatchLedger {
   readonly Dictionary<string,long> earned=new Dictionary<string,long>(StringComparer.Ordinal);
   readonly Dictionary<string,long> protectedNames=new Dictionary<string,long>(StringComparer.Ordinal);
-  public CatchLedger(Inventory initial){if(initial!=null&&initial.Known)foreach(var e in initial.Counts){string name=Name(e.Key);long n;protectedNames.TryGetValue(name,out n);protectedNames[name]=n+e.Value;}}
+  public CatchLedger(Inventory initial,IEnumerable<string> includeExisting=null){var approved=new HashSet<string>(includeExisting??new string[0],StringComparer.Ordinal);if(initial!=null&&initial.Known)foreach(var e in initial.Counts){string name=Name(e.Key);if(approved.Contains(name)){earned[e.Key]=e.Value;continue;}long n;protectedNames.TryGetValue(name,out n);protectedNames[name]=n+e.Value;}}
   public static string Name(string key){int dot=key.IndexOf('.');return dot>0?key.Substring(0,dot):"";}
   public void Credit(Inventory before,Inventory after,IEnumerable<string> allowed){
    if(before==null||after==null||!before.Known||!after.Known)return;
@@ -62,8 +62,9 @@ namespace FishingPilot {
   public static StorageIntent Plan(StorageRegistration reg,StorageView view,CatchLedger ledger){
    reg.Validate();if(!reg.Matches(view))throw new InvalidOperationException("WRONG_OR_UNVERIFIED_STORAGE");
    var allow=new HashSet<string>(reg.Items,StringComparer.Ordinal);var rows=StorageRow.Parse(view.LeftSpec);
+   var hotbarNames=new HashSet<string>(rows.Where(x=>x.Slot<=5).Select(x=>x.Name),StringComparer.Ordinal);
    foreach(var row in rows.OrderByDescending(x=>x.Slot)){
-    if(row.Slot<=5||!allow.Contains(row.Name)||row.Name.StartsWith("WEAPON_",StringComparison.OrdinalIgnoreCase))continue;
+    if(row.Slot<=5||hotbarNames.Contains(row.Name)||!allow.Contains(row.Name)||row.Name.StartsWith("WEAPON_",StringComparison.OrdinalIgnoreCase))continue;
     var meta=new JavaScriptSerializer().DeserializeObject(row.Meta) as Dictionary<string,object>;
     if(meta!=null&&meta.ContainsKey("container"))continue;
     long allowed=ledger.Available(row.Key,view.Left);int take=(int)Math.Min(row.Count,Math.Min(Int32.MaxValue,allowed));if(take<1)continue;
@@ -86,7 +87,7 @@ namespace FishingPilot {
    if(a.Length!=9||a[0]!="DEPOSITED"||!Int32.TryParse(a[1],out count)||!Int32.TryParse(a[2],out planned)||!Int32.TryParse(a[3],out stacks))return false;
    return count==Count&&planned==Count&&stacks==1&&a[4]==Encode(StorageId)&&a[5]==Encode("trunk")&&a[6]==Token&&a[7]=="COMPLETE"&&a[8]==Key+"="+Count;
   }
-  static string Encode(string value){return Convert.ToBase64String(Encoding.UTF8.GetBytes(value)).TrimEnd('=').Replace('+','-').Replace('/','_');}
+  static string Encode(string value){return Convert.ToBase64String(Encoding.UTF8.GetBytes(value));}
  }
  public sealed class StorageJournal {
   readonly string path;public StorageJournal(string root){path=Path.Combine(root,"storage-pending.json");}

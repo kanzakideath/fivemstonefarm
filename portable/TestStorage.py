@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 import argparse,json
 from playwright.sync_api import sync_playwright
 p=argparse.ArgumentParser();p.add_argument('--browser');p.add_argument('--expressions',required=True);p.add_argument('--output',required=True);a=p.parse_args()
@@ -21,7 +21,7 @@ window.mode='success';window.fetch=async(url,options)=>{calls.push({url,body:JSO
 scenarios=[]
 with sync_playwright() as pw:
  browser=pw.chromium.launch(headless=True,executable_path=a.browser,args=['--no-sandbox']);page=browser.new_page()
- def fresh():page.set_content(html)
+ def fresh():page.goto('about:blank');page.set_content(html)
  def run():return page.evaluate(expressions['deposit'])
  fresh();result=run();d=json.loads(result.removeprefix('DEPOSIT_DETAIL '));assert d['status']=='COMPLETE' and d['moved']==3 and d['items']==[{'name':'fish','meta':'{}','count':3}],result
  assert page.evaluate('calls.length')==1 and page.evaluate('inventory.leftInventory.items[0].count')==5 and page.evaluate('inventory.leftInventory.items[1].count')==1
@@ -33,7 +33,7 @@ with sync_playwright() as pw:
   ('UNAUTHORIZED_DELTA',"inventory.leftInventory.items.push({slot:8,name:'random_gift',count:1,weight:1,metadata:{},stack:true})"),
   ('CANCELLED',"window.__aiMinerCancelledOperations={'test-operation':true}"),
   ('INVENTORY_CLOSED',"document.querySelector('.inventory-wrapper').style.display='none'"),
-  ('NO_DELTA',"inventory.leftInventory.items[2].metadata={quality:'other'}")
+  ('UNAUTHORIZED_DELTA',"inventory.leftInventory.items[2].metadata={quality:'other'}")
  ]:
   fresh();page.evaluate(setup);result=run();assert result=='ERROR '+code,(setup,result);assert page.evaluate('calls.length')==0;scenarios.append('preflight_'+code.lower())
  for mode in ['reject','throw','one_sided','changed','delayed']:

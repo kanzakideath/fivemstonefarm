@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 import argparse,json,math
 from playwright.sync_api import sync_playwright
 p=argparse.ArgumentParser();p.add_argument('--browser');p.add_argument('--output',default='scene-evidence');a=p.parse_args()
