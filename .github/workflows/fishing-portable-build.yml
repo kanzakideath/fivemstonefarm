@@ -1,0 +1,63 @@
+name: Fishing portable preview
+on:
+  push:
+    branches: [build/fishing-portable-1.0.0]
+    paths: [.github/workflows/fishing-portable-build.yml]
+permissions:
+  contents: read
+concurrency:
+  group: fishing-portable-preview
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Prepare recorded glyphs and pinned bridge
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          python -X utf8 portable/Prepare.py
+          if($LASTEXITCODE -ne 0){throw 'Preparation failed.'}
+      - name: Compile and test the standalone executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          Start-Transcript artifacts/build.txt
+          try { ./portable/Build.ps1 -Test } finally { Stop-Transcript }
+      - name: Package tested binary and exact source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $result=Get-Content portable/dist/test-evidence/RESULT.txt -Raw
+          if($result -notmatch '^PASS'){throw 'Tests have not passed.'}
+          Compress-Archive -Path portable/dist/* -DestinationPath artifacts/FishingPilot-0.1.0-preview-win-x64.zip
+          New-Item -ItemType Directory -Force artifacts/source | Out-Null
+          Copy-Item portable/*.cs,portable/*.ps1,portable/*.py,portable/*.json,portable/README.txt,portable/LICENSE artifacts/source -Force
+          Copy-Item portable/fixtures artifacts/source -Recurse
+          Compress-Archive -Path artifacts/source/* -DestinationPath artifacts/FishingPilot-0.1.0-preview-source.zip
+          Get-FileHash artifacts/FishingPilot-*.zip | Format-List | Out-File artifacts/ZIP-HASHES.txt
+      - name: Keep test evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fishing-portable-evidence
+          path: |
+            artifacts/build.txt
+            portable/dist/test-evidence/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Downloadable preview and source
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fishing-portable-download
+          path: |
+            artifacts/FishingPilot-*.zip
+            artifacts/ZIP-HASHES.txt
+          if-no-files-found: error
+          retention-days: 14
