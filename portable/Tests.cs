@@ -57,6 +57,18 @@ namespace FishingPilot {
     pending.Mark("FULL");Check(pending.Full&&!pending.Terminal,"full capacity is distinct from catch");
     pending.Mark("BLOCK");Check(pending.Blocked,"missing rod or bait stays blocked");
     notes.Add("pending outcomes: notice retention, per-cast reset, full and blocked causes separated");
+    c.Reset();c.Observe(R(4,175),0,10);c.Observe(R(4,185),20,10);
+    Check(c.Observe(R(4,202),40,10)==4,"bounded pixel latency enters the interior");
+    c.Reset();c.Observe(R(4,190),0,20);Check(c.Observe(R(4,258),30,20)<0,"missed window remains refused");
+    Check(Native.FiveMConsolePort()==0,"unrelated listener cannot authorize hotbar");
+    notes.Add("bounded latency, missed-window refusal, and process-owned hotbar selection checked");
+    var cfg=new Options{ObserveOnly=true,FoodX=.12,WaterY=.8};
+    var setting=new System.Collections.Generic.Dictionary<string,object>{{"FoodKey",1},{"DrinkKey",3},{"ReserveGrams",500},{"MinRecastMs",1400},{"GaugeRadius",20},{"AutoNeeds",true},{"ObserveOnly",false},{"BackgroundMode",true}};
+    var updated=UiCommands.Update(cfg,setting);Check(updated.FoodX==.12&&updated.WaterY==.8&&!updated.ObserveOnly&&cfg.ObserveOnly,"UI settings preserve calibration and are copy-on-write");
+    Check((string)UiCommands.Parse("{\"action\":\"start\"}")["action"]=="start","native start accepted");
+    foreach(string invalid in new[]{"{\"action\":\"execute\",\"url\":\"bad\"}","{\"action\":\"start\",\"settings\":{}}","{\"action\":\"save\"}"}){bool rejected=false;try{UiCommands.Parse(invalid);}catch(ArgumentException){rejected=true;}Check(rejected,"unsafe or incomplete UI message rejected");}
+    setting["FoodKey"]=2;bool rodRejected=false;try{UiCommands.Update(cfg,setting);}catch(ArgumentException){rodRejected=true;}Check(rodRejected,"UI cannot use rod slot for food");
+    notes.Add("native UI protocol: allowlist, typed payload validation, immutable settings update, calibration preservation");
     NativeInputTest(notes);
     File.WriteAllText(Path.Combine(output,"RESULT.txt"),"PASS\nassertions="+count+"\n"+String.Join("\n",notes.ToArray())+"\nNo live FiveM execution or catch-success claim.\n");return 0;
    } catch(Exception e){File.WriteAllText(Path.Combine(output,"RESULT.txt"),"FAIL\n"+e.ToString());return 1;}

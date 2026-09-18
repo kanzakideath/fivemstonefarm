@@ -35,6 +35,16 @@ namespace FishingPilot {
   public static IntPtr FindFishingWindow(){IntPtr found=IntPtr.Zero;int count=0;EnumWindows(delegate(IntPtr h,IntPtr unused){if(!IsWindowVisible(h))return true;var title=new StringBuilder(512);GetWindowText(h,title,512);if(!title.ToString().StartsWith("FiveM",StringComparison.OrdinalIgnoreCase))return true;uint p;GetWindowThreadProcessId(h,out p);try{if(Process.GetProcessById((int)p).ProcessName.IndexOf("FiveM",StringComparison.OrdinalIgnoreCase)>=0){found=h;count++;}}catch{}return true;},IntPtr.Zero);return count==1?found:IntPtr.Zero;}
   public static Rectangle Client(IntPtr h){RECT r;POINT p=new POINT();if(!GetClientRect(h,out r)||!ClientToScreen(h,ref p))return Rectangle.Empty;return new Rectangle(p.X,p.Y,r.Right-r.Left,r.Bottom-r.Top);}
   public static Bitmap Capture(Rectangle area,int width,int height){using(var b=new Bitmap(area.Width,area.Height,PixelFormat.Format32bppArgb)){using(Graphics g=Graphics.FromImage(b))g.CopyFromScreen(area.Location,Point.Empty,area.Size,CopyPixelOperation.SourceCopy);var result=new Bitmap(width,height,PixelFormat.Format32bppArgb);using(Graphics g=Graphics.FromImage(result)){g.InterpolationMode=System.Drawing.Drawing2D.InterpolationMode.Bilinear;g.DrawImage(b,0,0,width,height);}return result;}}
+  [DllImport("iphlpapi.dll", SetLastError=true)]static extern uint GetExtendedTcpTable(IntPtr table,ref int size,bool order,int family,int type,uint reserved);
+  public static int FiveMConsolePort(){
+   int size=0;GetExtendedTcpTable(IntPtr.Zero,ref size,false,2,3,0);if(size<=4||size>4000000)return 0;
+   IntPtr buffer=Marshal.AllocHGlobal(size);
+   try{if(GetExtendedTcpTable(buffer,ref size,false,2,3,0)!=0)return 0;int count=Marshal.ReadInt32(buffer);var found=new System.Collections.Generic.List<int>();
+    for(int i=0;i<count;i++){int offset=4+i*24;if(offset+24>size)break;int state=Marshal.ReadInt32(buffer,offset);int port=Marshal.ReadByte(buffer,offset+8)*256+Marshal.ReadByte(buffer,offset+9);int pid=Marshal.ReadInt32(buffer,offset+20);if(state!=2||(port!=29200&&port!=29300))continue;
+     try{if(Process.GetProcessById(pid).ProcessName.IndexOf("FiveM",StringComparison.OrdinalIgnoreCase)>=0&&!found.Contains(port))found.Add(port);}catch{}
+    }return found.Count==1?found[0]:0;
+   }finally{Marshal.FreeHGlobal(buffer);}
+  }
   public static bool Press(IntPtr h,uint expectedPid,int digit,CancellationToken cancel){
    uint pid;GetWindowThreadProcessId(h,out pid);
    if(cancel.IsCancellationRequested||h!=GetForegroundWindow()||pid!=expectedPid||!IsWindow(h)||digit<0||digit>9)return false;

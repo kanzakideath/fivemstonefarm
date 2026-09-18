@@ -4,30 +4,38 @@ $ErrorActionPreference='Stop'
 $root=$PSScriptRoot
 $out=Join-Path $root 'dist'
 New-Item -ItemType Directory -Force $out | Out-Null
-$csc=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-if(!(Test-Path $csc)){throw 'Windows .NET Framework 4.8 compiler is required.'}
-$sources=@('Program.cs','Engine.cs','Native.cs','FishCore.cs','BridgeRead.cs','CdpBridge.cs','FishingScene.cs','RecastPolicy.cs','Tests.cs') | ForEach-Object {Join-Path $root $_}
-$refs=@('System.dll','System.Core.dll','System.Drawing.dll','System.Windows.Forms.dll','System.Web.Extensions.dll','System.IO.Compression.dll','System.IO.Compression.FileSystem.dll') | ForEach-Object {"/reference:$_"}
-& $csc /nologo /target:winexe /platform:x64 /optimize+ /main:FishingPilot.Program "/out:$out\FishingPilot.exe" @refs @sources
-if($LASTEXITCODE -ne 0){throw 'Compile failed.'}
-Copy-Item (Join-Path $root 'digit-templates.json'),(Join-Path $root 'README.txt'),(Join-Path $root 'LICENSE'),(Join-Path $root 'SceneProbe.js') $out -Force
-Copy-Item (Join-Path $root 'fixtures') $out -Recurse -Force
-@'
-<?xml version="1.0" encoding="utf-8"?>
-<configuration><startup useLegacyV2RuntimeActivationPolicy="true"><supportedRuntime version="v4.0" sku=".NETFramework,Version=v4.8" /></startup><runtime><loadFromRemoteSources enabled="false" /></runtime></configuration>
-'@ | Set-Content (Join-Path $out 'FishingPilot.exe.config') -Encoding utf8
-if($Test){
- $evidence=Join-Path $out 'test-evidence';New-Item -ItemType Directory -Force $evidence | Out-Null
- $p=Start-Process "$out\FishingPilot.exe" -ArgumentList @('--self-test',('"'+$evidence+'"')) -PassThru
- if(!$p.WaitForExit(60000)){$p.Kill();throw 'Self-test exceeded 60s.'}
- $p.Refresh()
- if(!(Test-Path "$evidence\RESULT.txt")){throw 'No test result was written.'}
- Get-Content "$evidence\RESULT.txt"
- if($p.ExitCode -ne 0 -or (Get-Content "$evidence\RESULT.txt" -Raw) -notmatch '^PASS'){throw 'Self-tests did not pass.'}
- $p=Start-Process "$out\FishingPilot.exe" -ArgumentList @('--ui-smoke',('"'+$evidence+'\ui.png"')) -PassThru
- if(!$p.WaitForExit(12000)){$p.Kill();throw 'UI smoke timed out.'}
- $p.Refresh();if($p.ExitCode -ne 0 -or !(Test-Path "$evidence\ui.png")){throw 'UI did not render.'}
-}
-$files=Get-ChildItem $out -File | Where-Object Name -ne 'SHA256SUMS.txt'
-$files | ForEach-Object {('{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(),$_.Name)} | Set-Content (Join-Path $out 'SHA256SUMS.txt') -Encoding utf8
-Write-Host 'FishingPilot build ready.'
+Push-Location $root
+try {
+ & dotnet restore FishingPilot.csproj --locked-mode
+ if($LASTEXITCODE -ne 0){throw 'Locked WebView2 restore failed.'}
+ & dotnet build FishingPilot.csproj -c Release --no-restore --output $out
+ if($LASTEXITCODE -ne 0){throw 'FishingPilot build failed.'}
+ & npm ci --ignore-scripts --no-audit --no-fund
+ if($LASTEXITCODE -ne 0){throw 'Locked Framework7 installation failed.'}
+ $framework=Get-Content node_modules/framework7/package.json -Raw|ConvertFrom-Json
+ if($framework.version -cne '9.1.3'){throw 'Unexpected Framework7 version.'}
+ New-Item -ItemType Directory -Force ui/vendor | Out-Null
+ Copy-Item node_modules/framework7/framework7-bundle.min.css,node_modules/framework7/framework7-bundle.min.js ui/vendor -Force
+ $license=Get-ChildItem node_modules/framework7 -File | Where-Object Name -Match '^LICENSE' | Select-Object -First 1
+ if($license){Copy-Item $license.FullName ui/vendor/Framework7-LICENSE.txt -Force}
+ Copy-Item digit-templates.json,README.txt,LICENSE,SceneProbe.js $out -Force
+ Copy-Item ui (Join-Path $out 'ui') -Recurse -Force
+ Copy-Item fixtures (Join-Path $out 'fixtures') -Recurse -Force
+ $loader=Join-Path $out 'WebView2Loader.dll'
+ if(!(Test-Path $loader)){$candidate=Get-ChildItem $out -Filter WebView2Loader.dll -Recurse|Where-Object FullName -match 'win-x64'|Select-Object -First 1;if(!$candidate){throw 'x64 WebView2 loader missing.'};Copy-Item $candidate.FullName $loader}
+ foreach($f in @('FishingPilot.exe','Microsoft.Web.WebView2.Core.dll','Microsoft.Web.WebView2.WinForms.dll','WebView2Loader.dll','ui/index.html','ui/vendor/framework7-bundle.min.js','SceneProbe.js')){if(!(Test-Path (Join-Path $out $f))){throw "Missing runtime asset: $f"}}
+ if($Test){
+  $evidence=Join-Path $out 'test-evidence';New-Item -ItemType Directory -Force $evidence | Out-Null
+  foreach($f in @('RESULT.txt','ui.png','ui.json')){Remove-Item (Join-Path $evidence $f) -Force -ErrorAction SilentlyContinue}
+  $p=Start-Process "$out/FishingPilot.exe" -ArgumentList @('--self-test',('"'+$evidence+'"')) -PassThru
+  if(!$p.WaitForExit(60000)){$p.Kill();throw 'Self-tests timed out.'};$p.Refresh()
+  if(!(Test-Path "$evidence/RESULT.txt")){throw 'No self-test result.'};Get-Content "$evidence/RESULT.txt"
+  if($p.ExitCode -ne 0 -or (Get-Content "$evidence/RESULT.txt" -Raw) -notmatch '^PASS'){throw 'Self-tests failed.'}
+  $p=Start-Process "$out/FishingPilot.exe" -ArgumentList @('--ui-smoke',('"'+$evidence+'/ui.png"')) -PassThru
+  if(!$p.WaitForExit(35000)){$p.Kill();throw 'WebView2 smoke test timed out.'};$p.Refresh()
+  if($p.ExitCode -ne 0 -or !(Test-Path "$evidence/ui.png")){Get-Content "$evidence/ui.png.error.txt" -ErrorAction SilentlyContinue;throw 'WebView2 did not render or exchange native state.'}
+ }
+ $files=Get-ChildItem $out -File -Recurse|Where-Object {$_.Name -ne 'SHA256SUMS.txt' -and $_.FullName -notmatch '[\\/]test-evidence[\\/]'}
+ $files|ForEach-Object {('{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(),$_.FullName.Substring($out.Length+1).Replace('\','/'))}|Set-Content (Join-Path $out SHA256SUMS.txt) -Encoding utf8
+ Write-Host 'FishingPilot 0.3.0 build ready.'
+} finally {Pop-Location}

@@ -1,0 +1,8 @@
+{
+  "name": "fishing-pilot-ui",
+  "version": "0.3.0",
+  "private": true,
+  "dependencies": {
+    "framework7": "9.1.3"
+  }
+}

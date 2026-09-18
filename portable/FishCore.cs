@@ -121,19 +121,23 @@ namespace FishingPilot {
  }
  public sealed class RoundController {
   public int Round, Hits; public bool Latched; public double MissingSince=-1,LastSeen,LastHit=-1000;
-  int key=-1,stable;double areaStart,areaEnd,prevPointer;bool haveArea;string identity="";
-  public void Reset(){Round=0;Hits=0;Latched=false;MissingSince=-1;LastSeen=0;LastHit=-1000;key=-1;stable=0;haveArea=false;identity="";}
+  int key=-1,stable;double areaStart,areaEnd,prevPointer,previousAt,velocity;bool haveArea;string identity="";
+  public void Reset(){Round=0;Hits=0;Latched=false;MissingSince=-1;LastSeen=0;LastHit=-1000;key=-1;stable=0;haveArea=false;identity="";previousAt=velocity=0;}
   public void InputRejected(){Latched=false;Hits=Math.Max(0,Hits-1);LastHit=-1000;}
-  public int Observe(Ring r,double now) {
+  public int Observe(Ring r,double now,double observationAgeMs=0) {
    if(!r.Valid){if(MissingSince<0)MissingSince=now;stable=0;return -1;}
    bool reappeared=MissingSince>=0 && now-MissingSince>=100;
    bool reset=key!=r.Key || (r.Native && haveArea && (identity!=r.Identity || Math.Abs(r.Start-areaStart)>6)) || (haveArea && r.Pointer<prevPointer-45) || (reappeared && r.Pointer<60 && now-LastHit>200);
    if(reset && now-LastHit>=65){Round++;Latched=false;haveArea=false;stable=0;}
-   MissingSince=-1;LastSeen=now;prevPointer=r.Pointer;
+   double step=(r.Pointer-prevPointer+540)%360-180,dt=now-previousAt;
+   if(!reset&&dt>=2&&dt<=180&&step>=0&&step/dt<=2)velocity=velocity==0?step/dt:velocity*.5+step/dt*.5;else if(reset)velocity=0;
+   previousAt=now;MissingSince=-1;LastSeen=now;prevPointer=r.Pointer;
    if(!haveArea){areaStart=r.Start;areaEnd=r.End;haveArea=true;key=r.Key;identity=r.Identity;}
    else if(!Latched && r.Start<areaStart){areaStart=r.Start;areaEnd=Math.Max(areaEnd,r.End);}
    stable++;
-   double span=(areaEnd-areaStart+360)%360, progress=(r.Pointer-areaStart+360)%360;
+   double span=(areaEnd-areaStart+360)%360;
+   double lead=observationAgeMs>0 ? Math.Min(span*.45, velocity*Math.Max(0,Math.Min(50,observationAgeMs+6))) : 0;
+   double progress=(r.Pointer+lead-areaStart+360)%360;
    double margin=Math.Max(3,Math.Min(8,span*.22));
    if(!Latched && stable>=2 && now-LastHit>80 && progress>=margin && progress<=span-margin) {Latched=true;LastHit=now;Hits++;return r.Key;}
    return -1;
