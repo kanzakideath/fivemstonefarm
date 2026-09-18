@@ -1,0 +1,22 @@
+name: Prepare fishing source
+on:
+  push:
+    branches: [feat/fishing-simple-9.2.0]
+    paths: [.github/workflows/fishing-source-once.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 38d48da170cf3ed9778ad7206198c7f3f4522e51
+      - run: git archive --format=zip -o current-source.zip HEAD
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fishing-base-source
+          path: current-source.zip
+          retention-days: 7
+          if-no-files-found: error
