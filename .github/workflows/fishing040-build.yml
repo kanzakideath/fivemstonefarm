@@ -21,7 +21,7 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           New-Item -ItemType Directory -Force artifacts/fishing040 | Out-Null
-          foreach($script in @('Upgrade040.py','UpgradeUi040.py','Finalize040.py','ExistingCatch040.py','Harden040.py')) {
+          foreach($script in @('Upgrade040.py','UpgradeUi040.py','Finalize040.py','ExistingCatch040.py','Harden040.py','Review040.py')) {
             python "portable/$script"
             if($LASTEXITCODE -ne 0){throw "Integration failed: $script"}
           }
