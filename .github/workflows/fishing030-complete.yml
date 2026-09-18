@@ -16,61 +16,53 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - name: Verify and apply the reviewed completion patch
+      - name: Restore and verify reviewed patch
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
           New-Item -ItemType Directory -Force artifacts/fishing030 | Out-Null
-          Copy-Item staging030/finish.*.b64 artifacts/fishing030 -Force
+          python staging030/restore-reviewed-transport.py
+          if($LASTEXITCODE -ne 0){throw 'Transport restoration failed'}
           @'
           from pathlib import Path
           import base64,zlib,hashlib
           encoded=''.join(Path('staging030/finish.%s.b64'%i).read_text(encoding='utf-8-sig').strip() for i in range(3))
           patch=zlib.decompress(base64.b64decode(encoded,validate=True))
-          expected='eecd449d1a0ee1cc9148e04792bab0d6962bc862dbd6f1b51e3dc8109893b632'
           actual=hashlib.sha256(patch).hexdigest()
-          if actual != expected: raise RuntimeError('Reviewed patch hash mismatch: '+actual)
+          if actual != 'eecd449d1a0ee1cc9148e04792bab0d6962bc862dbd6f1b51e3dc8109893b632': raise RuntimeError('Reviewed patch hash mismatch: '+actual)
           Path('artifacts/fishing030/completion.patch').write_bytes(patch)
-          print('Reviewed completion SHA-256:',actual)
+          print('Verified patch:',actual)
           '@ | python -
-          if($LASTEXITCODE -ne 0){throw 'Patch transport or hash validation failed.'}
+          if($LASTEXITCODE -ne 0){throw 'Patch verification failed'}
           python staging030/Core.py
-          if($LASTEXITCODE -ne 0){throw 'Base timing patch failed.'}
+          if($LASTEXITCODE -ne 0){throw 'Core patch failed'}
           Copy-Item staging030/SceneProbe.js portable/SceneProbe.js -Force
           git apply --check artifacts/fishing030/completion.patch
-          if($LASTEXITCODE -ne 0){throw 'Completion patch does not match source.'}
+          if($LASTEXITCODE -ne 0){throw 'Patch preflight failed'}
           git apply artifacts/fishing030/completion.patch
-          if($LASTEXITCODE -ne 0){throw 'Completion patch application failed.'}
+          if($LASTEXITCODE -ne 0){throw 'Patch apply failed'}
           git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --check
-          if($LASTEXITCODE -ne 0){throw 'Source whitespace check failed.'}
-      - name: Full Windows executable build and real WebView2 smoke test
+          if($LASTEXITCODE -ne 0){throw 'Whitespace check failed'}
+      - name: Build executable and verify native WebView2 UI
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
           Start-Transcript artifacts/fishing030/build.txt
           try { ./portable/Build.ps1 -Test } finally { Stop-Transcript }
-      - name: Test rendered-circle input and responsive iOS UI
+      - name: Rendered-circle and responsive UI tests
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
           python -m pip install playwright==1.57.0
-          if($LASTEXITCODE -ne 0){throw 'Playwright installation failed.'}
+          if($LASTEXITCODE -ne 0){throw 'Playwright install failed'}
           $edge='C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
           if(!(Test-Path $edge)){$edge='C:\Program Files\Microsoft\Edge\Application\msedge.exe'}
-          if(Test-Path $edge){
-            python portable/TestScene.py --browser $edge --output artifacts/fishing030/scene
-            if($LASTEXITCODE -ne 0){throw 'Rendered scene or targeted key test failed.'}
-            python portable/TestUi.py --browser $edge --output artifacts/fishing030/ui
-            if($LASTEXITCODE -ne 0){throw 'Framework7 UI regression failed.'}
-          } else {
-            python -m playwright install chromium
-            if($LASTEXITCODE -ne 0){throw 'Browser installation failed.'}
-            python portable/TestScene.py --output artifacts/fishing030/scene
-            if($LASTEXITCODE -ne 0){throw 'Rendered scene test failed.'}
-            python portable/TestUi.py --output artifacts/fishing030/ui
-            if($LASTEXITCODE -ne 0){throw 'Framework7 UI regression failed.'}
-          }
-      - name: Preserve only validated readable source on the isolated branch
+          if(Test-Path $edge){$browser=@('--browser',$edge)}else{python -m playwright install chromium;if($LASTEXITCODE -ne 0){throw 'Browser install failed'};$browser=@()}
+          python portable/TestScene.py @browser --output artifacts/fishing030/scene
+          if($LASTEXITCODE -ne 0){throw 'Scene test failed'}
+          python portable/TestUi.py @browser --output artifacts/fishing030/ui
+          if($LASTEXITCODE -ne 0){throw 'UI test failed'}
+      - name: Save validated readable source without changing main
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -81,13 +73,13 @@ jobs:
           git add -- portable
           git add -u -- staging030 .github/workflows/fishing030-source-snapshot.yml .github/workflows/fishing030-complete.yml
           git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --cached --check
-          if($LASTEXITCODE -ne 0){throw 'Validated source staging failed.'}
-          git commit -m 'FishingPilot 0.3.0: same-turn timing, targeted background input, and Framework7 iOS UI'
-          if($LASTEXITCODE -ne 0){throw 'Source commit failed.'}
+          if($LASTEXITCODE -ne 0){throw 'Source check failed'}
+          git commit -m 'FishingPilot 0.3.0: validated same-turn timing and Framework7 iOS UI'
+          if($LASTEXITCODE -ne 0){throw 'Source commit failed'}
           git push origin HEAD:fix/fishing-timing-ui-0.3.0
-          if($LASTEXITCODE -ne 0){throw 'Isolated source branch changed; do not package as published.'}
+          if($LASTEXITCODE -ne 0){throw 'Source changed concurrently; no force push'}
           git rev-parse HEAD | Set-Content artifacts/fishing030/SOURCE.txt -Encoding utf8
-      - name: Package and re-extract the exact tested Windows build
+      - name: Package tested files and verify ZIP roundtrip
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -95,13 +87,13 @@ jobs:
           @'
           from pathlib import Path
           import hashlib,json,zipfile,subprocess
-          root=Path('portable/dist'); out=Path('artifacts/fishing030-download'); evidence=Path('artifacts/fishing030')
+          root=Path('portable/dist');out=Path('artifacts/fishing030-download');evidence=Path('artifacts/fishing030')
           sha=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
           scene=json.loads((evidence/'scene/RESULT.json').read_text(encoding='utf-8-sig'))
           ui=json.loads((evidence/'ui/RESULT.json').read_text(encoding='utf-8-sig'))
           native=(root/'test-evidence/RESULT.txt').read_text(encoding='utf-8-sig')
           if not scene.get('pass') or not ui.get('pass') or not native.startswith('PASS'): raise RuntimeError('Missing passing evidence')
-          if not (root/'test-evidence/ui.png').is_file(): raise RuntimeError('Missing native WebView2 screenshot')
+          if not (root/'test-evidence/ui.png').is_file(): raise RuntimeError('No native UI screenshot')
           metadata={'version':'0.3.0-preview','source_sha':sha,'live_fivem_tested':False,'distribution':'standalone','framework7':'9.1.3'}
           (root/'build.json').write_text(json.dumps(metadata,indent=2),encoding='utf-8')
           files=sorted(p for p in root.rglob('*') if p.is_file() and 'test-evidence' not in p.parts and p.name!='SHA256SUMS.txt')
@@ -112,17 +104,17 @@ jobs:
               for p in files+[root/'SHA256SUMS.txt']: z.write(p,p.relative_to(root).as_posix())
           with zipfile.ZipFile(archive) as z:
               for name,digest in sums.items():
-                  if hashlib.sha256(z.read(name)).hexdigest()!=digest: raise RuntimeError('ZIP content differs: '+name)
-          verification=dict(metadata,windows_self_test=native,rendered_scene=scene,responsive_ui=ui,archive_sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),archive_roundtrip_verified=True)
-          (out/'FishingPilot-0.3.0-verification.json').write_text(json.dumps(verification,indent=2,ensure_ascii=False),encoding='utf-8')
+                  if hashlib.sha256(z.read(name)).hexdigest()!=digest: raise RuntimeError('ZIP mismatch: '+name)
+          v=dict(metadata,windows_self_test=native,rendered_scene=scene,responsive_ui=ui,archive_sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),archive_roundtrip_verified=True)
+          (out/'FishingPilot-0.3.0-verification.json').write_text(json.dumps(v,indent=2,ensure_ascii=False),encoding='utf-8')
           (out/'SOURCE.txt').write_text(sha+'\n',encoding='utf-8')
           (out/'FishingPilot-0.3.0-native-ui.png').write_bytes((root/'test-evidence/ui.png').read_bytes())
-          print(json.dumps({'version':metadata['version'],'source_sha':sha,'runtime_files':len(files),'archive_sha256':verification['archive_sha256']},indent=2))
+          print(json.dumps({'source_sha':sha,'runtime_files':len(files),'archive_sha256':v['archive_sha256']},indent=2))
           '@ | python -
-          if($LASTEXITCODE -ne 0){throw 'Packaging or round-trip verification failed.'}
+          if($LASTEXITCODE -ne 0){throw 'Packaging failed'}
           git archive --format=zip -o artifacts/fishing030-download/FishingPilot-0.3.0-preview-source.zip HEAD portable
-          if($LASTEXITCODE -ne 0){throw 'Source archive failed.'}
-      - name: Keep build and test evidence
+          if($LASTEXITCODE -ne 0){throw 'Source archive failed'}
+      - name: Retain test evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
