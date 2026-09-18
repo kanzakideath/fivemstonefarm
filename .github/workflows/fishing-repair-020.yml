@@ -2,7 +2,7 @@ name: FishingPilot 0.2.0 repair validation
 on:
   push:
     branches: [fix/fishing-recast-background-0.2.0]
-    paths: [.github/workflows/fishing-repair-020.yml, portable/ApplyRepair.py]
+    paths: [.github/workflows/fishing-repair-020.yml, portable/ApplyRepair.py, portable/FinalPolish.py]
 permissions:
   contents: read
 concurrency:
@@ -25,6 +25,8 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Baseline preparation failed.'}
           python portable/ApplyRepair.py
           if($LASTEXITCODE -ne 0){throw 'Repair verification failed.'}
+          python portable/FinalPolish.py
+          if($LASTEXITCODE -ne 0){throw 'Final source boundaries changed.'}
       - name: Compile complete executable and run regression tests
         shell: pwsh
         run: |
