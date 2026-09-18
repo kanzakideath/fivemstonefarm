@@ -1,0 +1,52 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Drawing;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+namespace FishingPilot {
+ static class Tests {
+  static int count;static void Check(bool ok,string why){count++;if(!ok)throw new Exception(why);}
+  static Ring R(int key,double pointer){return new Ring{Valid=true,Key=key,Pointer=pointer,Start=200,End=250,Confidence=1};}
+  public static int Run(string output) {
+   Directory.CreateDirectory(output);var notes=new List<string>();
+   try {
+    Check(!Inventory.Parse("ERROR").Known,"unknown inventory rejected");
+    var inv=Inventory.Parse("SNAPSHOT 800 1000 1 40 0001.fish.e30=2");Check(inv.Known&&!inv.Full(100),"parse capacity");Check(inv.Full(200),"reserve boundary");Check(Inventory.Parse("SNAPSHOT 1000 1000 1 40 -").Full(0),"full boundary");
+    Check(!Inventory.Parse("SNAPSHOT 0 0 0 40 -").Known,"invalid maximum");Check(Inventory.Parse("SNAPSHOT 800 1000 1 40 0004.fish.e30=3").IncreasedSince(inv),"count increase ignores moved slots");
+    Check(!Inventory.Parse("SNAPSHOT 800 1000 1 40 0004.fish.e30=2").IncreasedSince(inv),"slot movement not catch");
+    var c=new RoundController();c.Reset();Check(c.Observe(R(1,190),0)<0,"before zone");Check(c.Observe(R(1,205),20)<0,"margin");Check(c.Observe(R(1,212),40)==1,"eligible once");
+    for(int i=0;i<100;i++)Check(c.Observe(R(1,220),50+i*10)<0,"never duplicate a latched round");
+    c.Observe(R(3,30),1100);Check(c.Observe(R(3,212),1120)==3,"additional changed digit");
+    c.Observe(R(3,20),1300);Check(c.Observe(R(3,220),1330)==3,"same digit after reset");
+    c.Observe(new Ring(),1340);Check(c.Observe(R(3,230),1540)<0,"temporary recognition loss is not new round");
+    c.Reset();c.Observe(R(2,190),2000);Check(c.Observe(R(2,260),2200)<0,"do not hit late");notes.Add("round-state: additional/same-digit/no-duplicate/dropout/late-input guards passed");
+    var reader=new RingReader(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"digit-templates.json"));
+    string fixture=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"fixtures");
+    string[] fixtureFiles=Directory.GetFiles(fixture,"ring-*.png");Check(fixtureFiles.Length==6,"all six recorded-mask fixtures present");
+    foreach(string file in fixtureFiles){int expected=Int32.Parse(Path.GetFileNameWithoutExtension(file).Split('-')[1]);using(Bitmap b=new Bitmap(file)){Ring r=reader.Read(b);Check(r.Valid&&r.Key==expected,"recorded sanitized glyph "+Path.GetFileName(file));}}
+    using(Bitmap b=new Bitmap(320,320)){Check(!reader.Read(b).Valid,"empty image must not authorize input");}
+    foreach(int percent in new[]{0,25,45,50,55,75,100})foreach(bool food in new[]{true,false})using(Bitmap b=new Bitmap(100,100)) {
+     using(Graphics g=Graphics.FromImage(b)){g.Clear(Color.Black);using(var pen=new Pen(Color.FromArgb(55,62,70),5))g.DrawEllipse(pen,30,30,40,40);if(percent>0)using(var pen=new Pen(food?Color.FromArgb(235,140,15):Color.FromArgb(22,151,205),5))g.DrawArc(pen,30,30,40,40,-90,percent*3.6f);g.FillRectangle(Brushes.White,45,43,10,14);}
+     var v=HudReader.Read(b,food,50,50,20);Check(v.Known&&Math.Abs(v.Value-percent)<4,"HUD arc percent "+percent);}
+    notes.Add("HUD measurement: synthetic food/water ring percentages 0..100 passed; live HUD recognition is not proven");
+    NativeInputTest(notes);
+    File.WriteAllText(Path.Combine(output,"RESULT.txt"),"PASS\nassertions="+count+"\n"+String.Join("\n",notes.ToArray())+"\nNo live FiveM execution or catch-success claim.\n");return 0;
+   } catch(Exception e){File.WriteAllText(Path.Combine(output,"RESULT.txt"),"FAIL\n"+e.ToString());return 1;}
+  }
+  static void NativeInputTest(List<string> notes) {
+   using(Form f=new Form{Text="FishingPilot input fixture",KeyPreview=true,Width=360,Height=180}) {
+    int downs=0,ups=0;f.KeyDown+=delegate(object s,KeyEventArgs e){if(e.KeyCode==Keys.D3)downs++;};f.KeyUp+=delegate(object s,KeyEventArgs e){if(e.KeyCode==Keys.D3)ups++;};f.Show();f.Activate();f.Focus();Application.DoEvents();
+    var sw=Stopwatch.StartNew();while(Native.GetForegroundWindow()!=f.Handle&&sw.ElapsedMilliseconds<2000){Application.DoEvents();Thread.Sleep(10);f.Activate();}
+    Check(Native.GetForegroundWindow()==f.Handle,"test desktop must provide foreground input");uint pid;Native.GetWindowThreadProcessId(f.Handle,out pid);IntPtr hwnd=f.Handle;
+    Task<bool> t=Task.Run(()=>Native.Press(hwnd,pid,3,CancellationToken.None));while(!t.IsCompleted){Application.DoEvents();Thread.Sleep(2);}for(int i=0;i<20;i++){Application.DoEvents();Thread.Sleep(5);}
+    Check(t.Result&&downs==1&&ups==1,"native key-down and key-up observed once");
+    var cancel=new CancellationTokenSource();cancel.Cancel();Check(!Native.Press(hwnd,pid,3,cancel.Token),"cancelled input rejected");Check(!Native.Press(hwnd,pid+1,3,CancellationToken.None),"wrong PID rejected");
+    using(Form other=new Form{Text="Other application fixture"}){other.Show();other.Activate();Application.DoEvents();Check(!Native.Press(hwnd,pid,3,CancellationToken.None),"other foreground receives no input");other.Close();}
+    f.Close();notes.Add("native Windows fixture: 1 key-down / 1 key-up, cancellation, wrong PID, foreground-loss passed; not a FiveM test");
+   }
+  }
+ }
+}
