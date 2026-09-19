@@ -1,0 +1,109 @@
+name: FishingPilot 0.6.1 startup repair before-after validation
+on:
+  push:
+    branches: [fix/fishing-startup-0.6.1]
+    paths: [.github/workflows/fishing061-build.yml, 'staging061/**']
+permissions:
+  contents: write
+concurrency:
+  group: fishing061-build
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Reproduce the released startup failure through the production engine
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force artifacts/fishing061 | Out-Null
+          python -m pip install websockets==15.0.1
+          if($LASTEXITCODE -ne 0){throw 'Test peer installation failed'}
+          # Use the exact shipped 0.6.0 portable source as the control, even on reruns.
+          git checkout 3260bf4c82b1b0456cea6f1d8c723cae9c72a3b2 -- portable
+          if($LASTEXITCODE -ne 0){throw 'Baseline checkout failed'}
+          ./portable/Build.ps1
+          ./staging061/RunCase.ps1 -Name before -Mode right-null -Blocked
+      - name: Apply the repair and test the actual Windows executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          python staging061/Repair.py
+          if($LASTEXITCODE -ne 0){throw 'Source repair failed'}
+          Remove-Item portable/dist/FiveM-FishingPilot-Integration.exe -Force -ErrorAction SilentlyContinue
+          Start-Transcript artifacts/fishing061/build.txt
+          try { ./portable/Build.ps1 -Test } finally { Stop-Transcript }
+          ./staging061/RunCase.ps1 -Name after -Mode right-null
+          ./staging061/RunCase.ps1 -Name left-null -Mode left-null -Blocked
+          ./staging061/RunCase.ps1 -Name full -Mode full -Blocked
+          ./staging061/RunCase.ps1 -Name inventory-open -Mode inventory-open -Blocked
+          Remove-Item portable/dist/FiveM-FishingPilot-Integration.exe -Force
+      - name: Test inventory, circle recognition, UI and unchanged storage protections
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          node portable/TestInventory060.cjs artifacts/fishing061/inventory/RESULT.json
+          if($LASTEXITCODE -ne 0){throw 'Inventory tests failed'}
+          $expr=Join-Path $PWD 'artifacts/fishing061/storage-expressions.json'
+          $p=Start-Process portable/dist/FishingPilot.exe -ArgumentList @('--storage-expressions',('"'+$expr+'"')) -PassThru
+          if(!$p.WaitForExit(12000)){$p.Kill();throw 'Storage export timed out'}
+          $p.Refresh();if($p.ExitCode -ne 0 -or !(Test-Path $expr)){throw 'Storage export failed'}
+          python -m pip install playwright==1.57.0
+          if($LASTEXITCODE -ne 0){throw 'Browser tooling installation failed'}
+          $edge='C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+          if(!(Test-Path $edge)){$edge='C:\Program Files\Microsoft\Edge\Application\msedge.exe'}
+          $browser=@()
+          if(Test-Path $edge){$browser=@('--browser',$edge)}else{python -m playwright install chromium;if($LASTEXITCODE -ne 0){throw 'Browser installation failed'}}
+          python portable/TestScene.py @browser --output artifacts/fishing061/scene
+          if($LASTEXITCODE -ne 0){throw 'Circle recognition tests failed'}
+          python portable/TestUi.py @browser --output artifacts/fishing061/ui
+          if($LASTEXITCODE -ne 0){throw 'Overlay settings and UI tests failed'}
+          python portable/TestStorage.py @browser --expressions $expr --output artifacts/fishing061/storage
+          if($LASTEXITCODE -ne 0){throw 'Storage regression tests failed'}
+      - name: Commit only validated portable source to isolated branch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- portable
+          git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --cached --check
+          if($LASTEXITCODE -ne 0){throw 'Whitespace validation failed'}
+          git diff --cached --quiet
+          if($LASTEXITCODE -ne 0){
+            git commit -m 'FishingPilot 0.6.1: repair null-container startup failure, collection handling and actionable diagnostics'
+            if($LASTEXITCODE -ne 0){throw 'Validated commit failed'}
+            git push origin HEAD:fix/fishing-startup-0.6.1
+            if($LASTEXITCODE -ne 0){throw 'Branch changed; no force push allowed'}
+          }
+      - name: Package the tested executable and exact source
+        shell: pwsh
+        run: |
+          python staging061/Package.py
+          if($LASTEXITCODE -ne 0){throw 'Packaging gate failed'}
+      - name: Retain attempted source and diagnostics
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts/fishing061/attempted-source | Out-Null
+          Get-ChildItem portable -File | Where-Object Extension -in '.cs','.csproj','.ps1','.py','.js','.json','.txt' | Copy-Item -Destination artifacts/fishing061/attempted-source -Force
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: fishing061-evidence
+          path: |
+            artifacts/fishing061/
+            portable/dist/test-evidence/
+          retention-days: 14
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: success()
+        with:
+          name: fishing061-download
+          path: artifacts/fishing061-download/
+          retention-days: 14
+          if-no-files-found: error
