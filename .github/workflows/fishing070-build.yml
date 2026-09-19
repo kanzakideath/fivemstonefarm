@@ -1,32 +1,123 @@
-name: FishingPilot compiled distribution preparation
+name: FishingPilot 0.7.0 compiled update rollback and visible sharing
 on:
   push:
     branches: [release/fishingpilot-0.7.0]
     paths: [.github/workflows/fishing070-build.yml, 'staging070/**']
 permissions:
-  contents: read
+  contents: write
+concurrency:
+  group: fishing070-release
+  cancel-in-progress: false
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Apply and export exact inherited source
+        with:
+          fetch-depth: 0
+      - name: Verify and integrate source changes
         shell: pwsh
         run: |
+          $ErrorActionPreference='Stop'
+          python staging070/Unpack.py
+          if($LASTEXITCODE -ne 0){throw 'Bundle integrity failed'}
           python staging064/Apply.py
-          if($LASTEXITCODE -ne 0){throw 'Integration failed'}
-          New-Item -ItemType Directory -Force artifacts | Out-Null
-          Compress-Archive -Path portable,staging064 -DestinationPath artifacts/applied-source.zip
-      - name: Build native executable and run native tests
+          if($LASTEXITCODE -ne 0){throw 'Inherited integration failed'}
+          python staging070/Apply.py
+          if($LASTEXITCODE -ne 0){throw 'Update integration failed'}
+          Remove-Item portable/dist -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force artifacts/fishing070 | Out-Null
+      - name: Build native app and verify its startup and themes
         shell: pwsh
         run: |
-          ./portable/Build.ps1 -Test
+          Start-Transcript artifacts/fishing070/build.txt
+          try { ./portable/Build.ps1 -Test } finally { Stop-Transcript }
+      - name: Compile updater and visible sharing; test rollback and TLS consent transport
+        shell: pwsh
+        run: |
+          ./staging070/Build.ps1
+      - name: Build and verify the separate historical rollback version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          git archive --format zip -o artifacts/fallback-source.zip 9319f6bf02ce9190e730baa170cfa3f760598946 portable
+          if($LASTEXITCODE -ne 0){throw 'Fallback archive failed'}
+          Expand-Archive artifacts/fallback-source.zip fallback
+          ./fallback/portable/Build.ps1 -Test
+      - name: Run inventory recognition UI and storage regressions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          python -m pip install playwright==1.57.0 websockets==15.0.1
+          if($LASTEXITCODE -ne 0){throw 'Test tooling failed'}
+          $edge='C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+          if(!(Test-Path $edge)){$edge='C:\Program Files\Microsoft\Edge\Application\msedge.exe'}
+          if(!(Test-Path $edge)){throw 'Browser missing'}
+          "TEST_BROWSER=$edge" >> $env:GITHUB_ENV
+          node portable/TestInventory060.cjs artifacts/fishing070/inventory/RESULT.json
+          if($LASTEXITCODE -ne 0){throw 'Inventory tests failed'}
+          node staging064/TestSlots.cjs
+          if($LASTEXITCODE -ne 0){throw 'Slot guards failed'}
+          node staging064/TestHud.cjs
+          if($LASTEXITCODE -ne 0){throw 'HUD message tests failed'}
+          python portable/TestScene.py --browser $edge --output artifacts/fishing070/scene
+          if($LASTEXITCODE -ne 0){throw 'Scene tests failed'}
+          python portable/TestUi.py --browser $edge --output artifacts/fishing070/ui
+          if($LASTEXITCODE -ne 0){throw 'UI tests failed'}
+          $expr=Join-Path $PWD 'artifacts/fishing070/storage-expressions.json'
+          $p=Start-Process portable/dist/FishingPilot.exe -ArgumentList @('--storage-expressions',('"'+$expr+'"')) -PassThru
+          if(!$p.WaitForExit(12000)){$p.Kill();throw 'Storage export timed out'}
+          $p.Refresh();if($p.ExitCode -ne 0 -or !(Test-Path $expr)){throw 'Storage export failed'}
+          python portable/TestStorage.py --browser $edge --expressions $expr --output artifacts/fishing070/storage
+          if($LASTEXITCODE -ne 0){throw 'Storage tests failed'}
+      - name: Check inherited covered-window behavior and bounded recovery
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          ./staging064/RunBackground.ps1 -Name white -Style white -Browser $env:TEST_BROWSER
+          ./staging064/RunBackground.ps1 -Name red -Style red -Browser $env:TEST_BROWSER -FocusUnsupported
+          foreach($scenario in @('unknown-hud','hidden-focus','fail-first','receipt-loss','supply-timeout')){
+            ./staging064/RunBackground.ps1 -Name $scenario -Case $scenario -Style white -Browser $env:TEST_BROWSER
+          }
+      - name: Package prebuilt executables and exact matching source
+        shell: pwsh
+        run: |
+          python staging070/Package.py
+          if($LASTEXITCODE -ne 0){throw 'Package verification failed'}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: success()
+        with:
+          name: fishing070-download
+          path: artifacts/fishing070-download/
+          retention-days: 14
+      - name: Publish a dedicated FishingPilot prerelease without changing miner latest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python staging070/Publish.py
+          if($LASTEXITCODE -ne 0){throw 'Release publication failed'}
+      - name: Verify published update feed with the compiled updater
+        shell: pwsh
+        run: |
+          $file=Join-Path $PWD 'artifacts/fishing070/published-feed-test.json'
+          $p=Start-Process staging070/bin/Manager/FishingPilot.Manager.exe -ArgumentList @('--test-feed',('"'+$file+'"')) -PassThru
+          if(!$p.WaitForExit(90000)){$p.Kill();throw 'Public feed verification timed out'}
+          $p.Refresh();if($p.ExitCode -ne 0 -or !(Test-Path $file)){throw 'Public feed verification failed'}
+      - name: Keep exact attempted source and evidence
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts/fishing070 | Out-Null
+          Compress-Archive -Path portable,staging070,staging064 -DestinationPath artifacts/fishing070/attempted-source.zip -Force
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: fishing070-preparation
+          name: fishing070-evidence
           path: |
-            artifacts/applied-source.zip
-            portable/dist/
+            artifacts/fishing070/
+            artifacts/fishing064/
+            portable/dist/test-evidence/
           retention-days: 14
+          if-no-files-found: warn
