@@ -1,0 +1,111 @@
+name: FishingPilot 0.7.3 quick connection reward and background recovery
+on:
+  push:
+    branches: [release/fishingpilot-0.7.3-experience]
+    paths: ['.github/workflows/fishing073-build.yml', 'staging073/**']
+permissions:
+  contents: write
+concurrency:
+  group: fishing073-release
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Restore immutable baseline and verify all source edits
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          python staging073/Prepare.py
+          if($LASTEXITCODE -ne 0){throw 'Source integrity failure'}
+          Remove-Item portable/dist -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force artifacts/fishing073 | Out-Null
+      - name: Build Windows core and test real native startup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          Start-Transcript artifacts/fishing073/build.txt
+          try { ./portable/Build.ps1 -Test } finally { Stop-Transcript }
+      - name: Build updater and sharing agent and test account registration rollback and reward policy
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          ./staging073/Build.ps1
+      - name: Test recognition leases quick setup effects responsive UI and storage
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          python -m pip install playwright==1.57.0
+          if($LASTEXITCODE -ne 0){throw 'Browser tooling install failed'}
+          $edge='C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+          if(!(Test-Path $edge)){$edge='C:\Program Files\Microsoft\Edge\Application\msedge.exe'}
+          if(!(Test-Path $edge)){throw 'Test browser missing'}
+          node portable/TestInventory060.cjs artifacts/fishing073/inventory/RESULT.json
+          if($LASTEXITCODE -ne 0){throw 'Inventory regression failed'}
+          python portable/TestScene.py --browser $edge --output artifacts/fishing073/scene
+          if($LASTEXITCODE -ne 0){throw 'Scene regression failed'}
+          python staging073/TestLease.py --browser $edge --output artifacts/fishing073/lease
+          if($LASTEXITCODE -ne 0){throw 'Input lease regression failed'}
+          python portable/TestUi.py --browser $edge --inline --output artifacts/fishing073/ui
+          if($LASTEXITCODE -ne 0){throw 'Main UI regression failed'}
+          python staging073/TestAdminUi.py --browser $edge --output artifacts/fishing073/admin-ui
+          if($LASTEXITCODE -ne 0){throw 'Admin regression failed'}
+          python staging073/TestExperience.py --browser $edge --output artifacts/fishing073/experience
+          if($LASTEXITCODE -ne 0){throw 'Quick setup reward and throttled-timer regression failed'}
+          $expr=Join-Path $PWD 'artifacts/fishing073/storage-expressions.json'
+          $p=Start-Process portable/dist/FishingPilot.exe -ArgumentList @('--storage-expressions',('"'+$expr+'"')) -PassThru
+          if(!$p.WaitForExit(12000)){$p.Kill();throw 'Storage export timed out'}
+          $p.Refresh();if($p.ExitCode -ne 0 -or !(Test-Path $expr)){throw 'Storage export failed'}
+          python portable/TestStorage.py --browser $edge --expressions $expr --output artifacts/fishing073/storage
+          if($LASTEXITCODE -ne 0){throw 'Storage regression failed'}
+      - name: Package precompiled unified app administrator and exact historical rollback
+        shell: pwsh
+        run: |
+          python staging073/Package.py
+          if($LASTEXITCODE -ne 0){throw 'Package validation failed'}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fishing073-download
+          path: artifacts/fishing073-download/
+          retention-days: 14
+          if-no-files-found: error
+      - name: Publish new FishingPilot prerelease without changing mining latest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python staging073/Publish.py
+          if($LASTEXITCODE -ne 0){throw 'Publish failed'}
+      - name: Verify published update feed with the compiled updater
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $dest=Join-Path $PWD 'artifacts/fishing073/published-feed.json'
+          $verified=$false
+          for($i=0;$i -lt 5;$i++){
+            $p=Start-Process staging071/bin/Manager/FishingPilot.Manager.exe -ArgumentList @('--test-feed',('"'+$dest+'"')) -PassThru
+            if(!$p.WaitForExit(60000)){$p.Kill();throw 'Published feed test timed out'}
+            $p.Refresh()
+            if(Test-Path $dest){$v=Get-Content $dest -Raw|ConvertFrom-Json;if($p.ExitCode -eq 0 -and $v.pass -and $v.version -eq '0.7.3'){$verified=$true;break}}
+            Start-Sleep -Seconds 15
+          }
+          if(!$verified){Get-Content $dest -ErrorAction SilentlyContinue;throw 'Published update feed did not verify 0.7.3'}
+      - name: Keep attempted source and results
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts/fishing073 | Out-Null
+          python -c "from pathlib import Path; import zipfile; r=Path('.'); z=zipfile.ZipFile('artifacts/fishing073/attempted-source.zip','w',zipfile.ZIP_DEFLATED); [(z.write(p,p.as_posix())) for d in ('portable','staging071','staging072','staging073') for p in (r/d).rglob('*') if p.is_file() and not any(x in p.parts for x in ('bin','obj','dist','node_modules','__pycache__'))]; z.close()"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: fishing073-evidence
+          path: |
+            artifacts/fishing073/
+            portable/dist/test-evidence/
+          retention-days: 14
+          if-no-files-found: warn
