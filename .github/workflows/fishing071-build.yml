@@ -1,0 +1,100 @@
+name: FishingPilot 0.7.1 registered owner devices
+on:
+  push:
+    branches: [release/fishingpilot-0.7.1-owner]
+    paths: [.github/workflows/fishing071-build.yml, 'staging071/**']
+permissions:
+  contents: write
+concurrency:
+  group: fishing071-owner
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Restore exact released source and apply registered owner changes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          python staging071/Unpack.py
+          if($LASTEXITCODE -ne 0){throw 'Bundle integrity failed'}
+          python staging071/Prepare.py
+          if($LASTEXITCODE -ne 0){throw 'Published baseline verification failed'}
+          python staging071/Upgrade.py
+          if($LASTEXITCODE -ne 0){throw 'Source integration failed'}
+          Remove-Item portable/dist -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force artifacts/fishing071 | Out-Null
+      - name: Build real Windows core and verify native startup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          Start-Transcript artifacts/fishing071/build.txt
+          try { ./portable/Build.ps1 -Test } finally { Stop-Transcript }
+      - name: Compile monitor and updater and test enrollment TLS restart revocation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          ./staging071/Build.ps1
+          node portable/TestInventory060.cjs artifacts/fishing071/inventory.json
+          if($LASTEXITCODE -ne 0){throw 'Inventory regression failed'}
+      - name: Package precompiled client administrator and rollback assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          python staging071/Package.py
+          if($LASTEXITCODE -ne 0){throw 'Packaging validation failed'}
+          $dir=Join-Path $PWD 'artifacts/packaged-smoke'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          Expand-Archive artifacts/fishing071-download/FishingPilot-Admin-0.7.1-win-x64.zip (Join-Path $dir 'admin')
+          $image=Join-Path $PWD 'artifacts/fishing071/packaged-admin.png'
+          $p=Start-Process (Join-Path $dir 'admin/FishingPilot.Admin.exe') -ArgumentList @('--ui-smoke',('"'+$image+'"')) -PassThru
+          if(!$p.WaitForExit(15000)){$p.Kill();throw 'Packaged admin startup timed out'}
+          $p.Refresh();if($p.ExitCode -ne 0 -or !(Test-Path $image)){throw 'Packaged admin startup failed'}
+          Expand-Archive artifacts/fishing071-download/FishingPilot-0.7.1-win-x64.zip (Join-Path $dir 'client')
+          $image=Join-Path $PWD 'artifacts/fishing071/packaged-manager.png'
+          $p=Start-Process (Join-Path $dir 'client/FishingPilot.exe') -ArgumentList @('--ui-smoke',('"'+$image+'"')) -PassThru
+          if(!$p.WaitForExit(15000)){$p.Kill();throw 'Packaged manager startup timed out'}
+          $p.Refresh();if($p.ExitCode -ne 0 -or !(Test-Path $image)){throw 'Packaged manager startup failed'}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fishing071-download
+          path: artifacts/fishing071-download/
+          retention-days: 14
+          if-no-files-found: error
+      - name: Publish a new dedicated FishingPilot release without changing miner latest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python staging071/Publish.py
+          if($LASTEXITCODE -ne 0){throw 'Release publication failed'}
+      - name: Verify the actual published feed using the compiled updater
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $result=Join-Path $PWD 'artifacts/fishing071/published-feed.json'
+          $p=Start-Process staging071/bin/Manager/FishingPilot.Manager.exe -ArgumentList @('--test-feed',('"'+$result+'"')) -PassThru
+          if(!$p.WaitForExit(60000)){$p.Kill();throw 'Published feed test timed out'}
+          $p.Refresh();if($p.ExitCode -ne 0 -or !(Test-Path $result)){throw 'Published feed test failed'}
+          $r=Get-Content $result -Raw | ConvertFrom-Json
+          if(!$r.pass -or $r.version -ne '0.7.1'){throw 'Published feed did not select 0.7.1'}
+      - name: Retain attempted source and evidence
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts/fishing071 | Out-Null
+          $files=Get-ChildItem staging071 -File | Where-Object Extension -in '.cs','.csproj','.py','.ps1','.txt'
+          Compress-Archive -Path $files.FullName -DestinationPath artifacts/fishing071/attempted-source.zip -Force
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: fishing071-evidence
+          path: |
+            artifacts/fishing071/
+            portable/dist/test-evidence/
+          retention-days: 14
+          if-no-files-found: warn
