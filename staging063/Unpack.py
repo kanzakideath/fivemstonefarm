@@ -7,8 +7,31 @@ for name,text in json.loads(gzip.decompress(b)).items():
  assert Path(name).name==name and not name.startswith('.'),name
  (p/name).write_text(text,encoding='utf-8',newline='\n')
 f=p/'Refine.py'
-f.write_text(f.read_text(encoding='utf-8')+'''\nf=p/'FishingScene.cs';s=f.read_text(encoding='utf-8')
+f.write_text(f.read_text(encoding='utf-8')+'''
+f=p/'FishingScene.cs';s=f.read_text(encoding='utf-8')
 s=s.replace('finally{root.FishingDeadline(-1);}', 'finally{try{root.FishingDeadline(-1);}catch(ObjectDisposedException){}}')
+s=s.replace('public string Discovery="";', 'public string RenderVisibility=""; public bool RenderFocused; public string Discovery="";')
+s=s.replace('return scene;','scene.RenderVisibility=GetString(d,"documentVisible");scene.RenderFocused=Bool(d,"focused");return scene;')
+f.write_text(s,encoding='utf-8',newline='\\n')
+f=p/'Engine.cs';s=f.read_text(encoding='utf-8').replace('+" input_reason="+s.InputReason', '+" visibility="+s.RenderVisibility+" nui_focus="+s.RenderFocused+" input_reason="+s.InputReason')
+f.write_text(s,encoding='utf-8',newline='\\n')
+f=p/'SceneProbe.js';s=f.read_text(encoding='utf-8').replace("if(!t||t.length>400)continue;", "if(!t){notices.delete(e);continue;}if(t.length>400)continue;")
 f.write_text(s,encoding='utf-8',newline='\\n')
 ''',encoding='utf-8',newline='\n')
+# Match the requested state: actual browser window covered by a different desktop
+# app, not a second tab selected inside the game browser. A hidden tab was shown
+# to throttle requestAnimationFrame to ~2 FPS even with document focus emulated.
+f=p/'BrowserPeer.py';s=f.read_text(encoding='utf-8')
+s=s.replace('launch(headless=True,', "launch(headless=False,args=['--window-size=1000,760','--window-position=0,0'],")
+s=s.replace("  other=await ctx.new_page();await other.set_content('<textarea autofocus>Editor tab</textarea>');await other.bring_to_front()", '  # Win32 editor covers this real browser window throughout the test.')
+s=s.replace('  # Another browser tab is selected too; the Win32 harness keeps a distinct editor foreground.', '  # Keep the game tab selected; the Win32 harness owns desktop foreground.')
+s=s.replace("     value=await frames[i].evaluate(expr)", """     value=await frames[i].evaluate(expr)
+     if i==3 and '__fpProbe3' in expr and isinstance(value,str) and value.startswith('{'):
+      sample=json.loads(value);ring=sample.get('ring',{});entry={'at':sample.get('at'),'ring':ring,'input':sample.get('input'),'visibility':sample.get('documentVisible'),'focused':sample.get('focused')}
+      reads=trace.setdefault('reads',[])
+      if len(reads)<2500 and (ring.get('present') or (reads and reads[-1]['ring'].get('present'))):reads.append(entry)
+""")
+f.write_text(s,encoding='utf-8',newline='\n')
+f=p/'Integration.cs';s=f.read_text(encoding='utf-8').replace('editor.StartPosition=FormStartPosition.CenterScreen;', 'editor.StartPosition=FormStartPosition.Manual;editor.Location=new Point(0,0);editor.WindowState=FormWindowState.Maximized;')
+f.write_text(s,encoding='utf-8',newline='\n')
 print('Source bundle verified and extracted')
