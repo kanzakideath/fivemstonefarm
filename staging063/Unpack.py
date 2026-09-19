@@ -35,3 +35,15 @@ f.write_text(s,encoding='utf-8',newline='\n')
 f=p/'Integration.cs';s=f.read_text(encoding='utf-8').replace('editor.StartPosition=FormStartPosition.CenterScreen;', 'editor.StartPosition=FormStartPosition.Manual;editor.Location=new Point(0,0);editor.WindowState=FormWindowState.Maximized;')
 f.write_text(s,encoding='utf-8',newline='\n')
 print('Source bundle verified and extracted')
+# A pending second cast is deliberately left in flight when F6 is pressed.
+# Its later natural timeout is expected, but any failure before host stop, or
+# any digit sent after stop, must still fail the integration gate.
+f=p/'BrowserPeer.py';s=f.read_text(encoding='utf-8')
+s=s.replace("trace['rounds'].append(json.loads(route.request.post_data));", "entry=json.loads(route.request.post_data);entry['after_host_stop']='stopped_at' in trace;trace['rounds'].append(entry);")
+s=s.replace("     value=await frames[i].evaluate(expr)", "     if i==2 and '__fpSlots063.stop()' in expr:trace['stopped_at']=time.monotonic();persist()\n     value=await frames[i].evaluate(expr)")
+f.write_text(s,encoding='utf-8',newline='\n')
+f=p/'RunBackground.ps1';s=f.read_text(encoding='utf-8').replace("Where-Object {!$_.ok}", "Where-Object {!$_.ok -and !($_.after_host_stop -and $null -eq $_.key)}")
+f.write_text(s,encoding='utf-8',newline='\n')
+f=p/'Package.py';s=f.read_text(encoding='utf-8').replace("all(x['ok'] for x in b['rounds'])", "all(x['ok'] or (x.get('after_host_stop') and x.get('key') is None) for x in b['rounds'])")
+s=s.replace(" assert b['actual_inventory_js']>0", " assert not any(x.get('after_host_stop') and x.get('key') is not None for x in b['rounds']), 'digit after host stop'\n assert b['actual_inventory_js']>0")
+f.write_text(s,encoding='utf-8',newline='\n')
