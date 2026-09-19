@@ -26,4 +26,9 @@ t=v.read_text(encoding='utf-8').replace('FirstOrDefault(d=>d.Enabled&&d.ClientKe
 v.write_text(t,encoding='utf-8',newline='\n')
 (r/'portable/OwnerRuntime.cs').write_text((r/'staging071/View.cs').read_text(encoding='utf-8').replace('[assembly:System.Reflection.AssemblyVersion("0.7.2.0")]',''),encoding='utf-8',newline='\n')
 (r/'portable/OwnerAccount.cs').write_bytes((r/'staging071/Account.cs').read_bytes())
+# Source files are UTF-8, independently of the Windows runner's ANSI locale.
+for name in ('TestLease.py','TestAdminUi.py'):
+ p=r/'staging072'/name
+ text=p.read_text(encoding='utf-8').replace('.read_text()',".read_text(encoding='utf-8-sig')")
+ p.write_text(text,encoding='utf-8',newline='\n')
 print('0.7.2 source and exact 0.7.1 rollback integrated')
