@@ -32,6 +32,12 @@ with sync_playwright() as pw:
  fresh();page.evaluate('setAngle(175)');sample(True);page.evaluate('setAngle(208)');page.wait_for_timeout(100);assert page.evaluate('keys.length')==0;assert sample(True)['input']['sent'];page.evaluate('window.__fpProbe3.stop()');n=page.evaluate('keys.length');sample(False);page.wait_for_timeout(100);assert page.evaluate('keys.length')==n;scenarios.append('stop_and_no_recurring_input_timer')
  fresh();page.evaluate("notice.textContent='魚に逃げられました'");d=json.loads(page.evaluate('window.__fpProbe3.sample(false,null)'));assert d['notices'][0]['kind']=='FAIL';assert d['hunger']==43;scenarios.append('failure_notice_and_explicit_hud_value')
  fresh();page.evaluate('setAngle(200)');sample(True);page.evaluate('setAngle(201)');assert not sample(True)['input']['sent'];page.evaluate('setAngle(205)');assert sample(True)['input']['sent'];scenarios.append('narrow_inside_margin')
+ # CSS geometry can render correctly even when SVG attribute baseVal is zero.
+ fresh();page.evaluate("document.querySelectorAll('circle').forEach(e=>{e.style.r='60px';e.style.cx='130px';e.style.cy='130px';e.removeAttribute('r');e.removeAttribute('cx');e.removeAttribute('cy');})")
+ assert page.evaluate('white.r.baseVal.value')==0
+ s=sample();assert s['ring']['valid'] and s['ring']['key']==4,s
+ sample(True);assert sample(True)['input']['sent'];scenarios.append('css_only_svg_geometry_zero_attribute_regression')
+ fresh();cdp=ctx.new_cdp_session(page);cdp.send('Input.dispatchKeyEvent',{'type':'rawKeyDown','key':'4','code':'Digit4','windowsVirtualKeyCode':52});cdp.send('Input.dispatchKeyEvent',{'type':'keyUp','key':'4','code':'Digit4','windowsVirtualKeyCode':52});assert page.evaluate('keys.length')==1;assert other.evaluate('keys.length')==0;scenarios.append('cdp_key_pair_other_page_untouched')
  # Only read rendered geometry; actual game state/stores are not present in this fixture.
  b.close()
 (out/'RESULT.json').write_text(json.dumps({'pass':True,'resolution_cases':checks,'scenarios':scenarios,'live_fivem':False,'mechanism':'production SceneProbe.js, rendered SVG, normal DOM key events'},indent=2),encoding='utf-8')

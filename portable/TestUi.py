@@ -2,7 +2,7 @@
 import json,argparse,mimetypes
 from playwright.sync_api import sync_playwright
 p=argparse.ArgumentParser();p.add_argument('--browser');p.add_argument('--inline',action='store_true');p.add_argument('--output',default='ui-evidence');a=p.parse_args();r=Path(__file__).parent/'ui';out=Path(a.output);out.mkdir(parents=True,exist_ok=True)
-state={'type':'state','version':'0.4.0-preview','busy':False,'countdown':0,'feedback':'','status':{'Phase':'停止中','Ring':'未検出','Backend':'未確認','Delivery':'未確認','ReadMs':0,'Inventory':'未確認','Hunger':'未確認','Thirst':'未確認'},'settings':{'ObserveOnly':True,'BackgroundMode':True,'AutoNeeds':True,'FoodKey':1,'DrinkKey':3,'ReserveGrams':500,'GaugeRadius':20,'MinRecastMs':1400}}
+state={'type':'state','version':'0.5.0-preview','busy':False,'countdown':0,'feedback':'','status':{'Phase':'停止中','Ring':'未検出','Backend':'未確認','Delivery':'未確認','ReadMs':0,'Inventory':'未確認','Hunger':'未確認','Thirst':'未確認'},'settings':{'ObserveOnly':True,'BackgroundMode':True,'AutoNeeds':True,'FoodKey':1,'DrinkKey':3,'ReserveGrams':500,'GaugeRadius':20,'MinRecastMs':1400,'ShowOverlay':True}}
 results=[]
 with sync_playwright() as pw:
  b=pw.chromium.launch(headless=True,executable_path=a.browser,args=['--no-sandbox']);ctx=b.new_context();page=ctx.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
@@ -40,6 +40,15 @@ with sync_playwright() as pw:
   page.screenshot(path=str(out/f'storage-{width}.png'),full_page=True)
   page.locator('[data-page=version]').click();page.wait_for_timeout(200);assert page.locator('#page-version').is_visible()
   page.locator('[data-page=overview]').click();page.wait_for_timeout(200);page.screenshot(path=str(out/f'overview-{width}.png'),full_page=True)
+  sample_status={**state['status'],'InventoryFresh':True,'HeldItems':[{'Name':'fish','Label':'表示検証の魚','Count':7}],'CaughtItems':[{'Name':'fish','Label':'表示検証の魚','Total':3}]}
+  page.evaluate('(d)=>window.__receive({data:d})',{**state,'status':sample_status})
+  assert '7' in page.locator('#held-items').inner_text() and '3' in page.locator('#caught-items').inner_text()
+  page.screenshot(path=str(out/f'inventory-{width}.png'),full_page=True)
+  page.evaluate('(d)=>window.__receive({data:d})',{**state,'status':{**sample_status,'HeldItems':[]}})
+  assert page.locator('#held-items .row').count()==0 and '3' in page.locator('#caught-items').inner_text()
+  page.evaluate('(d)=>window.__receive({data:d})',{**state,'status':{**sample_status,'InventoryFresh':False}})
+  assert '更新待ち' in page.locator('#inventory-age').inner_text()
+  assert 'F5' in page.locator('body').inner_text() and 'F6' in page.locator('body').inner_text()
   results.append({'width':width,'no_horizontal_overflow':True,'start_stop_settings_diagnostics':True})
  assert not errors,errors;b.close()
 (out/'RESULT.json').write_text(json.dumps({'pass':True,'cases':results,'page_errors':errors,'native_backend':'mock for browser-only layout test; separate Windows WebView2 handshake test','live_fivem':False,'inline_fixture_without_csp':a.inline},indent=2),encoding='utf-8');print('UI030_PASS',len(results),'widths')

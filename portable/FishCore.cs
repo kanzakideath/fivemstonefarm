@@ -144,12 +144,12 @@ namespace FishingPilot {
   }
  }
  public sealed class Inventory {
-  public bool Known;public long Weight,Maximum;public Dictionary<string,long> Counts=new Dictionary<string,long>();
+  public bool Known;public long Weight,Maximum;public Dictionary<string,string> Labels=new Dictionary<string,string>();public HashSet<string> ProtectedNames=new HashSet<string>(StringComparer.Ordinal);public Dictionary<string,long> Counts=new Dictionary<string,long>();
   public static Inventory Parse(string text) {
    var v=new Inventory();if(text==null || !text.StartsWith("SNAPSHOT ",StringComparison.Ordinal))return v;
    string[] fields=text.Trim().Split(new[]{' '},6);long used,slots;
    if(fields.Length!=6||!Int64.TryParse(fields[1],out v.Weight)||!Int64.TryParse(fields[2],out v.Maximum)||!Int64.TryParse(fields[3],out used)||!Int64.TryParse(fields[4],out slots)||v.Weight<0||v.Maximum<=0)return v;
-   if(fields[5]!="-")foreach(string entry in fields[5].Split(',')) {int dot=entry.IndexOf('.'),eq=entry.LastIndexOf('=');long count;if(dot<0||eq<=dot||!Int64.TryParse(entry.Substring(eq+1),out count)||count<0)return new Inventory();string id=entry.Substring(dot+1,eq-dot-1);long old;v.Counts.TryGetValue(id,out old);v.Counts[id]=old+count;}
+   if(fields[5]!="-")foreach(string entry in fields[5].Split(',')) {int dot=entry.IndexOf('.'),eq=entry.LastIndexOf('=');long count;if(dot<0||eq<=dot||!Int64.TryParse(entry.Substring(eq+1),out count)||count<0)return new Inventory();string id=entry.Substring(dot+1,eq-dot-1);int slot;int meta=id.IndexOf('.');if(meta>0&&Int32.TryParse(entry.Substring(0,dot),out slot)&&slot<=5)v.ProtectedNames.Add(id.Substring(0,meta));long old;v.Counts.TryGetValue(id,out old);v.Counts[id]=old+count;}
    v.Known=true;return v;
   }
   public bool IncreasedSince(Inventory old) {if(!Known||old==null||!old.Known)return false;foreach(var e in Counts){long n;old.Counts.TryGetValue(e.Key,out n);if(e.Value>n)return true;}return false;}

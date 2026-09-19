@@ -1452,7 +1452,7 @@ internal static partial class CdpBridge
             + "const name=String(item.name),count=Math.trunc(num(item.count));if(!/^[A-Za-z0-9_-]{1,64}$/.test(name))return 'ERROR UNSUPPORTED_ITEM_NAME';"
             + "if(count<=0||count>2147483647)return 'ERROR INVALID_INVENTORY';const metadata=meta(item.metadata);if(!metadata)return 'ERROR INVALID_METADATA';"
             + "const slot=Math.trunc(num(item.slot));if(slot<1||slot>1000)return 'ERROR INVALID_INVENTORY';"
-            + "entries.push({slot:slot,name:name,count:count,meta:metadata});calculatedWeight+=Math.max(0,num(item.weight));used++;}"
+            + "entries.push({slot:slot,name:name,count:count,meta:metadata,label:String(item.label||(item.metadata&&item.metadata.label)||name).slice(0,128)});calculatedWeight+=Math.max(0,num(item.weight));used++;}"
             + "return 'SNAPSHOT_DETAIL '+JSON.stringify({weight:whole(calculatedWeight),max:whole(left.maxWeight),used:used,slots:whole(left.slots),items:entries});})()";
     }
 
@@ -4171,7 +4171,7 @@ internal static partial class CdpBridge
             var viewport = GetObject(layout,layout.ContainsKey("cssLayoutViewport")?"cssLayoutViewport":"layoutViewport");
             double w=Convert.ToDouble(GetValue(viewport,"clientWidth")), h=Convert.ToDouble(GetValue(viewport,"clientHeight"));
             if(w<200 || h<200 || w>16000 || h>16000)throw new InvalidOperationException("NUI_VIEWPORT_UNAVAILABLE");
-            double side=Math.Min(h*.4,Math.Min(w,h));
+            double side=FishingPilot.InputPolicy.CaptureSide((int)w,(int)h);
             double x=(w-side)/2,y=(h-side)/2,width=side,height=side;
             if(hud){width=Math.Min(w,h*.5);height=h*.2;x=0;y=h-height;}
             else if(scene!=null&&scene.Present&&scene.W>30&&scene.H>30) {
@@ -4190,6 +4190,13 @@ internal static partial class CdpBridge
         }
 
 
+        public async Task<bool> FishingKey(int digit, CancellationToken cancel) {
+            if(digit<0||digit>9||cancel.IsCancellationRequested)return false;
+            var args=new Dictionary<string,object>{{"type","rawKeyDown"},{"key",digit.ToString(CultureInfo.InvariantCulture)},{"code","Digit"+digit},{"windowsVirtualKeyCode",48+digit},{"nativeVirtualKeyCode",48+digit},{"modifiers",0},{"autoRepeat",false}};
+            bool attempted=false;
+            try{cancel.ThrowIfCancellationRequested();attempted=true;await CommandAsync(_socket,"Input.dispatchKeyEvent",args,_timeout.Token).ConfigureAwait(false);return true;}
+            finally{if(attempted){args["type"]="keyUp";await CommandAsync(_socket,"Input.dispatchKeyEvent",args,_timeout.Token).ConfigureAwait(false);}}
+        }
         public static Task<CdpSession> OpenAsync(string framePart, TimeSpan timeoutValue)
         {
             return OpenAsync(framePart, timeoutValue, (string[])null);

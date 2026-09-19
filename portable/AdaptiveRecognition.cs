@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -15,6 +15,12 @@ namespace FishingPilot {
     using(var g=Graphics.FromImage(b)){g.Clear(Color.Black);g.InterpolationMode=InterpolationMode.HighQualityBilinear;g.DrawImage(source,new RectangleF(0,0,320,320),new RectangleF((float)(x-side/2),(float)(y-side/2),(float)side,(float)side),GraphicsUnit.Pixel);}
     var r=decoder.Read(b);r.CenterX=x;r.CenterY=y;return r;
    }
+  }
+  public Ring ReadTracked(Bitmap source){
+   if(!locked)return new Ring();
+   var r=Decode(source,cx*source.Width,cy*source.Height,Math.Min(source.Width,source.Height));
+   if(r.Valid)Evidence="追跡＋数字形状＋円弧";else locked=false;
+   return r;
   }
   sealed class Candidate {public double X,Y,R,Score;}
   public Ring ReadAuto(Bitmap source){

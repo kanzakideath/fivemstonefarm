@@ -2,13 +2,13 @@
  success callbacks, animation edits, focus stealing, or recurring input timers.
  Every key-down requires a live host call. */
 (() => {
-  if (window.__fpProbe3 && window.__fpProbe3.version==='0.4.0-final') return window.__fpProbe3.sample(false,null);
+  if (window.__fpProbe3 && window.__fpProbe3.version==='0.5.0-final') return window.__fpProbe3.sample(false,null);
   if(window.__fpProbe3 && window.__fpProbe3.stop)window.__fpProbe3.stop();
   const norm = a => (a % 360 + 360) % 360;
   const delta = (a,b) => (a-b+540)%360-180;
   const nodes = new WeakMap(), notices = new WeakMap(); let nextId=1, noticeId=1;
   const id = e => {if(!nodes.has(e))nodes.set(e,nextId++);return nodes.get(e);};
-  const visible = e => {if(!e || !e.isConnected)return false;for(let p=e;p&&p.nodeType===1;p=p.parentElement){const s=getComputedStyle(p);if(s.display==='none'||s.visibility==='hidden'||+s.opacity===0)return false;}const b=e.getBoundingClientRect();return b.width>0&&b.height>0;};
+  const visible = e => {if(!e || !e.isConnected||e.closest('[data-fishingpilot-overlay]'))return false;for(let p=e;p&&p.nodeType===1;p=p.parentElement){const s=getComputedStyle(p);if(s.display==='none'||s.visibility==='hidden'||+s.opacity===0)return false;}const b=e.getBoundingClientRect();return b.width>0&&b.height>0;};
   const box=e=>{const b=e.getBoundingClientRect();return {x:b.x,y:b.y,w:b.width,h:b.height};};
   const kind=s=>{const v=String(s).match(/[\d.]+/g);if(!v||v.length<3)return '';const [r,g,b]=v.map(Number);if(v.length>3&&+v[3]===0)return '';return Math.min(r,g,b)>170&&Math.max(r,g,b)-Math.min(r,g,b)<65?'white':g>r+18&&b>r+10&&g>65&&Math.abs(g-b)<100?'green':'';};
   const toScreen=(m,p)=>({x:m.a*p.x+m.c*p.y+m.e,y:m.b*p.x+m.d*p.y+m.f});
@@ -19,7 +19,10 @@
     const m=e.getScreenCTM();if(!m)return null;
     let center,r,L,p0,full=true,orientation=1;
     if(e.tagName.toLowerCase()==='circle'){
-      r=e.r.baseVal.value;center={x:e.cx.baseVal.value,y:e.cy.baseVal.value};L=2*Math.PI*r;p0={x:center.x+r,y:center.y};
+      const geometry=(value,attribute,axis)=>{let text=String(value||'').trim();if(!text||text==='auto'||text==='none')return attribute.baseVal.value;
+        if(text.endsWith('%')){const svg=e.ownerSVGElement,v=svg.viewBox.baseVal,w=v&&v.width?v.width:svg.clientWidth,h=v&&v.height?v.height:svg.clientHeight;return parseFloat(text)/100*(axis==='x'?w:axis==='y'?h:Math.hypot(w,h)/Math.SQRT2);}
+        const result=lengthValue(text,e);return Number.isFinite(result)?result:attribute.baseVal.value;};
+      r=geometry(s.r,e.r,'r');center={x:geometry(s.cx,e.cx,'x'),y:geometry(s.cy,e.cy,'y')};L=2*Math.PI*r;p0={x:center.x+r,y:center.y};
     } else {
       try{L=e.getTotalLength();if(L<8)return null;const a=e.getPointAtLength(0),b=e.getPointAtLength(L*.5),c=e.getPointAtLength(L*.95);const d=2*(a.x*(b.y-c.y)+b.x*(c.y-a.y)+c.x*(a.y-b.y));if(Math.abs(d)<.01)return null;
         const A=a.x*a.x+a.y*a.y,B=b.x*b.x+b.y*b.y,C=c.x*c.x+c.y*c.y;center={x:(A*(b.y-c.y)+B*(c.y-a.y)+C*(a.y-b.y))/d,y:(A*(c.x-b.x)+B*(a.x-c.x)+C*(b.x-a.x))/d};r=Math.hypot(a.x-center.x,a.y-center.y);p0=a;
@@ -95,7 +98,7 @@
     state.lastSent={key:r.key,round:state.round,pointer:r.pointer,start:r.start,end:r.end,at:now,seq:state.seq};
     return {sent:true,...state.lastSent,reason:'inside_observed_window'};
   }
-  const api={version:'0.4.0-final',
+  const api={version:'0.5.0-final',
     sample(fast,command){
       const begin=performance.now(),r=readRing();let input={sent:false,reason:'observe'};
       if(command&&command.enabled===true&&typeof command.cycle==='string')input=keyboard(r,command.cycle);

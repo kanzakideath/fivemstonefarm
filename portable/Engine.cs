@@ -8,13 +8,14 @@ using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 namespace FishingPilot {
  public sealed class Telemetry {public bool Known,InventoryOpen;public string Epoch="",Notice="NONE",Error="";public Inventory Inventory=new Inventory();public double At;}
- public sealed class Options {public int RodKey=2,FoodKey=1,DrinkKey=3;public bool AutoNeeds=true,ObserveOnly=false,BackgroundMode=true;public bool AutoStorage=false,HighAccuracy=true,IncludeExistingCatch=false;public int ReserveGrams=500,MinRecastMs=1400;public double FoodX=-1,FoodY=-1,WaterX=-1,WaterY=-1,GaugeRadius=20;}
- public sealed class Status {public string Phase="停止中",Detail="",Inventory="未確認",Hunger="未確認",Thirst="未確認",Ring="未検出";public string Storage="未登録／OFF",Recognition="未確認"; public int StorageCycles,StoredItems; public string Backend="未確認",Delivery="未確認"; public double ReadMs; public int Casts,Keys,Results;public bool Running;}
+ public sealed class Options {public int RodKey=2,FoodKey=1,DrinkKey=3;public bool AutoNeeds=true,ObserveOnly=false,BackgroundMode=true;public bool AutoStorage=false,HighAccuracy=true,IncludeExistingCatch=false,ShowOverlay=true;public int ReserveGrams=500,MinRecastMs=1400;public double FoodX=-1,FoodY=-1,WaterX=-1,WaterY=-1,GaugeRadius=20;}
+ public sealed class Status {public string Phase="停止中",Detail="",Inventory="未確認",Hunger="未確認",Thirst="未確認",Ring="未検出";public string Storage="未登録／OFF",Recognition="未確認"; public int StorageCycles,StoredItems; public string Backend="未確認",Delivery="未確認"; public double ReadMs; public int Casts,Keys,Results;public bool Running,InventoryFresh;public ItemDisplay[] HeldItems=new ItemDisplay[0],CaughtItems=new ItemDisplay[0];}
  public sealed class Engine : IDisposable {
   public event Action<Status> Changed;public event Action<string> Alert;
   readonly string root,templates;readonly object gate=new object(),logGate=new object();
   CancellationTokenSource stop;Task worker,telemetryWorker;readonly Stopwatch clock=Stopwatch.StartNew();
   Telemetry telemetry=new Telemetry();Status state=new Status();IntPtr target;uint targetPid;Options options;
+  CatchStatistics statistics;double statsAt; public IntPtr TargetWindow{get{return target;}}
   string epoch="",phase="ready",reason="",pendingNeed="",lastPhase="";double castAt,lastRingAt=-10000,nextCastAt,nextHud,foodActionAt=-10000,quietSince=-1,heartbeat,lastUi,sceneRetry;
   OutcomeLatch outcomes=new OutcomeLatch();
   Inventory before;RoundController round=new RoundController();bool castIssued,seenRing,fullAlert,acknowledged,resultWarned;
@@ -24,12 +25,17 @@ namespace FishingPilot {
   bool disposed;string sessionId="";StorageRegistration storageRegistration;CatchLedger catchLedger;double nextStorageAt;bool reconcileStorage,storageResumePending;
   public Engine(string directory,string templateFile){root=directory;templates=templateFile;Directory.CreateDirectory(root);}
   double Now{get{return clock.Elapsed.TotalMilliseconds;}}
+  bool idleBusy;
+  public async Task RefreshIdleInventory(){if(Busy||idleBusy||disposed)return;idleBusy=true;string marker=sessionId;
+   try{using(var reader=new CdpBridge.FishingTelemetryReader()){var t=await reader.Read().ConfigureAwait(false);if(Busy||disposed||sessionId!=marker)return;if(statistics==null)statistics=new CatchStatistics(root);statistics.Observe(t.Known?t.Inventory:null,Now);state.InventoryFresh=t.Known;state.HeldItems=statistics.Held;state.CaughtItems=statistics.Caught;state.Inventory=t.Known?String.Format("{0:F1} / {1:F1} kg",t.Inventory.Weight/1000.0,t.Inventory.Maximum/1000.0):"未確認";Publish();}}
+   catch{if(!Busy){state.InventoryFresh=false;Publish();}}finally{idleBusy=false;}
+  }
   public bool Busy {get{return (worker!=null&&!worker.IsCompleted)||(telemetryWorker!=null&&!telemetryWorker.IsCompleted);}}
   public bool Running{get{return stop!=null&&!stop.IsCancellationRequested&&worker!=null&&!worker.IsCompleted;}}
   public void Start(Options o) {
    if(Running)return;if(worker!=null&&!worker.IsCompleted||telemetryWorker!=null&&!telemetryWorker.IsCompleted)throw new InvalidOperationException("停止処理中です。数秒後に再開してください");
-   target=Native.FishingWindow();if(target==IntPtr.Zero&&o.BackgroundMode)target=Native.FindFishingWindow();if(target==IntPtr.Zero)throw new InvalidOperationException("FiveMを起動し、最初はゲーム上でF8を押してください");Native.GetWindowThreadProcessId(target,out targetPid);
-   options=o;
+   target=Native.FishingWindow();if(target==IntPtr.Zero&&o.BackgroundMode)target=Native.FindFishingWindow();if(target==IntPtr.Zero)throw new InvalidOperationException("FiveMを起動し、最初はゲーム上でF5を押してください");Native.GetWindowThreadProcessId(target,out targetPid);
+   options=o;statistics=new CatchStatistics(root);statsAt=-1;
    storageRegistration=null;catchLedger=null;nextStorageAt=0;storageResumePending=false;
    reconcileStorage=new StorageJournal(root).Pending()!=null;
    if(reconcileStorage&&!o.AutoStorage)throw new InvalidOperationException("未確定の収納があります。自動収納ONで登録荷台を開き、再確認してください");
@@ -37,7 +43,7 @@ namespace FishingPilot {
    stop=new CancellationTokenSource();var token=stop.Token;sessionId=Guid.NewGuid().ToString("N").Substring(0,12);round.Reset();outcomes.Clear();epoch="";phase="ready";reason="";lastPhase="";castIssued=seenRing=fullAlert=acknowledged=resultWarned=false;before=null;pendingNeed="";nextHud=0;foodActionAt=-10000;nextCastAt=Now;lastRingAt=-10000;quietSince=-1;hungerVotes=waterVotes=0;castRetries=0;heartbeat=lastUi=sceneRetry=0;
    hunger=new VitalGauge();water=new VitalGauge();cachedFood=new VitalGauge();cachedWater=new VitalGauge();notices.Clear();noticeQueue.Clear();
    consolePort=o.BackgroundMode?CdpBridge.FishingConnection.ConsolePort():0;
-   telemetry=new Telemetry();state=new Status{Running=true};Log("start","version=0.4.0-preview observe_only="+o.ObserveOnly+" background="+o.BackgroundMode+" console="+consolePort+" auto_needs="+o.AutoNeeds);
+   telemetry=new Telemetry();state=new Status{Running=true};Log("start","version=0.5.0-preview observe_only="+o.ObserveOnly+" background="+o.BackgroundMode+" console="+consolePort+" auto_needs="+o.AutoNeeds);
    telemetryWorker=Task.Run(()=>TelemetryLoop(token));worker=Task.Run(()=>Loop(token));
   }
   async Task TelemetryLoop(CancellationToken token) {
@@ -53,28 +59,40 @@ namespace FishingPilot {
      double now=Now;uint pid;Native.GetWindowThreadProcessId(target,out pid);
      if(!Native.IsWindow(target)||pid!=targetPid){Fail("FiveM終了を確認しました");break;}
      Telemetry t;lock(gate)t=telemetry;
-     if(t.Error=="接続が変わりました"||(t.Epoch!=""&&epoch!=""&&t.Epoch!=epoch)){Fail("サーバー再接続・再起動を検出。再開にはF8が必要です");break;}
+     if(t.Error=="接続が変わりました"||(t.Epoch!=""&&epoch!=""&&t.Epoch!=epoch)){Fail("サーバー再接続・再起動を検出。再開にはF5が必要です");break;}
      if(t.Known&&epoch=="")epoch=t.Epoch;
-     bool foreground=Native.GetForegroundWindow()==target;
-     if(!foreground&&!options.BackgroundMode){phase="focus";reason="バックグラウンド動作がOFFです";Emit(t,new Scene(),now,foreground);token.WaitHandle.WaitOne(100);continue;}
+     bool foreground=Native.GetForegroundWindow()==target;string route=InputPolicy.Route(foreground,options.BackgroundMode);
+     if(route=="paused"){phase="focus";reason="バックグラウンド動作がOFFです";Emit(t,new Scene(),now,foreground);token.WaitHandle.WaitOne(100);continue;}
      Scene scene=new Scene();bool sceneKnown=false;double captureAt=Now;
-     if(epoch!=""&&now>=sceneRetry)try {
-      if(sceneLink==null){sceneLink=new CdpBridge.FishingConnection(File.ReadAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"SceneProbe.js")),token);sceneLink.Initialize(epoch).GetAwaiter().GetResult();Log("nui_connected","contexts_discovered=1");}
-      bool permit=options.BackgroundMode&&!options.ObserveOnly&&castIssued&&t.Known&&!t.InventoryOpen&&Now-t.At<2200&&pendingNeed==""&&!token.IsCancellationRequested;
-      scene=sceneLink.Poll(permit,castCycle).GetAwaiter().GetResult();sceneKnown=true;
-      if(token.IsCancellationRequested)break;
-     }catch(Exception e){if(token.IsCancellationRequested)break;if(e.Message.Contains("SERVER_SESSION_CHANGED")){Fail("NUI接続の変更を検出しました");break;}Log("nui_retry",e.GetType().Name+" "+e.Message);if(sceneLink!=null)sceneLink.Dispose();sceneLink=null;sceneRetry=Now+800;}
-     Rectangle c=Native.Client(target);Ring r=scene.Ring;
-     if(!r.Valid&&!scene.Source.Contains("ambiguous")) {
-      if(options.BackgroundMode&&sceneKnown&&sceneLink!=null&&scene.Present)try{using(var b=sceneLink.Capture(scene,false).GetAwaiter().GetResult()){r=options.HighAccuracy?precise.ReadAuto(b):reader.ReadAuto(b);scene.Source="NUI capture";}if(r.Valid&&scene.Key>=0&&r.Key!=scene.Key)r.Valid=false;}catch(Exception e){LogThrottled("capture_unavailable",e.GetType().Name);}
-      else if(!options.BackgroundMode&&foreground&&c.Width>=300&&c.Height>=240){int side=(int)Math.Min(c.Width,c.Height*.4);using(var b=Native.Capture(new Rectangle(c.X+c.Width/2-side/2,c.Y+c.Height/2-side/2,side,side),320,320))r=options.HighAccuracy?precise.ReadAuto(b):reader.ReadAuto(b);scene.Source="foreground capture";}
+     Rectangle c=Native.Client(target);Ring r=new Ring();
+     // BackgroundMode grants permission when hidden; it cannot disable the foreground path.
+     if(foreground&&c.Width>=300&&c.Height>=240){
+      int side=(int)InputPolicy.CaptureSide(c.Width,c.Height);captureAt=Now;
+      try{using(var image=Native.Capture(new Rectangle(c.X+(c.Width-side)/2,c.Y+(c.Height-side)/2,side,side),320,320)){r=reader.ReadAuto(image);if(!r.Valid&&options.HighAccuracy)r=precise.ReadTracked(image);}
+       scene.Source="foreground capture";scene.Present=r.Valid;
+      }catch(Exception e){LogThrottled("foreground_capture_retry",e.GetType().Name);}
      }
+     if(!r.Valid&&epoch!=""&&now>=sceneRetry)try {
+      if(sceneLink==null){sceneLink=new CdpBridge.FishingConnection(File.ReadAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"SceneProbe.js")),token);sceneLink.Initialize(epoch).GetAwaiter().GetResult();Log("nui_connected","frame_discovery_initialized=1");}
+      bool permit=!foreground&&options.BackgroundMode&&!options.ObserveOnly&&castIssued&&t.Known&&!t.InventoryOpen&&Now-t.At<2200&&pendingNeed==""&&!token.IsCancellationRequested;
+      captureAt=Now;scene=sceneLink.Poll(permit,castCycle).GetAwaiter().GetResult();sceneKnown=true;r=scene.Ring;
+      if(token.IsCancellationRequested)break;
+     }catch(Exception e){if(token.IsCancellationRequested)break;if(e.Message.Contains("SERVER_SESSION_CHANGED")){Fail("NUI接続の変更を検出しました");break;}LogThrottled("nui_retry",e.GetType().Name+" "+e.Message);if(sceneLink!=null)sceneLink.Dispose();sceneLink=null;sceneRetry=Now+800;}
+     if(!r.Valid&&!scene.Source.Contains("ambiguous")){
+      // No DOM candidate prerequisite: Canvas and CSS circles must reach raster recognition.
+      if(sceneLink!=null)try{captureAt=Now;using(var image=sceneLink.Capture(scene,false).GetAwaiter().GetResult()){r=options.HighAccuracy?precise.ReadAuto(image):reader.ReadAuto(image);}scene.Source="NUI raster";if(r.Valid&&scene.Key>=0&&r.Key!=scene.Key)r.Valid=false;}
+       catch(Exception e){LogThrottled("capture_unavailable",e.GetType().Name);}
+      if(!r.Valid&&foreground&&options.HighAccuracy&&c.Width>=300&&c.Height>=240){int side=(int)InputPolicy.CaptureSide(c.Width,c.Height);captureAt=Now;using(var image=Native.Capture(new Rectangle(c.X+(c.Width-side)/2,c.Y+(c.Height-side)/2,side,side),320,320))r=precise.ReadAuto(image);scene.Source="foreground adaptive";}
+     }
+     scene.Present|=r.Valid;
      scene.Cost=Now-captureAt;scene.At=Now;now=Now;
-     state.ReadMs=scene.Cost;state.Backend=options.BackgroundMode?(scene.Ring.Valid?"NUI同一処理内の判定・入力":sceneKnown?"NUI画像／対象確認中":"バックグラウンド接続待ち"):"前面画像＋Windows入力";
+     state.ReadMs=scene.Cost;state.Backend=!foreground&&options.BackgroundMode?(scene.Ring.Valid?"NUI同一処理内の判定・入力":sceneKnown?"NUI画像／対象確認中":"バックグラウンド接続待ち"):"前面画像＋Windows入力";
      state.Delivery=scene.Delivery=="transition_observed"?"入力後の画面遷移を確認":scene.Delivery=="sent_unconfirmed"?"送信済み・次判定を確認中":sceneKnown?"円の認識待ち":"未確認";
      if(scene.SentKey>=0){state.Keys++;round.Round=Math.Max(round.Round,scene.InputRound);round.LastHit=now;round.Latched=true;Log("round_key","backend=nui_same_turn key="+scene.SentKey+" sequence="+scene.InputSequence+" round="+scene.InputRound+" pointer="+scene.InputPointer.ToString("F2")+" target="+scene.InputStart.ToString("F2")+"-"+scene.InputEnd.ToString("F2")+" poll_ms="+scene.Cost.ToString("F1"));}bool present=scene.Present||r.Valid;
      if(present){lastRingAt=now;quietSince=-1;}else if(scene.Busy)quietSince=-1;else if(quietSince<0)quietSince=now;
      bool fresh=t.Known&&now-t.At>=0&&now-t.At<2500;
+     if(statsAt!=t.At){statistics.Observe(t.Known?t.Inventory:null,t.At);statsAt=t.At;}
+     state.InventoryFresh=fresh;state.HeldItems=statistics.Held;state.CaughtItems=statistics.Caught;
      if(fresh&&catchLedger==null)catchLedger=new CatchLedger(t.Inventory,options.IncludeExistingCatch&&storageRegistration!=null?storageRegistration.Items:null);
      if(options.AutoStorage&&fresh&&storageRegistration.Epoch!=t.Epoch){Fail("サーバー接続が変わりました。荷台を登録し直してください");break;}
      state.Recognition=r.Native?"SVG描画値＋数字＋連続観測":options.HighAccuracy?precise.Evidence:"画像テンプレート";
@@ -86,23 +104,28 @@ namespace FishingPilot {
      if(options.ObserveOnly){if(now>=nextHud){ReadVitals(c,scene,foreground);nextHud=Now+2500;}int key=round.Observe(r,now);if(key>=0){state.Keys++;Log("dry_decision","key="+key+" round="+round.Round);}phase="observe";Emit(t,scene,now,foreground);token.WaitHandle.WaitOne(12);continue;}
      if(present&&!castIssued&&fresh&&pendingNeed==""){before=t.Inventory;outcomes.Clear();castIssued=true;seenRing=true;acknowledged=true;castAt=now;castCycle=sessionId+":"+(++castSerial);round.Reset();Log("adopt_existing_round","no_rod_key_sent=1");}
      if(castIssued&&(castNotice||scene.Busy||present)){if(!acknowledged)Log("cast_ack",present?"ring":"progress_or_notice");acknowledged=true;if(storageResumePending){storageResumePending=false;Log("storage_fishing_resumed","progress_or_round_observed=1");}}
-     if(r.Valid&&castIssued){seenRing=true;phase="challenge";reason="追加判定も継続して監視しています";
-      if(fresh&&!t.InventoryOpen&&scene.Cost<100&&!(options.BackgroundMode&&r.Native)&&(!options.HighAccuracy||r.Native||pixelGate.Accept(r,now))){int key=round.Observe(r,now,Math.Min(40,scene.Cost));if(key>=0){bool sent=false,uncertain=false;
-        if(options.BackgroundMode&&sceneLink!=null&&scene.Present&&scene.Key==key){
-         try{sent=sceneLink.Digit(scene,key).GetAwaiter().GetResult();}
+     if(r.Valid&&castIssued){seenRing=true;phase="challenge";reason="円と数字を追跡しています";
+      bool nativeHandled=!foreground&&options.BackgroundMode&&r.Native;
+      if(fresh&&!t.InventoryOpen&&scene.Cost<180&&!nativeHandled){
+       bool evidence=r.Native||!options.HighAccuracy||pixelGate.Accept(r,now);
+       int key=round.Observe(r,now,Math.Min(45,scene.Cost));
+       if(key>=0){bool sent=false,uncertain=false;
+        if(!evidence){round.InputRejected();reason="連続した画像の一致を確認しています";}
+        else {
+         try {if(foreground)sent=Native.Press(target,targetPid,key,token);
+          else if(options.BackgroundMode&&sceneLink!=null)sent=sceneLink.PixelDigit(scene,key).GetAwaiter().GetResult();}
          catch(OperationCanceledException){if(token.IsCancellationRequested)throw;uncertain=true;}
-         catch(Exception e){uncertain=true;Log("key_delivery_unconfirmed",e.GetType().Name+" latched=1 no_duplicate=1");}
-         if(uncertain){sceneLink.Dispose();sceneLink=null;sceneRetry=Now+800;reason="入力結果を再確認中。二重入力せず次の画面変化を待ちます";}
+         catch(Exception e){uncertain=true;Log("key_delivery_unconfirmed",e.GetType().Name+" no_duplicate=1");}
+         if(sent){state.Keys++;state.Delivery="キー送信済み・次の状態を確認中";Log("round_key","key="+key+" round="+round.Round+" backend="+(foreground?"foreground":"focused_nui")+" observed_ms="+scene.Cost.ToString("F0"));}
+         else if(!uncertain){round.InputRejected();reason="円は検出。入力を受けるゲームUIを確認できません";LogThrottled("round_not_sent","ring_detected=1 safe_target_unavailable=1 foreground="+foreground);}
         }
-        else if(!options.BackgroundMode&&foreground)sent=Native.Press(target,targetPid,key,token);
-        if(sent){state.Keys++;Log("round_key","key="+key+" round="+round.Round+" backend="+(options.BackgroundMode&&scene.Present?"targeted_nui":"foreground")+" observed_ms="+scene.Cost.ToString("F0"));}
-        else if(!uncertain){round.InputRejected();LogThrottled("round_not_sent","stale_round_or_no_safe_backend");}
-      }}else reason=options.BackgroundMode&&r.Native?"円の描画値と同じ処理内で入力しています":"接続または描画の新鮮さを再確認しています";
+       }
+      }else reason=nativeHandled?"NUIの描画確認と同じ処理内で入力します":t.InventoryOpen?"インベントリが開いているため判定キーを保留":"所持品の新鮮さ／読み取り時間を再確認しています";
      }else if(castIssued){round.Observe(new Ring(),now);
       if(block){Fail("竿・餌を使用できない通知を検出しました");break;}
       bool obtained=seenRing&&fresh&&t.At>round.LastHit&&t.Inventory.IncreasedSince(before);
       if(!present&&!scene.Busy&&now-lastRingAt>180&&(obtained||terminal||fullNotice)){
-       if(obtained){state.Results++;if(storageRegistration!=null)catchLedger.Credit(before,t.Inventory,storageRegistration.Items);}
+       if(obtained){state.Results++;statistics.Credit(before,t.Inventory);state.HeldItems=statistics.Held;state.CaughtItems=statistics.Caught;if(storageRegistration!=null)catchLedger.Credit(before,t.Inventory,storageRegistration.Items);}
        Log(obtained?"inventory_gain_confirmed":fullNotice?"full_notice":"terminal_notice","failed="+fail+" rounds="+round.Round+" key_to_result_ms="+(now-round.LastHit).ToString("F0"));
        nextCastAt=RecastPolicy.Earliest(now,round.LastHit,options.MinRecastMs);castIssued=false;seenRing=false;acknowledged=false;castRetries=0;before=null;phase="recovery";resultWarned=false;outcomes.Clear();
        Log("recast_recovery","remaining_ms="+(nextCastAt-now).ToString("F0"));
@@ -132,7 +155,7 @@ namespace FishingPilot {
       else {fullAlert=false;bool needReady=HandleNeeds(now,token,foreground);
        if(needReady&&RecastPolicy.Ready(now,nextCastAt,quietSince,present,scene.Busy,fresh&&now-t.At<2500)&&!token.IsCancellationRequested){
         before=t.Inventory;round.Reset();outcomes.Clear();seenRing=false;acknowledged=false;resultWarned=false;
-        if(PressSlot(options.RodKey,token,foreground)){castAt=Now;castCycle=sessionId+":"+(++castSerial);castIssued=true;phase="bite";state.Casts++;Log("cast","key="+options.RodKey+" ack=pending backend="+(options.BackgroundMode&&consolePort!=0?"registered_hotbar":"foreground"));}
+        if(PressSlot(options.RodKey,token,foreground)){castAt=Now;castCycle=sessionId+":"+(++castSerial);castIssued=true;phase="bite";state.Casts++;Log("cast","key="+options.RodKey+" ack=pending backend="+(!foreground&&options.BackgroundMode&&consolePort!=0?"registered_hotbar":"foreground"));}
         else {phase="input";reason="対象ゲーム用の入力先が未確認です。別アプリには入力していません";nextCastAt=now+2000;LogThrottled("cast_not_sent","console="+consolePort+" foreground="+foreground);}
        }else if(needReady){phase="recovery";reason=scene.Busy?"ゲームの進捗が終わるまで待っています":"終了動作の回復を確認して次の投竿へ進みます";}
       }
@@ -143,6 +166,7 @@ namespace FishingPilot {
    finally{stop.Cancel();if(sceneLink!=null){sceneLink.Dispose();sceneLink=null;}state.Running=false;state.Phase="停止中";Publish();Log("stop","input_scope_closed=1 no_deferred_keydown=1");Native.timeEndPeriod(1);}
   }
   bool PressSlot(int key,CancellationToken token,bool foreground){
+   if(foreground)return Native.Press(target,targetPid,key,token);
    if(options.BackgroundMode){if(consolePort==0)consolePort=CdpBridge.FishingConnection.ConsolePort();
     if(consolePort!=0)return CdpBridge.FishingConnection.Hotbar(consolePort,key,token);
     LogThrottled("background_hotbar_unavailable","no_unique_fivem_owned_console=1 no_desktop_fallback=1");return false;}
@@ -152,7 +176,7 @@ namespace FishingPilot {
    hunger=new VitalGauge();water=new VitalGauge();
    if(scene.Hunger>=0)hunger=new VitalGauge{Known=true,Value=scene.Hunger};if(scene.Water>=0)water=new VitalGauge{Known=true,Value=scene.Water};
    if(scene.Hunger<0||scene.Water<0){Bitmap b=null;
-    try{if(options.BackgroundMode&&sceneLink!=null)b=sceneLink.Capture(null,true).GetAwaiter().GetResult();else if(foreground&&c.Height>0){double scale=900.0/c.Height;int h=(int)(c.Height*.2),w=Math.Min(c.Width,(int)(c.Height*.5));b=Native.Capture(new Rectangle(c.X,c.Bottom-h,w,h),(int)(w*scale),(int)(h*scale));}
+    try{if(!foreground&&options.BackgroundMode&&sceneLink!=null)b=sceneLink.Capture(null,true).GetAwaiter().GetResult();else if(foreground&&c.Height>0){double scale=900.0/c.Height;int h=(int)(c.Height*.2),w=Math.Min(c.Width,(int)(c.Height*.5));b=Native.Capture(new Rectangle(c.X,c.Bottom-h,w,h),(int)(w*scale),(int)(h*scale));}
      if(b!=null){double scale=c.Height>0?900.0/c.Height:1;
       if(scene.Hunger<0)hunger=HudReader.Read(b,true,options.FoodX<0?(cachedFood.Known?cachedFood.X:-1):options.FoodX*c.Width*scale,options.FoodY<0?(cachedFood.Known?cachedFood.Y:-1):options.FoodY*900-720,options.FoodX<0&&cachedFood.Known?cachedFood.Radius:options.GaugeRadius*scale);
       if(scene.Water<0)water=HudReader.Read(b,false,options.WaterX<0?(cachedWater.Known?cachedWater.X:-1):options.WaterX*c.Width*scale,options.WaterY<0?(cachedWater.Known?cachedWater.Y:-1):options.WaterY*900-720,options.WaterX<0&&cachedWater.Known?cachedWater.Radius:options.GaugeRadius*scale);
@@ -176,16 +200,16 @@ namespace FishingPilot {
   }
   void Emit(Telemetry t,Scene s,double now,bool foreground){
    if(phase!=lastPhase){Log("phase","from="+lastPhase+" to="+phase+" reason="+reason);lastPhase=phase;}
-   if(now-heartbeat>=2000){Log("state","phase="+phase+" pending="+castIssued+" ack="+acknowledged+" seen_ring="+seenRing+" ring="+s.Present+" foreground="+foreground+" background="+options.BackgroundMode+" telemetry_age_ms="+(now-t.At).ToString("F0")+" source="+s.Source+" frame_ms="+s.Cost.ToString("F0")+" viewport="+s.Width+"x"+s.Height);heartbeat=now;}
+   if(now-heartbeat>=2000){Log("state","phase="+phase+" pending="+castIssued+" ack="+acknowledged+" seen_ring="+seenRing+" ring="+s.Present+" foreground="+foreground+" background="+options.BackgroundMode+" telemetry_age_ms="+(now-t.At).ToString("F0")+" source="+s.Source+" frame_ms="+s.Cost.ToString("F0")+" viewport="+s.Width+"x"+s.Height+" discovery="+s.Discovery+" input_reason="+s.InputReason);heartbeat=now;}
    if(now-lastUi<180)return;lastUi=now;state.Phase=Label(phase);state.Detail=reason;state.Inventory=t.Known?String.Format("{0:F1} / {1:F1} kg",t.Inventory.Weight/1000.0,t.Inventory.Maximum/1000.0):"未確認";state.Hunger=hunger.Known?hunger.Value.ToString("F0")+"%":"未確認";state.Thirst=water.Known?water.Value.ToString("F0")+"%":"未確認";Publish();
   }
   string Label(string p){switch(p){case "bite":return "アタリ待ち／投竿の受付監視";case "challenge":return "数字・タイミング判定";case "result":return "追加判定／結果確認";case "recovery":return "次の投竿の受付を準備";case "full":return "空き容量／登録荷台待ち";case "storage":return "収納と釣り再開の確認";case "inventory":return "所持品画面の閉鎖待ち";case "supply":return "50%以下のゲージを補給・確認";case "vitals":return "空腹・水分ゲージの確認待ち";case "telemetry":return "対応NUIの確認待ち";case "observe":return "観察テスト（入力なし）";case "focus":return "前面表示待ち";case "input":return "対象ゲームの入力先を確認中";default:return "次の釣りを準備";}}
-  void Publish(){var e=Changed;if(e!=null)e(new Status{Running=state.Running,Phase=state.Phase,Detail=state.Detail,Inventory=state.Inventory,Hunger=state.Hunger,Thirst=state.Thirst,Ring=state.Ring,Casts=state.Casts,Keys=state.Keys,Results=state.Results,Backend=state.Backend,Delivery=state.Delivery,ReadMs=state.ReadMs,Storage=state.Storage,Recognition=state.Recognition,StorageCycles=state.StorageCycles,StoredItems=state.StoredItems});}
+  void Publish(){var e=Changed;if(e!=null)e(new Status{Running=state.Running,Phase=state.Phase,Detail=state.Detail,Inventory=state.Inventory,Hunger=state.Hunger,Thirst=state.Thirst,Ring=state.Ring,Casts=state.Casts,Keys=state.Keys,Results=state.Results,Backend=state.Backend,Delivery=state.Delivery,ReadMs=state.ReadMs,Storage=state.Storage,Recognition=state.Recognition,StorageCycles=state.StorageCycles,StoredItems=state.StoredItems,InventoryFresh=state.InventoryFresh,HeldItems=state.HeldItems,CaughtItems=state.CaughtItems});}
   void Notify(string text){var e=Alert;if(e!=null)e(text);}void Fail(string text){state.Detail=text;Log("blocked",text);Notify(text);stop.Cancel();}
   public void Stop(){if(stop!=null){Log("stop_requested","user=1");stop.Cancel();}}
   double lastLimited;
   void LogThrottled(string kind,string detail){if(Now-lastLimited<2000)return;lastLimited=Now;Log(kind,detail);}
-  public void Log(string kind,string detail){lock(logGate){try{string p=Path.Combine(root,"events.jsonl");if(File.Exists(p)&&new FileInfo(p).Length>4*1024*1024){string old=p+".1";if(File.Exists(old))File.Delete(old);File.Move(p,old);}File.AppendAllText(p,new JavaScriptSerializer().Serialize(new{utc=DateTime.UtcNow.ToString("o"),ms=Now,version="0.4.0-preview",session=sessionId,type=kind,detail=detail})+Environment.NewLine);}catch{}}}
+  public void Log(string kind,string detail){lock(logGate){try{string p=Path.Combine(root,"events.jsonl");if(File.Exists(p)&&new FileInfo(p).Length>4*1024*1024){string old=p+".1";if(File.Exists(old))File.Delete(old);File.Move(p,old);}File.AppendAllText(p,new JavaScriptSerializer().Serialize(new{utc=DateTime.UtcNow.ToString("o"),ms=Now,version="0.5.0-preview",session=sessionId,type=kind,detail=detail})+Environment.NewLine);}catch{}}}
   public void Dispose(){if(disposed)return;disposed=true;Stop();if(worker!=null)try{worker.Wait(2000);}catch{}}
  }
 }
