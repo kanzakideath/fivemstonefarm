@@ -19,3 +19,10 @@ for row in rows:
  with path.open('w',encoding='utf-8',newline='\n') as f:f.write(new)
  print('Verified:',row['path'])
 print('Verified source changes:',len(rows))
+# PowerShell variable names are case insensitive: do not overwrite the Case parameter.
+p=root/'staging064/RunBackground.ps1'
+s=p.read_text(encoding='utf-8').replace('$case','$caseDir')
+p.write_text(s,encoding='utf-8',newline='\n')
+# Keep the browser fixture version aligned with the actual executable.
+p=root/'portable/TestUi.py'
+p.write_text(p.read_text(encoding='utf-8').replace('0.6.1-preview','0.6.4-preview'),encoding='utf-8',newline='\n')
