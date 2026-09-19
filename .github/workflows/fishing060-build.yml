@@ -1,0 +1,94 @@
+name: FishingPilot 0.6.0 runnable Windows package
+on:
+  push:
+    branches: [feat/fishing-live-value-0.6.0]
+    paths: [.github/workflows/fishing060-build.yml, 'staging060/**']
+permissions:
+  contents: write
+concurrency:
+  group: fishing060-build
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Integrate and verify the previous source changes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force artifacts/fishing060 | Out-Null
+          python staging060/Apply.py
+          if($LASTEXITCODE -ne 0){throw 'Source integration failed'}
+      - name: Build Windows executable and test native startup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          Start-Transcript artifacts/fishing060/build.txt
+          try { ./portable/Build.ps1 -Test } finally { Stop-Transcript }
+      - name: Test live inventory, circle recognition, settings and storage
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          node portable/TestInventory060.cjs artifacts/fishing060/inventory/RESULT.json
+          if($LASTEXITCODE -ne 0){throw 'Inventory tests failed'}
+          $expr=Join-Path $PWD 'artifacts/fishing060/storage-expressions.json'
+          $p=Start-Process portable/dist/FishingPilot.exe -ArgumentList @('--storage-expressions',('"'+$expr+'"')) -PassThru
+          if(!$p.WaitForExit(12000)){$p.Kill();throw 'Storage expression export timed out'}
+          $p.Refresh();if($p.ExitCode -ne 0 -or !(Test-Path $expr)){throw 'Storage expression export failed'}
+          python -m pip install playwright==1.57.0
+          if($LASTEXITCODE -ne 0){throw 'Browser tooling installation failed'}
+          $edge='C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+          if(!(Test-Path $edge)){$edge='C:\Program Files\Microsoft\Edge\Application\msedge.exe'}
+          $browser=@()
+          if(Test-Path $edge){$browser=@('--browser',$edge)}else{python -m playwright install chromium;if($LASTEXITCODE -ne 0){throw 'Browser installation failed'}}
+          python portable/TestScene.py @browser --output artifacts/fishing060/scene
+          if($LASTEXITCODE -ne 0){throw 'Circle recognition tests failed'}
+          python portable/TestUi.py @browser --output artifacts/fishing060/ui
+          if($LASTEXITCODE -ne 0){throw 'Overlay settings and UI tests failed'}
+          python portable/TestStorage.py @browser --expressions $expr --output artifacts/fishing060/storage
+          if($LASTEXITCODE -ne 0){throw 'Storage regression tests failed'}
+      - name: Commit validated portable source only to isolated branch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- portable
+          git diff --cached --quiet
+          if($LASTEXITCODE -ne 0){
+            git commit -m 'FishingPilot 0.6.0: Windows-tested live inventory, valuation and overlay build'
+            if($LASTEXITCODE -ne 0){throw 'Validated source commit failed'}
+            git push origin HEAD:feat/fishing-live-value-0.6.0
+            if($LASTEXITCODE -ne 0){throw 'Branch advanced; no force push allowed'}
+          }
+      - name: Package executable, matching source and verification
+        shell: pwsh
+        run: |
+          python portable/Package060.py
+          if($LASTEXITCODE -ne 0){throw 'Packaging or archive verification failed'}
+      - name: Retain attempted source and diagnostics on failure
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts/fishing060/attempted-source | Out-Null
+          Get-ChildItem portable -File | Where-Object Extension -in '.cs','.csproj','.ps1','.py','.js','.json','.txt' | Copy-Item -Destination artifacts/fishing060/attempted-source -Force
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: fishing060-evidence
+          path: |
+            artifacts/fishing060/
+            portable/dist/test-evidence/
+          retention-days: 14
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: success()
+        with:
+          name: fishing060-download
+          path: artifacts/fishing060-download/
+          retention-days: 14
+          if-no-files-found: error
