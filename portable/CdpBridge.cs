@@ -4190,6 +4190,9 @@ internal static partial class CdpBridge
         }
 
 
+        public async Task FishingBackgroundFocus(bool enabled) {
+            await CommandAsync(_socket,"Emulation.setFocusEmulationEnabled",new Dictionary<string,object>{{"enabled",enabled}},_timeout.Token).ConfigureAwait(false);
+        }
         public async Task<bool> FishingKey(int digit, CancellationToken cancel) {
             if(digit<0||digit>9||cancel.IsCancellationRequested)return false;
             var args=new Dictionary<string,object>{{"type","rawKeyDown"},{"key",digit.ToString(CultureInfo.InvariantCulture)},{"code","Digit"+digit},{"windowsVirtualKeyCode",48+digit},{"nativeVirtualKeyCode",48+digit},{"modifiers",0},{"autoRepeat",false}};

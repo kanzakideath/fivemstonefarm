@@ -12,11 +12,11 @@ using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
-[assembly: AssemblyVersion("0.6.2.0")]
-[assembly: AssemblyFileVersion("0.6.2.0")]
+[assembly: AssemblyVersion("0.6.3.0")]
+[assembly: AssemblyFileVersion("0.6.3.0")]
 namespace FishingPilot {
  static class Program {
-  internal const string Version="0.6.2-preview";
+  internal const string Version="0.6.3-preview";
   [STAThread] static int Main(string[] args) {
    Native.SetProcessDPIAware();Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);
    if(args.Length>1&&args[0]=="--storage-expressions"){CdpBridge.ExportStorageExpressions(args[1]);return 0;}

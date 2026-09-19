@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 namespace FishingPilot {
  public sealed class Scene {
-  public string Discovery=""; public Ring Ring=new Ring(); public bool Present,Busy; public string Frame="",Stamp="",Source="none"; public int Key=-1,Width,Height;
+  public string RenderVisibility=""; public bool RenderFocused; public string Discovery=""; public Ring Ring=new Ring(); public bool Present,Busy; public string Frame="",Stamp="",Source="none"; public int Key=-1,Width,Height;
   public int SentKey=-1, InputSequence, InputRound; public string Delivery="", InputReason=""; public double InputPointer,InputStart,InputEnd;
   public double At,Cost,X,Y,W,H,Hunger=-1,Water=-1; public List<Notice> Notices=new List<Notice>();
  }
@@ -53,27 +53,49 @@ internal static partial class CdpBridge {
    scene.Delivery=GetString(d,"delivery");var input=GetObject(d,"input");scene.InputReason=GetString(input,"reason");
    if(Bool(input,"sent")){scene.SentKey=NumI(input,"key",-1);scene.InputSequence=NumI(input,"seq");scene.InputRound=NumI(input,"round");scene.InputPointer=Num(input,"pointer",0);scene.InputStart=Num(input,"start",0);scene.InputEnd=Num(input,"end",0);}
    if(d.ContainsKey("notices"))foreach(var n in ReadJsonArray(d["notices"])??new object[0]){var v=(Dictionary<string,object>)n;scene.Notices.Add(new FishingPilot.Notice{Kind=GetString(v,"kind"),Id=url+":"+GetString(v,"id")});}
-   return scene;
+   scene.RenderVisibility=GetString(d,"documentVisible");scene.RenderFocused=Bool(d,"focused");return scene;
+  }
+  readonly Dictionary<string,FishingPilot.Scene> recent=new Dictionary<string,FishingPilot.Scene>();
+  public string BackgroundStatus="focus_emulation=not_requested";bool backgroundActive;
+  public async Task SetBackgroundActive(bool active){
+   if(backgroundActive==active)return;
+   var root=await Get("nui://game/ui/root.html").ConfigureAwait(false);root.FishingDeadline(800);
+   try{await root.FishingBackgroundFocus(active).ConfigureAwait(false);backgroundActive=active;BackgroundStatus="focus_emulation="+active;}
+   catch(Exception e){BackgroundStatus="focus_emulation_unavailable="+e.Message;root.Dispose();sessions.Remove("nui://game/ui/root.html");}
+   finally{try{root.FishingDeadline(-1);}catch(ObjectDisposedException){}}
+  }
+  void Remember(string url,FishingPilot.Scene value){value.At=timer.Elapsed.TotalMilliseconds;recent[url]=new FishingPilot.Scene{At=value.At,Busy=value.Busy,Hunger=value.Hunger,Water=value.Water,Notices=new List<FishingPilot.Notice>(value.Notices)};}
+  void Ancillary(FishingPilot.Scene value,double now){
+   foreach(var pair in recent){var old=pair.Value;if(ReferenceEquals(old,value)||now-old.At>3000)continue;
+    value.Busy|=old.Busy;if(value.Hunger<0&&old.Hunger>=0)value.Hunger=old.Hunger;if(value.Water<0&&old.Water>=0)value.Water=old.Water;
+    foreach(var n in old.Notices)if(!value.Notices.Exists(v=>v.Id==n.Id))value.Notices.Add(n);
+   }
+  }
+  async Task<FishingPilot.Scene> Probe(string url,bool allow,string cycle){
+   double now=timer.Elapsed.TotalMilliseconds,until;if(failedUntil.TryGetValue(url,out until)&&until>now)return null;
+   try{var value=await ReadOne(url,allow,cycle,true).ConfigureAwait(false);Remember(url,value);failedUntil.Remove(url);return value;}
+   catch(Exception e){if(e.Message.Contains("SERVER_SESSION_CHANGED"))throw;CdpSession broken;if(sessions.TryGetValue(url,out broken)){broken.Dispose();sessions.Remove(url);}installed.Remove(url);failedUntil[url]=now+2000;LastDiscovery="frame="+url+" error="+e.Message;return null;}
   }
   public async Task<FishingPilot.Scene> Poll(bool allowInput=false,string cycle="") {
    token.ThrowIfCancellationRequested();double now=timer.Elapsed.TotalMilliseconds;
-   FishingPilot.Scene chosen=new FishingPilot.Scene();
-   if(selected!="") {
-    chosen=await ReadOne(selected,allowInput,cycle,now-lastRingAt<500).ConfigureAwait(false);
-    // Critical path: return immediately, before discovery and ancillary reads.
-    if(chosen.Present){lastRingAt=now;chosen.Discovery=LastDiscovery;return chosen;}
+   var chosen=new FishingPilot.Scene();
+   // Sample the active ring before health checks, screenshot capture or any unrelated UI.
+   if(selected!=""){
+    var v=await Probe(selected,allowInput,cycle).ConfigureAwait(false);
+    if(v!=null){chosen=v;if(v.Ring.Valid){lastRingAt=now;Ancillary(v,now);v.Discovery=LastDiscovery;return v;}}
    }
-   if(now-healthAt>1500){var s=await Get(InventoryFramePart).ConfigureAwait(false);s.FishingDeadline(1200);try{var tree=await s.FishingFrames().ConfigureAwait(false);if(!ServerFrameTreeMatches(tree,epochFrames))throw new InvalidOperationException("SERVER_SESSION_CHANGED");Collect(tree,urls);}finally{s.FishingDeadline(-1);}healthAt=now;}
-   var batch=new List<string>();if(now>=scanAt&&urls.Count>0){string u=urls[scan++%urls.Count];if(u!=selected)batch.Add(u);scanAt=now+(selected==""?10:100);}
-   string noticeUrl=urls.FirstOrDefault(u=>u.Contains(ProgressFramePart));if(noticeUrl!=null&&noticeUrl!=selected&&!batch.Contains(noticeUrl)&&now>=noticeAt){batch.Add(noticeUrl);noticeAt=now+150;}
-   foreach(string u in batch){
-    double until;if(failedUntil.TryGetValue(u,out until)&&until>now)continue;
-    FishingPilot.Scene current;try{current=await ReadOne(u,false,cycle,false).ConfigureAwait(false);}catch(Exception e){if(e.Message.Contains("SERVER_SESSION_CHANGED"))throw;failedUntil[u]=now+5000;LastDiscovery="frames="+urls.Count+" failed="+failedUntil.Count;continue;}
-    LastDiscovery="frames="+urls.Count+" scanned="+scan+" present="+current.Present+" source="+current.Source;
-    if(current.Present){current.Notices.AddRange(chosen.Notices);current.Busy|=chosen.Busy;if(current.Hunger<0)current.Hunger=chosen.Hunger;if(current.Water<0)current.Water=chosen.Water;selected=u;lastRingAt=now;return current;}
-    chosen.Busy|=current.Busy;chosen.Notices.AddRange(current.Notices);if(chosen.Width==0){chosen.Width=current.Width;chosen.Height=current.Height;}if(current.Hunger>=0)chosen.Hunger=current.Hunger;if(current.Water>=0)chosen.Water=current.Water;
+   if(now-healthAt>1500){var connection=await Get(InventoryFramePart).ConfigureAwait(false);connection.FishingDeadline(1200);
+    try{var tree=await connection.FishingFrames().ConfigureAwait(false);if(!ServerFrameTreeMatches(tree,epochFrames))throw new InvalidOperationException("SERVER_SESSION_CHANGED");Collect(tree,urls);}finally{connection.FishingDeadline(-1);}healthAt=now;}
+   // Known skill/fishing resources are sampled every poll, not once per complete frame sweep.
+   var priority=urls.Where(u=>Rank(u)<=1&&u!=selected).Take(8).ToList();
+   if(now>=scanAt&&urls.Count>0){for(int i=0;i<urls.Count;i++){string u=urls[scan++%urls.Count];if(u!=selected&&!priority.Contains(u)&&u!="nui://game/ui/root.html"){priority.Add(u);break;}}scanAt=now+120;}
+   foreach(string u in priority){
+    var current=await Probe(u,allowInput,cycle).ConfigureAwait(false);if(current==null)continue;
+    if(current.Ring.Valid){selected=u;lastRingAt=now;Ancillary(current,now);current.Discovery="native_frame="+u+" "+BackgroundStatus;return current;}
+    if(current.Present&&!chosen.Present)chosen=current;
    }
-   chosen.Discovery=LastDiscovery;return chosen;
+   Ancillary(chosen,now);chosen.Discovery="frames="+urls.Count+" scanned="+scan+" "+BackgroundStatus+" "+LastDiscovery;
+   return chosen;
   }
   double noticeAt;
   static bool Bool(Dictionary<string,object>d,string key){object v;return d.TryGetValue(key,out v)&&v is bool&&(bool)v;}
@@ -100,7 +122,7 @@ internal static partial class CdpBridge {
     var focused=await Get(focus).ConfigureAwait(false);
     string guard=await Read(focused,"(() => {const a=document.activeElement;return a&&a.matches('input,textarea,[contenteditable=true]')?'EDITING':'OK';})()").ConfigureAwait(false);
     if(guard!="OK")return false;
-    root.FishingDeadline(700);try{return await root.FishingKey(digit,token).ConfigureAwait(false);}finally{root.FishingDeadline(-1);}
+    root.FishingDeadline(700);try{return await root.FishingKey(digit,token).ConfigureAwait(false);}finally{try{root.FishingDeadline(-1);}catch(ObjectDisposedException){}}
    }
    if(scene!=null&&scene.Present&&scene.Key==digit&&scene.Frame!="")return await Digit(scene,digit).ConfigureAwait(false);
    return false;
@@ -112,6 +134,6 @@ internal static partial class CdpBridge {
   }
   public static int ConsolePort() { return FishingPilot.Native.FiveMConsolePort(); }
   public static bool Hotbar(int port,int digit,CancellationToken token){if(token.IsCancellationRequested||digit<1||digit>5||(port!=29200&&port!=29300))return false;string cmd="hotkey"+digit;bool sent=false;try{sent=TrySendDevCon(port,"-"+cmd+";+"+cmd,0);if(sent)token.WaitHandle.WaitOne(50);return sent;}finally{if(sent)TrySendDevCon(port,"-"+cmd,0);}}
-  public void Dispose(){if(dead)return;dead=true;foreach(var s in sessions.Values)try{s.FishingDeadline(200);s.EvaluateStringAsync("window.__fpProbe3?window.__fpProbe3.stop(): 'STOPPED'",false).GetAwaiter().GetResult();}catch{}finally{s.Dispose();}sessions.Clear();}
+  public void Dispose(){if(dead)return;dead=true;if(backgroundActive)try{SetBackgroundActive(false).GetAwaiter().GetResult();}catch{}foreach(var s in sessions.Values)try{s.FishingDeadline(200);s.EvaluateStringAsync("window.__fpProbe3?window.__fpProbe3.stop(): 'STOPPED'",false).GetAwaiter().GetResult();}catch{}finally{s.Dispose();}sessions.Clear();}
  }
 }
