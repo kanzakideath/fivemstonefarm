@@ -34,7 +34,8 @@ jobs:
           $ErrorActionPreference='Stop'
           python staging061/Repair.py
           if($LASTEXITCODE -ne 0){throw 'Source repair failed'}
-          Remove-Item portable/dist/FiveM-FishingPilot-Integration.exe -Force -ErrorAction SilentlyContinue
+          # Do not let the baseline UI or nested Copy-Item directories survive into the repaired distribution.
+          Remove-Item portable/dist -Recurse -Force
           Start-Transcript artifacts/fishing061/build.txt
           try { ./portable/Build.ps1 -Test } finally { Stop-Transcript }
           ./staging061/RunCase.ps1 -Name after -Mode right-null
