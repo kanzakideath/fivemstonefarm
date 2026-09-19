@@ -1,0 +1,107 @@
+name: FishingPilot 0.6.3 background input and recognition
+on:
+  push:
+    branches: [fix/fishing-background-0.6.3]
+    paths: [.github/workflows/fishing063-build.yml, 'staging063/**']
+permissions:
+  contents: write
+concurrency:
+  group: fishing063-build
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Integrate isolated background repair
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          python staging063/Unpack.py
+          if($LASTEXITCODE -ne 0){throw 'Bundle integrity failed'}
+          git checkout 224cce602d86ecacca03b07c204826443f072c97 -- portable
+          if($LASTEXITCODE -ne 0){throw 'Baseline checkout failed'}
+          python staging063/Repair.py
+          if($LASTEXITCODE -ne 0){throw 'Source repair failed'}
+          python staging063/RasterPatch.py
+          if($LASTEXITCODE -ne 0){throw 'Raster integration failed'}
+          python staging063/Refine.py
+          if($LASTEXITCODE -ne 0){throw 'Recovery integration failed'}
+          Remove-Item portable/dist -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force artifacts/fishing063 | Out-Null
+      - name: Build and test Windows app and native UI
+        shell: pwsh
+        run: |
+          Start-Transcript artifacts/fishing063/build.txt
+          try { ./portable/Build.ps1 -Test } finally { Stop-Transcript }
+      - name: Install pinned browser test tools
+        shell: pwsh
+        run: |
+          python -m pip install playwright==1.57.0 websockets==15.0.1
+          if($LASTEXITCODE -ne 0){throw 'Test tooling installation failed'}
+          $edge='C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+          if(!(Test-Path $edge)){$edge='C:\Program Files\Microsoft\Edge\Application\msedge.exe'}
+          if(!(Test-Path $edge)){throw 'Expected Edge test browser missing'}
+          "TEST_BROWSER=$edge" >> $env:GITHUB_ENV
+      - name: Execute real scripts with game covered and editor foreground
+        shell: pwsh
+        run: |
+          node staging063/TestSlots.cjs
+          if($LASTEXITCODE -ne 0){throw 'Slot guards failed'}
+          ./staging063/RunBackground.ps1 -Name white -Style white -Browser $env:TEST_BROWSER
+          ./staging063/RunBackground.ps1 -Name red -Style red -Browser $env:TEST_BROWSER
+          ./staging063/RunBackground.ps1 -Name no-focus-emulation -Style white -Browser $env:TEST_BROWSER -FocusUnsupported
+      - name: Inventory, circle, UI and storage regressions
+        shell: pwsh
+        run: |
+          node portable/TestInventory060.cjs artifacts/fishing063/inventory/RESULT.json
+          if($LASTEXITCODE -ne 0){throw 'Inventory regression failed'}
+          $expr=Join-Path $PWD 'artifacts/fishing063/storage-expressions.json'
+          $p=Start-Process portable/dist/FishingPilot.exe -ArgumentList @('--storage-expressions',('"'+$expr+'"')) -PassThru
+          if(!$p.WaitForExit(12000)){$p.Kill();throw 'Storage export timeout'}
+          $p.Refresh();if($p.ExitCode -ne 0){throw 'Storage export failed'}
+          python portable/TestScene.py --browser $env:TEST_BROWSER --output artifacts/fishing063/scene
+          if($LASTEXITCODE -ne 0){throw 'Scene regression failed'}
+          python portable/TestUi.py --browser $env:TEST_BROWSER --output artifacts/fishing063/ui
+          if($LASTEXITCODE -ne 0){throw 'UI regression failed'}
+          python portable/TestStorage.py --browser $env:TEST_BROWSER --expressions $expr --output artifacts/fishing063/storage
+          if($LASTEXITCODE -ne 0){throw 'Storage regression failed'}
+      - name: Commit validated source only to isolated branch
+        shell: pwsh
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- portable
+          git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --cached --check
+          if($LASTEXITCODE -ne 0){throw 'Whitespace validation failed'}
+          git diff --cached --quiet
+          if($LASTEXITCODE -ne 0){
+            git commit -m 'FishingPilot 0.6.3: verified background useItem, priority NUI sampling and isolated raster worker'
+            if($LASTEXITCODE -ne 0){throw 'Commit failed'}
+            git push origin HEAD:fix/fishing-background-0.6.3
+            if($LASTEXITCODE -ne 0){throw 'Branch advanced; no force push'}
+          }
+      - name: Package matching executable, source and verification
+        shell: pwsh
+        run: |
+          python staging063/Package.py
+          if($LASTEXITCODE -ne 0){throw 'Packaging gate failed'}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: fishing063-evidence
+          path: |
+            artifacts/fishing063/
+            portable/dist/test-evidence/
+          retention-days: 14
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: success()
+        with:
+          name: fishing063-download
+          path: artifacts/fishing063-download/
+          retention-days: 14
+          if-no-files-found: error
