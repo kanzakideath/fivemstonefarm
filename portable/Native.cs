@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -52,7 +52,14 @@ namespace FishingPilot {
    var down=new INPUT{type=1,data=new UNION{ki=new KEYBDINPUT{scan=(ushort)MapVirtualKey((uint)vk,0),flags=0x0008}}};
    var up=down;up.data.ki.flags|=0x0002;
    bool sent=false;
-   try{sent=SendInput(1,new[]{down},Marshal.SizeOf(typeof(INPUT)))==1;if(sent)cancel.WaitHandle.WaitOne(45);return sent;}
+   try{sent=SendInput(1,new[]{down},Marshal.SizeOf(typeof(INPUT)))==1;if(sent)cancel.WaitHandle.WaitOne(24);return sent;}
+   finally{if(sent)SendInput(1,new[]{up},Marshal.SizeOf(typeof(INPUT)));}
+  }
+  public static bool HoldForward(IntPtr h,uint expectedPid,int milliseconds,CancellationToken cancel,Func<bool> enabled){
+   uint pid;GetWindowThreadProcessId(h,out pid);
+   if(cancel.IsCancellationRequested||!enabled()||h!=GetForegroundWindow()||pid!=expectedPid||!IsWindow(h)||milliseconds<100||milliseconds>700||(GetAsyncKeyState(0x57)&0x8000)!=0)return false;
+   var down=new INPUT{type=1,data=new UNION{ki=new KEYBDINPUT{scan=(ushort)MapVirtualKey(0x57,0),flags=0x0008}}};var up=down;up.data.ki.flags|=0x0002;bool sent=false;
+   try{sent=SendInput(1,new[]{down},Marshal.SizeOf(typeof(INPUT)))==1;if(sent){var sw=Stopwatch.StartNew();while(sw.ElapsedMilliseconds<milliseconds&&!cancel.IsCancellationRequested&&enabled()&&GetForegroundWindow()==h)cancel.WaitHandle.WaitOne(10);}return sent;}
    finally{if(sent)SendInput(1,new[]{up},Marshal.SizeOf(typeof(INPUT)));}
   }
  }

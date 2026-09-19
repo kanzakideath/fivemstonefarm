@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 window.fishingApp = new Framework7({el:'#app',theme:'ios',name:'FishingPilot',id:'local.fishingpilot',init:true});
 const $=id=>document.getElementById(id);
 const boolKeys=['ObserveOnly','BackgroundMode','AutoNeeds','AutoStorage','HighAccuracy','IncludeExistingCatch','ShowOverlay'];
@@ -13,7 +13,7 @@ $('start').hidden=busy||running;$('stop').hidden=!busy&&!running;text('stop',run
 const serialized=JSON.stringify(data.settings||{});if(!dirty&&serialized!==currentSettings){currentSettings=serialized;for(const k of boolKeys)$(k).checked=!!data.settings[k];for(const k of numberKeys)$(k).value=data.settings[k];}
 for(const k of [...boolKeys,...numberKeys,'save','reset-gauges','export','open-logs'])$(k).disabled=busy||running;
 applyStorage(data);text('recognition',s.Recognition);text('storage-status',s.Storage);text('storage-count',(s.StorageCycles||0)+'回 / '+(s.StoredItems||0)+'個');
-applyInventory(s);text('start-help',data.settings?.ObserveOnly?'観察テストON：キーは送信しません。F5開始 / F6停止。設定でOFFにすると自動操作します。':'開始はF5、停止はF6。釣り竿は2番にセットしてください。');}
+applyInventory(s);applyFinancial(data);text('start-help',data.settings?.ObserveOnly?'観察テストON：キーは送信しません。F5開始 / F6停止。設定でOFFにすると自動操作します。':'開始はF5、停止はF6。釣り竿は2番にセットしてください。');}
 $('start').addEventListener('click',()=>{if(!ready||busy)return;busy=true;$('start').disabled=true;send('start');setTimeout(()=>$('start').disabled=false,500);});$('stop').addEventListener('click',()=>send('stop'));
 $('settings-form').addEventListener('input',()=>{dirty=true;text('save-state','未保存の変更があります');});
 $('settings-form').addEventListener('submit',event=>{event.preventDefault();if(busy||running||!$('settings-form').reportValidity())return;const settings={};for(const k of boolKeys)settings[k]=$(k).checked;for(const k of numberKeys)settings[k]=Number($(k).value);dirty=false;currentSettings='';send('save',settings);text('save-state','本体の保存結果を確認しています');});
@@ -26,8 +26,27 @@ function applyStorage(data){const s=data.storage||{},signature=JSON.stringify(s)
 $('storage-inspect').addEventListener('click',()=>{if(!busy&&!running)send('storage.inspect');});
 $('storage-register').addEventListener('click',()=>{if(busy||running)return;const items=[...document.querySelectorAll('[data-storage-item]:checked')].map(e=>e.dataset.storageItem);if(!items.length){text('storage-feedback','収納する魚を選択してください。');return;}window.chrome?.webview?.postMessage({action:'storage.register',items});});
 
-if(window.chrome&&window.chrome.webview){window.chrome.webview.addEventListener('message',event=>{apply(event.data);if(event.data?.feedback==='設定を保存しました')text('save-state','保存しました');});send('ready');}
+
 window.fishingUi={apply};
 
 function applyInventory(s){const held=$('held-items'),caught=$('caught-items');held.replaceChildren();caught.replaceChildren();text('inventory-age',s.InventoryFresh?'所持品の最新値（手動収納・売却も反映）':'更新待ち：前回の所持品です');
  for(const [node,rows,total] of [[held,s.HeldItems||[],false],[caught,s.CaughtItems||[],true]]){for(const row of rows){const el=document.createElement('div');el.className='row';const label=document.createElement('span'),n=document.createElement('strong');label.textContent=row.Label||row.Name;n.textContent=String(total?row.Total:row.Count);el.append(label,n);node.append(el);}if(!rows.length){const el=document.createElement('p');el.className='footnote';el.textContent=total?'取得累計はまだありません':'表示する所持品はありません';node.append(el);}}}
+
+const overlayFlags=['ShowSession','ShowHeldValue','ShowTrunkValue','ShowWeight','ShowNeeds','ShowStatus','ShowItems','ShowLifetime','ShowDiagnostics','ShowMovement'];
+const overlayNumbers=['Opacity','Width','FontSize','MaxRows'];
+let overlayDirty=false,overlaySignature='',priceSignature='';
+const overlayDefaults={Opacity:90,Width:360,FontSize:10,MaxRows:3,Position:'top-left',ShowSession:true,ShowHeldValue:true,ShowTrunkValue:true,ShowWeight:true,ShowStatus:true,ShowMovement:true};
+function money(v){return v?.Known?'¥'+Number(v.Total||0).toLocaleString('ja-JP')+(v.UnknownKinds?' + 未登録'+v.UnknownKinds+'種':''):'未確認';}
+function applyFinancial(data){const s=data.status||{},v=s.Live||{};text('session-value',money(v.SessionValue));text('held-value',money(v.HeldValue)+(v.Fresh?'':' · 前回値'));text('trunk-value',money(v.TrunkValue));text('trunk-age',v.TrunkKnown?(v.TrunkOpen?'開いている荷台':'最終確認 '+v.TrunkUpdated)+' · '+(v.TrunkLabel||v.TrunkId):'荷台を開くと中身全体を集計します');text('movement-state',s.Movement||'OFF');text('overlay-feedback',data.feedback||'');
+ text('session-note',v.SessionValue?.UnknownKinds?'単価未登録の釣果 '+v.SessionValue.UnknownKinds+'種は未算入です':'開始前の所持分や収納による移動は含めません');
+ const settings=data.settings||{},sig=JSON.stringify([settings.Overlay,settings.AutoNudge,settings.NudgeHoldMs,settings.ShowOverlay]);if(!overlayDirty&&sig!==overlaySignature){overlaySignature=sig;const o={...overlayDefaults,...settings.Overlay};for(const k of overlayFlags)$('overlay-'+k).checked=!!o[k];for(const k of overlayNumbers)$('overlay-'+k).value=o[k];$('overlay-Position').value=o.Position;$('OverlayEnabled').checked=settings.ShowOverlay!==false;$('AutoNudge').checked=!!settings.AutoNudge;$('NudgeHoldMs').value=settings.NudgeHoldMs||300;}
+ $('price-save').disabled=busy||running;
+ const prices=data.prices||[],ps=JSON.stringify(prices);if(ps!==priceSignature){priceSignature=ps;const selected=$('price-label').value;$('price-label').replaceChildren();for(const row of prices){const o=document.createElement('option');o.value=row.Label;o.textContent=row.Label+' · ¥'+Number(row.Yen).toLocaleString('ja-JP');$('price-label').append(o);}if(prices.some(x=>x.Label===selected))$('price-label').value=selected;}
+ $('unknown-names').replaceChildren();const names=new Set();for(const row of [...(v.HeldValue?.Items||[]),...(v.TrunkValue?.Items||[])])if(!row.PriceKnown&&!names.has(row.Name)){names.add(row.Name);const o=document.createElement('option');o.value=row.Name;o.label=row.Label||row.Name;$('unknown-names').append(o);}
+}
+$('open-overlay').addEventListener('click',()=>document.querySelector('[data-page="overlay"]').click());
+$('overlay-form').addEventListener('input',()=>{overlayDirty=true;text('overlay-feedback','未保存の変更があります');});
+$('overlay-form').addEventListener('submit',event=>{event.preventDefault();if(!$('overlay-form').reportValidity())return;const Overlay={};for(const k of overlayFlags)Overlay[k]=$('overlay-'+k).checked;for(const k of overlayNumbers)Overlay[k]=Number($('overlay-'+k).value);Overlay.Position=$('overlay-Position').value;overlayDirty=false;overlaySignature='';send('overlay.save',{Overlay,ShowOverlay:$('OverlayEnabled').checked,AutoNudge:$('AutoNudge').checked,NudgeHoldMs:Number($('NudgeHoldMs').value)});});
+$('price-form').addEventListener('submit',event=>{event.preventDefault();if(busy||running||!$('price-form').reportValidity())return;send('price.map',{Name:$('price-name').value.trim(),Label:$('price-label').value});});
+
+if(window.chrome&&window.chrome.webview){window.chrome.webview.addEventListener('message',event=>{apply(event.data);if(event.data?.feedback==='設定を保存しました')text('save-state','保存しました');});send('ready');}

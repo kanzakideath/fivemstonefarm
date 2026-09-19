@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 param([switch]$Test)
 $ErrorActionPreference='Stop'
 $root=$PSScriptRoot
@@ -18,7 +18,7 @@ try {
  Copy-Item node_modules/framework7/framework7-bundle.min.css,node_modules/framework7/framework7-bundle.min.js ui/vendor -Force
  $license=Get-ChildItem node_modules/framework7 -File | Where-Object Name -Match '^LICENSE' | Select-Object -First 1
  if($license){Copy-Item $license.FullName ui/vendor/Framework7-LICENSE.txt -Force}
- Copy-Item digit-templates.json,README.txt,LICENSE,SceneProbe.js $out -Force
+ Copy-Item digit-templates.json,README.txt,LICENSE,SceneProbe.js,InventoryProbe.js,fish-prices.json $out -Force
  Copy-Item ui (Join-Path $out 'ui') -Recurse -Force
  Copy-Item fixtures (Join-Path $out 'fixtures') -Recurse -Force
  $loader=Join-Path $out 'WebView2Loader.dll'
@@ -37,5 +37,5 @@ try {
  }
  $files=Get-ChildItem $out -File -Recurse|Where-Object {$_.Name -ne 'SHA256SUMS.txt' -and $_.FullName -notmatch '[\\/]test-evidence[\\/]'}
  $files|ForEach-Object {('{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(),$_.FullName.Substring($out.Length+1).Replace('\','/'))}|Set-Content (Join-Path $out SHA256SUMS.txt) -Encoding utf8
- Write-Host 'FishingPilot 0.5.0 build ready.'
+ Write-Host 'FishingPilot 0.6.0 build ready.'
 } finally {Pop-Location}

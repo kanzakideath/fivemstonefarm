@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -61,10 +61,16 @@ namespace FishingPilot {
     }
    }
   }
-  public Ring Read(Bitmap bitmap) {
+  int trackedRadius; readonly System.Diagnostics.Stopwatch acquisitionClock=System.Diagnostics.Stopwatch.StartNew();double acquireAt;
+  public Ring ReadFast(Bitmap bitmap){
+   if(trackedRadius>0){var fast=Read(bitmap,trackedRadius);if(fast.Valid)return fast;trackedRadius=0;}
+   if(acquisitionClock.Elapsed.TotalMilliseconds<acquireAt)return new Ring();
+   acquireAt=acquisitionClock.Elapsed.TotalMilliseconds+100;var found=Read(bitmap);if(found.Valid){trackedRadius=(int)found.Radius;acquireAt=0;}return found;
+  }
+  public Ring Read(Bitmap bitmap,int radiusHint=0) {
    var p=new Pixels(bitmap);var result=new Ring();if(p.W!=320||p.H!=320)return result;
    double best=-1; int radius=0;int[] kinds=null;
-   for(int r=18;r<=132;r++) {
+   for(int r=radiusHint>0?Math.Max(18,radiusHint-4):18;r<=(radiusHint>0?Math.Min(132,radiusHint+4):132);r++) {
     int n=0,w=0,green=0;var row=new int[180];
     for(int a=0;a<180;a++) {int c=p.Kind((int)Math.Round(160+r*Sin[a]),(int)Math.Round(160-r*Cos[a]));row[a]=c;if(c!=0)n++;if(c==1)w++;if(c==2)green++;}
     if(n<157 || w<1 || green<3)continue;
@@ -138,8 +144,8 @@ namespace FishingPilot {
    double span=(areaEnd-areaStart+360)%360;
    double lead=observationAgeMs>0 ? Math.Min(span*.45, velocity*Math.Max(0,Math.Min(50,observationAgeMs+6))) : 0;
    double progress=(r.Pointer+lead-areaStart+360)%360;
-   double margin=Math.Max(3,Math.Min(8,span*.22));
-   if(!Latched && stable>=2 && now-LastHit>80 && progress>=margin && progress<=span-margin) {Latched=true;LastHit=now;Hits++;return r.Key;}
+   double margin=Math.Max(1.75,Math.Min(3,span*.1));double observedProgress=(r.Pointer-areaStart+360)%360;
+   if(!Latched && stable>=2 && now-LastHit>80 && observedProgress>=margin && observedProgress<=span-margin && progress>=margin && progress<=span-margin) {Latched=true;LastHit=now;Hits++;return r.Key;}
    return -1;
   }
  }

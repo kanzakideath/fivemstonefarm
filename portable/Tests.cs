@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -17,7 +17,7 @@ namespace FishingPilot {
     var inv=Inventory.Parse("SNAPSHOT 800 1000 1 40 0001.fish.e30=2");Check(inv.Known&&!inv.Full(100),"parse capacity");Check(inv.Full(200),"reserve boundary");Check(Inventory.Parse("SNAPSHOT 1000 1000 1 40 -").Full(0),"full boundary");
     Check(!Inventory.Parse("SNAPSHOT 0 0 0 40 -").Known,"invalid maximum");Check(Inventory.Parse("SNAPSHOT 800 1000 1 40 0004.fish.e30=3").IncreasedSince(inv),"count increase ignores moved slots");
     Check(!Inventory.Parse("SNAPSHOT 800 1000 1 40 0004.fish.e30=2").IncreasedSince(inv),"slot movement not catch");
-    var c=new RoundController();c.Reset();Check(c.Observe(R(1,190),0)<0,"before zone");Check(c.Observe(R(1,205),20)<0,"margin");Check(c.Observe(R(1,212),40)==1,"eligible once");
+    var c=new RoundController();c.Reset();Check(c.Observe(R(1,190),0)<0,"before zone");Check(c.Observe(R(1,201),20)<0,"entry margin");Check(c.Observe(R(1,205),40)==1,"eligible once");
     for(int i=0;i<100;i++)Check(c.Observe(R(1,220),50+i*10)<0,"never duplicate a latched round");
     c.Observe(R(3,30),1100);Check(c.Observe(R(3,212),1120)==3,"additional changed digit");
     c.Observe(R(3,20),1300);Check(c.Observe(R(3,220),1330)==3,"same digit after reset");
@@ -58,7 +58,7 @@ namespace FishingPilot {
     pending.Mark("BLOCK");Check(pending.Blocked,"missing rod or bait stays blocked");
     notes.Add("pending outcomes: notice retention, per-cast reset, full and blocked causes separated");
     c.Reset();c.Observe(R(4,175),0,10);c.Observe(R(4,185),20,10);
-    Check(c.Observe(R(4,202),40,10)==4,"bounded pixel latency enters the interior");
+    Check(c.Observe(R(4,204),40,10)==4,"bounded pixel latency enters the interior");
     c.Reset();c.Observe(R(4,190),0,20);Check(c.Observe(R(4,258),30,20)<0,"missed window remains refused");
     Check(Native.FiveMConsolePort()==0,"unrelated listener cannot authorize hotbar");
     notes.Add("bounded latency, missed-window refusal, and process-owned hotbar selection checked");
@@ -70,6 +70,7 @@ namespace FishingPilot {
     setting["FoodKey"]=2;bool rodRejected=false;try{UiCommands.Update(cfg,setting);}catch(ArgumentException){rodRejected=true;}Check(rodRejected,"UI cannot use rod slot for food");
     notes.Add("native UI protocol: allowlist, typed payload validation, immutable settings update, calibration preservation");
     count+=Tests050.Run(output);
+    count+=Tests060.Run(output);
     count+=Tests040.Run(output);notes.Add("storage040: exact metadata ledger, protected items, paired receipts, durable pending guard tested");
     NativeInputTest(notes);
     File.WriteAllText(Path.Combine(output,"RESULT.txt"),"PASS\nassertions="+count+"\n"+String.Join("\n",notes.ToArray())+"\nNo live FiveM execution or catch-success claim.\n");return 0;

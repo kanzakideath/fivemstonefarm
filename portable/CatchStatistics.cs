@@ -4,7 +4,7 @@ using System.Linq;
 using System.IO;
 using System.Web.Script.Serialization;
 namespace FishingPilot {
- public sealed class ItemDisplay {public string Name="",Label="";public long Count,Total;}
+ public sealed class ItemDisplay {public string Name="",Label="";public long Count,Total,UnitPrice,Value;public bool PriceKnown;}
  // Current inventory is a replacement snapshot, never an increment-only counter.
  public sealed class CatchStatistics {
   readonly string file; readonly Dictionary<string,long> totals=new Dictionary<string,long>(StringComparer.Ordinal);

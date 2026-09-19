@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -104,6 +104,11 @@ internal static partial class CdpBridge {
    }
    if(scene!=null&&scene.Present&&scene.Key==digit&&scene.Frame!="")return await Digit(scene,digit).ConfigureAwait(false);
    return false;
+  }
+  public static bool Forward(int port,int milliseconds,CancellationToken token,Func<bool> enabled){
+   if(token.IsCancellationRequested||!enabled()||port==0||port!=ConsolePort()||milliseconds<100||milliseconds>700)return false;
+   bool sent=false;try{sent=TrySendDevCon(port,"-move_up_only;+move_up_only",0);if(sent){var sw=System.Diagnostics.Stopwatch.StartNew();while(sw.ElapsedMilliseconds<milliseconds&&!token.IsCancellationRequested&&enabled())token.WaitHandle.WaitOne(10);}return sent;}
+   finally{if(sent)TrySendDevCon(port,"-move_up_only",0);}
   }
   public static int ConsolePort() { return FishingPilot.Native.FiveMConsolePort(); }
   public static bool Hotbar(int port,int digit,CancellationToken token){if(token.IsCancellationRequested||digit<1||digit>5||(port!=29200&&port!=29300))return false;string cmd="hotkey"+digit;bool sent=false;try{sent=TrySendDevCon(port,"-"+cmd+";+"+cmd,0);if(sent)token.WaitHandle.WaitOne(50);return sent;}finally{if(sent)TrySendDevCon(port,"-"+cmd,0);}}
