@@ -31,6 +31,8 @@ jobs:
             if($LASTEXITCODE -ne 0){throw 'Tracking integration failed'}
             Copy-Item staging050/README.txt portable/README.txt -Force
           } elseif(!$engine.Contains('0.5.0-preview')) {throw 'Unexpected source version'}
+          python staging050/Help.py
+          if($LASTEXITCODE -ne 0){throw 'Hotkey help integration failed'}
           git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --check
           if($LASTEXITCODE -ne 0){throw 'Source whitespace check failed'}
       - name: Build and test the Windows executable and overlay
