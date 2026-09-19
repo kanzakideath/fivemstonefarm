@@ -17,4 +17,9 @@ s=s.replace('catch(Exception e){MessageBox.Show(e.ToString(),"FishingPilot 画�
 v.write_text(s,encoding='utf-8',newline='\n')
 v=p/'Manager.cs';s=v.read_text(encoding='utf-8');s=s.replace('catch(Exception e){MessageBox.Show(e.ToString(),"FishingPilot 起動エラー");return 1;}', 'catch(Exception e){if(args.Length>1&&(args[0]=="--self-test"||args[0]=="--test-feed")){File.WriteAllText(args[1],Store.Json.Serialize(new{pass=false,error=e.ToString()}));return 1;}MessageBox.Show(e.ToString(),"FishingPilot 起動エラー");return 1;}');v.write_text(s,encoding='utf-8',newline='\n')
 v=p/'Build.ps1';s=v.read_text(encoding='utf-8').replace('<DebugType>none</DebugType>','<ApplicationManifest>../portable/app.manifest</ApplicationManifest><DebugType>none</DebugType>');s=s.replace('throw "$Mode failed"','if(Test-Path $result){Get-Content $result};throw "$Mode failed"');v.write_text(s,encoding='utf-8',newline='\n')
+# The supply fixture adds food before the rod; rows()[1] is then the rod, not the fish.
+# Deliver the fish delta by its identity, without changing production code or test expectations.
+v=p/'Apply.py'
+with v.open('a',encoding='utf-8',newline='\n') as f:
+ f.write('''\nbp=root/'staging064/BrowserPeer.py'\ns=bp.read_text(encoding='utf-8')\nassert 'item:rows()[1]' in s\nbp.write_text(s.replace('item:rows()[1]',"item:rows().find(x=>x.name==='salmon')"),encoding='utf-8',newline='\\n')\n''')
 print('Verified source, Windows TLS compatibility and DPI configuration')
