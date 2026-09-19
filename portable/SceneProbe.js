@@ -2,7 +2,7 @@
  success callbacks, animation edits, focus stealing, or recurring input timers.
  Every key-down requires a live host call. */
 (() => {
-  if (window.__fpProbe3 && window.__fpProbe3.version==='0.6.3-background') return window.__fpProbe3.sample(false,null);
+  if (window.__fpProbe3 && window.__fpProbe3.version==='0.6.4-background') return window.__fpProbe3.sample(false,null);
   if(window.__fpProbe3 && window.__fpProbe3.dispose)window.__fpProbe3.dispose();else if(window.__fpProbe3 && window.__fpProbe3.stop)window.__fpProbe3.stop();
   const norm = a => (a % 360 + 360) % 360;
   const delta = (a,b) => (a-b+540)%360-180;
@@ -66,20 +66,27 @@
       if(shape&&[...document.querySelectorAll('svg,canvas')].some(e=>{if(!visible(e))return false;const b=box(e);return b.w>30&&b.h>30&&Math.abs(d.b.x+d.b.w/2-(b.x+b.w/2))<b.w*.4&&Math.abs(d.b.y+d.b.h/2-(b.y+b.h/2))<b.h*.4;}))return {valid:false,present:true,key:+d.e.textContent.trim(),stamp:'pixel:'+id(d.e),...shape};}
     return {valid:false,present:false};
   }
-  const messageVitals={hunger:null,water:null,at:-100000};
+  const messageVitals={hunger:null,water:null,hAt:-100000,wAt:-100000};
+  const messageNotices=[];
+  function noticeKind(t){return /インベントリ.*(いっぱい|満|重)|持ち物.*(いっぱい|持て)|所持.*(上限|重量)|not enough (space|capacity)|inventory.*full/i.test(t)?'FULL':/釣り竿.*(壊|ない)|釣り餌.*[足無]|餌が[足無]|エサが[足無]|no.*bait|rod.*broken/i.test(t)?'BLOCK':/魚[にがを].*(逃げ|逃が)|釣り.*失敗|逃げられ|逃がし|釣れなか|fish.*(escaped|got away)|failed.*fish/i.test(t)?'FAIL':/釣り.*(やめ|終了|中断)|fishing.*(cancel|stop)/i.test(t)?'CANCEL':/魚.*(釣れ|釣り上げた)|釣り上げました|魚を.*(獲得|入手)|caught.*fish/i.test(t)?'CAUGHT':/食いつ|アタリ|fish.*bit/i.test(t)?'BITE':/釣り.*(開始|始め)|竿.*投げ|キャスト|エサ.*待|fishing.*start|cast.*line/i.test(t)?'CAST':/使用できません|今は.*(使え|使用)|already.*fishing|釣り中|busy/i.test(t)?'BUSY':'NONE';}
   function hudMessage(event){const d=event&&event.data;if(!d||typeof d!=="object")return;
-    const body=d.data&&typeof d.data==="object"?d.data:d;
-    const clean=v=>v!==null&&v!==undefined&&Number.isFinite(Number(v))&&Number(v)>=0&&Number(v)<=100?Number(v):null;
-    const h=clean(body.hunger),w=clean(body.thirst===undefined?body.water:body.thirst);
-    if(h!==null||w!==null){messageVitals.hunger=h;messageVitals.water=w;messageVitals.at=performance.now();}
+    const clean=v=>v!==null&&v!==undefined&&v!==''&&typeof v!=='boolean'&&Number.isFinite(Number(v))&&Number(v)>=0&&Number(v)<=100?Number(v):null;
+    const list=[d,d.data,d.status,d.player,d.playerData?.metadata,d.PlayerData?.metadata,d.data?.status,d.data?.metadata].filter(x=>x&&typeof x==='object');
+    for(const body of list){
+      const h=clean(body.hunger),w=clean(body.thirst===undefined?body.water:body.thirst);
+      if(h!==null){messageVitals.hunger=h;messageVitals.hAt=performance.now();}
+      if(w!==null){messageVitals.water=w;messageVitals.wAt=performance.now();}
+      if(Array.isArray(body))for(const row of body){if(!row||typeof row!=='object')continue;const v=clean(row.percent??row.percentage);if(v===null)continue;if(row.name==='hunger'){messageVitals.hunger=v;messageVitals.hAt=performance.now();}if(row.name==='thirst'){messageVitals.water=v;messageVitals.wAt=performance.now();}}
+    }
+    if(/notify|notification|toast|alert/i.test(String(d.action||d.type||''))){const body=d.data&&typeof d.data==='object'?d.data:d;const text=[body.title,body.description,body.message,body.text].filter(x=>typeof x==='string').join(' ').slice(0,400);const k=noticeKind(text);if(k!=='NONE'){messageNotices.push({kind:k,id:'message-'+noticeId++,at:performance.now()});if(messageNotices.length>24)messageNotices.shift();}}
   }
   window.addEventListener('message',hudMessage);
   let ancillary={busy:false,notices:[],hunger:null,water:null},ancillaryAt=-1;
   function readAncillary(){
-    const recent=performance.now()-messageVitals.at<10000;let hunger=recent?messageVitals.hunger:null,water=recent?messageVitals.water:null;const out=[];
+    let hunger=performance.now()-messageVitals.hAt<10000?messageVitals.hunger:null,water=performance.now()-messageVitals.wAt<10000?messageVitals.water:null;const out=messageNotices.filter(n=>performance.now()-n.at<4000).map(n=>({kind:n.kind,id:n.id}));
     for(const e of document.querySelectorAll('[role="alert"],[class*="Notification"],[class*="notification"],[class*="toast"]')){
       if(!visible(e)||e.querySelector('[role="alert"],[class*="Notification-root"],[class*="notification-item"]'))continue;const t=(e.innerText||e.textContent||'').trim();if(!t){notices.delete(e);continue;}if(t.length>400)continue;
-      const k=/インベントリ.*(いっぱい|満|重)|持ち物.*(いっぱい|持て)|所持.*(上限|重量)|not enough (space|capacity)|inventory.*full/i.test(t)?'FULL':/釣り竿.*(壊|ない)|釣り餌.*[足無]|餌が[足無]|エサが[足無]|no.*bait|rod.*broken/i.test(t)?'BLOCK':/魚に逃げ|釣りに失敗|逃げられ|逃がし|釣れなか|fish.*(escaped|got away)|failed.*fish/i.test(t)?'FAIL':/釣り.*(やめ|終了|中断)|fishing.*(cancel|stop)/i.test(t)?'CANCEL':/魚.*(釣れ|釣り上げた)|釣り上げました|魚を.*(獲得|入手)|caught.*fish/i.test(t)?'CAUGHT':/食いつ|アタリ|fish.*bit/i.test(t)?'BITE':/釣り.*(開始|始め)|竿.*投げ|キャスト|エサ.*待|fishing.*start|cast.*line/i.test(t)?'CAST':/使用できません|今は.*(使え|使用)|already.*fishing|釣り中|busy/i.test(t)?'BUSY':'NONE';
+      const k=noticeKind(t);
       if(k==='NONE')continue;const old=notices.get(e),n=old&&old.text===t?old.id:noticeId++;notices.set(e,{text:t,id:n});out.push({kind:k,id:n});
     }
     const busy=[...document.querySelectorAll('[role="progressbar"],#progressbar,#progress-container,.progress-bar')].some(e=>{if(!visible(e))return false;const b=box(e);return b.x+b.w/2>innerWidth*.25&&b.x+b.w/2<innerWidth*.75&&b.y>innerHeight*.5&&b.w>30;});
@@ -95,7 +102,7 @@
     state.stable++;state.lastPointer=r.pointer;state.lastAt=now;
     const progress=norm(r.pointer-r.start),margin=Math.max(.35,Math.min(3,r.span*.10));
     if(state.latched||state.stable<2||progress<margin||progress>r.span-margin)return {sent:false,reason:state.latched?'latched':'tracking'};
-    const active=document.activeElement;if(active&&active.matches('input,textarea,[contenteditable="true"]'))return {sent:false,reason:'editing'};
+    const active=document.activeElement;if(active&&active.matches('input,textarea,[contenteditable="true"]')&&visible(active))return {sent:false,reason:'editing'};
     if(state.release){state.release();state.release=null;}
     const target=selection.d;state.latched=true;state.lastDown=now;state.seq++;state.delivery='sent_unconfirmed';
     const init={key:String(r.key),code:'Digit'+r.key,keyCode:48+r.key,which:48+r.key,bubbles:true,composed:true,cancelable:true,repeat:false};
@@ -106,19 +113,19 @@
     state.lastSent={key:r.key,round:state.round,pointer:r.pointer,start:r.start,end:r.end,at:now,seq:state.seq};
     return {sent:true,...state.lastSent,reason:'inside_observed_window'};
   }
-  const api={version:'0.6.3-background',
+  const api={version:'0.6.4-background',
     sample(fast,command){
       const begin=performance.now(),r=readRing();let input={sent:false,reason:'observe'};
       if(command&&command.enabled===true&&typeof command.cycle==='string')input=keyboard(r,command.cycle);
       if(!r.present&&state.latched)state.delivery='transition_observed';
       if(!fast||(!r.present&&begin-ancillaryAt>=100)){ancillary=readAncillary();ancillaryAt=begin;}
-      return JSON.stringify({w:innerWidth,h:innerHeight,at:begin,ring:r,...ancillary,input,delivery:state.delivery,cost:performance.now()-begin,documentVisible:document.visibilityState,focused:document.hasFocus(),svgCount:document.querySelectorAll("svg").length});
+      return JSON.stringify({w:innerWidth,h:innerHeight,at:begin,ring:r,...ancillary,input,delivery:state.delivery,cost:performance.now()-begin,documentVisible:document.visibilityState,focused:document.hasFocus(),svgCount:document.querySelectorAll("svg").length,canvasCount:document.querySelectorAll("canvas").length});
     },
     dispose(){this.stop();window.removeEventListener('message',hudMessage);},
     stop(){if(state.release){state.release();state.release=null;}state.latched=true;state.cycle='';return 'STOPPED';},
     pixelKey(request){const r=readRing();if(!r.present||r.key!==request.key||r.stamp!==request.stamp||!request.inside)return 'STALE';if(r.valid){const p=norm(r.pointer-r.start),s=norm(r.end-r.start);if(p<1||p>s-1)return 'LATE';}
       const d=[...document.querySelectorAll('body *')].find(e=>e.children.length===0&&visible(e)&&id(e)===+String(r.stamp).split(':')[1]);
-      const a=document.activeElement;if(a&&a.matches('input,textarea,[contenteditable="true"]'))return 'EDITING';const target=d||document.body;
+      const a=document.activeElement;if(a&&a.matches('input,textarea,[contenteditable="true"]')&&visible(a))return 'EDITING';const target=d||document.body;
       const init={key:String(r.key),code:'Digit'+r.key,keyCode:48+r.key,which:48+r.key,bubbles:true,composed:true,cancelable:true};target.dispatchEvent(new KeyboardEvent('keydown',init));setTimeout(()=>target.dispatchEvent(new KeyboardEvent('keyup',init)),24);return 'SENT';}
   };
   window.__fpProbe3=api;

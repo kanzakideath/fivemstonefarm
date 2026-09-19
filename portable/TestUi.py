@@ -2,7 +2,7 @@ from pathlib import Path
 import json,argparse,mimetypes
 from playwright.sync_api import sync_playwright
 p=argparse.ArgumentParser();p.add_argument('--browser');p.add_argument('--inline',action='store_true');p.add_argument('--output',default='ui-evidence');a=p.parse_args();r=Path(__file__).parent/'ui';out=Path(a.output);out.mkdir(parents=True,exist_ok=True)
-state={'type':'state','version':'0.6.1-preview','busy':False,'countdown':0,'feedback':'','status':{'Phase':'停止中','Ring':'未検出','Backend':'未確認','Delivery':'未確認','ReadMs':0,'Inventory':'未確認','Hunger':'未確認','Thirst':'未確認'},'settings':{'ObserveOnly':True,'BackgroundMode':True,'AutoNeeds':True,'FoodKey':1,'DrinkKey':3,'ReserveGrams':500,'GaugeRadius':20,'MinRecastMs':1400,'ShowOverlay':True}}
+state={'type':'state','version':'0.6.4-preview','busy':False,'countdown':0,'feedback':'','status':{'Phase':'停止中','Ring':'未検出','Backend':'未確認','Delivery':'未確認','ReadMs':0,'Inventory':'未確認','Hunger':'未確認','Thirst':'未確認'},'settings':{'ObserveOnly':True,'BackgroundMode':True,'AutoNeeds':True,'FoodKey':1,'DrinkKey':3,'ReserveGrams':500,'GaugeRadius':20,'MinRecastMs':1400,'ShowOverlay':True}}
 results=[]
 with sync_playwright() as pw:
  b=pw.chromium.launch(headless=True,executable_path=a.browser,args=['--no-sandbox']);ctx=b.new_context();page=ctx.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
@@ -53,7 +53,7 @@ with sync_playwright() as pw:
   page.evaluate('(d)=>window.__receive({data:d})',{**state,'busy':True,'status':{**sample_status,'Running':True}})
   page.locator('#overlay-Opacity').fill('75');page.locator('label.row:has(#AutoNudge)').click();page.locator('#overlay-Position').select_option('bottom-right');page.locator('#overlay-save').click()
   submitted=page.evaluate("__sent.filter(m=>m.action==='overlay.save').at(-1)");assert submitted['settings']['Overlay']['Opacity']==75 and submitted['settings']['AutoNudge'] and submitted['settings']['Overlay']['Position']=='bottom-right'
-  assert len(submitted['settings']['Overlay'])==15
+  assert len(submitted['settings']['Overlay'])==16 and submitted['settings']['Overlay']['Theme']=='match'
   assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'),width
   page.screenshot(path=str(out/f'overlay-settings-{width}.png'),full_page=True)
   live={'Fresh':True,'Weight':'48.50 / 150.00 kg','SessionValue':{'Known':True,'Total':1260000,'UnknownKinds':0},'HeldValue':{'Known':True,'Total':600000,'UnknownKinds':0},'TrunkValue':{'Known':True,'Total':4620000,'UnknownKinds':1},'TrunkKnown':True,'TrunkOpen':True,'TrunkLabel':'表示試験の荷台','TrunkUpdated':'12:00:00'}
@@ -61,6 +61,25 @@ with sync_playwright() as pw:
   assert '1,260,000' in page.locator('#session-value').inner_text() and '未登録1種' in page.locator('#trunk-value').inner_text()
   page.screenshot(path=str(out/f'finance-{width}.png'),full_page=True)
   page.evaluate('(d)=>window.__receive({data:d})',{**state,'status':{**sample_status,'Live':{**live,'Fresh':False,'TrunkOpen':False}}});assert '最終確認' in page.locator('#trunk-age').inner_text()
-  results.append({'width':width,'no_horizontal_overflow':True,'start_stop_settings_diagnostics':True})
+  page.locator('[data-page=settings]').click()
+  active={**state,'busy':True,'status':{**sample_status,'Running':True,'Needs':'空腹・水分の一部が未取得：未取得の側は自動補給できません'},'settings':{**state['settings'],'Theme':'dark'}}
+  page.evaluate('(d)=>window.__receive({data:d})',active)
+  assert page.evaluate('document.documentElement.dataset.theme')=='dark'
+  page.locator('#AppTheme').select_option('light')
+  page.evaluate('(d)=>window.__receive({data:d})',active)
+  assert page.evaluate('document.documentElement.dataset.theme')=='light','status refresh must not cancel an unsaved theme preview'
+  page.locator('#OverlayTheme').select_option('dark');page.locator('#theme-form button[type=submit]').click()
+  theme=page.evaluate("__sent.filter(m=>m.action==='theme.save').at(-1)")
+  assert theme['settings']=={'Theme':'light','OverlayTheme':'dark'},theme
+  page.evaluate('(d)=>window.__receive({data:d})',{**active,'settings':{**active['settings'],'Theme':'light','Overlay':{'Theme':'dark'}}})
+  assert page.evaluate('document.documentElement.dataset.theme')=='light'
+  page.screenshot(path=str(out/f'light-{width}.png'),full_page=True)
+  page.locator('#AppTheme').select_option('dark');page.locator('#theme-form button[type=submit]').click()
+  page.evaluate('(d)=>window.__receive({data:d})',{**active,'settings':{**active['settings'],'Theme':'dark','Overlay':{'Theme':'dark'}}})
+  assert page.evaluate('getComputedStyle(document.body).backgroundColor') not in ['rgb(255, 255, 255)','rgb(242, 242, 247)']
+  page.screenshot(path=str(out/f'dark-{width}.png'),full_page=True)
+  page.locator('[data-page=overview]').click();assert page.locator('#needs-warning').is_visible()
+  assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'),width
+  results.append({'live_dark_light_switch':True,'independent_overlay_theme':True,'unknown_needs_warning':True,'width':width,'no_horizontal_overflow':True,'start_stop_settings_diagnostics':True})
  assert not errors,errors;b.close()
 (out/'RESULT.json').write_text(json.dumps({'pass':True,'cases':results,'page_errors':errors,'native_backend':'mock for browser-only layout test; separate Windows WebView2 handshake test','live_fivem':False,'inline_fixture_without_csp':a.inline},indent=2),encoding='utf-8');print('UI030_PASS',len(results),'widths')

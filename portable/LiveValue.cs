@@ -57,9 +57,9 @@ namespace FishingPilot {
   }
  }
  public sealed class OverlayOptions {
-  public int Opacity=90,Width=360,FontSize=10,MaxRows=3;public string Position="top-left";
+  public int Opacity=90,Width=360,FontSize=10,MaxRows=3;public string Theme="match";public string Position="top-left";
   public bool ShowSession=true,ShowHeldValue=true,ShowTrunkValue=true,ShowWeight=true,ShowNeeds=false,ShowStatus=true,ShowItems=false,ShowLifetime=false,ShowDiagnostics=false,ShowMovement=true;
-  public void Validate(){if(Opacity<55||Opacity>100||Width<280||Width>560||FontSize<9||FontSize>16||MaxRows<0||MaxRows>8||!(new[]{"top-left","top-right","bottom-left","bottom-right"}).Contains(Position))throw new ArgumentException("オーバーレイ設定が範囲外です");}
+  public void Validate(){if(!Runtime064.ValidTheme(Theme,true))throw new ArgumentException("表示テーマが不正です");if(Opacity<55||Opacity>100||Width<280||Width>560||FontSize<9||FontSize>16||MaxRows<0||MaxRows>8||!(new[]{"top-left","top-right","bottom-left","bottom-right"}).Contains(Position))throw new ArgumentException("オーバーレイ設定が範囲外です");}
  }
  public static class Recovery060 {
   public static bool QuietTimeout(double now,double castAt,double quietSince,bool seenRing,bool freshScene,bool freshInventory,bool open,bool present,bool busy){

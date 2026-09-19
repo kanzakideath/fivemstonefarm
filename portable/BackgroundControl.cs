@@ -4,29 +4,49 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 internal static partial class CdpBridge {
+ // Transport recovery never falls back to desktop keys or blindly resubmits an uncertain action.
  public sealed class FishingBackgroundControl : IDisposable {
-  readonly string epoch;readonly CancellationToken token;CdpSession inventory;bool installed,dead;
+  readonly string epoch;readonly CancellationToken token;CdpSession inventory;bool installed,dead;string uncertainId="";int uncertainSlot;
   public string LastResult="not_initialized";
   public FishingBackgroundControl(string expected,CancellationToken cancel){epoch=expected;token=cancel;}
+  void Disconnect(){if(inventory!=null)try{inventory.Dispose();}catch{}inventory=null;installed=false;}
   public async Task<bool> UseSlot(int slot,string id){
    token.ThrowIfCancellationRequested();if(dead||slot<1||slot>5)return false;
-   string[] frames;if(!TryDecodeServerEpoch(epoch,out frames))throw new InvalidOperationException("SERVER_SESSION_CHANGED");
-   if(inventory==null){inventory=await CdpSession.OpenAsync(InventoryFramePart,TimeSpan.FromSeconds(2),frames).ConfigureAwait(false);inventory.FishingDeadline(-1);}
-   inventory.FishingDeadline(1800);
+   bool mightSubmit=false;
    try{
+    string[] frames;if(!TryDecodeServerEpoch(epoch,out frames))throw new InvalidOperationException("SERVER_SESSION_CHANGED");
+    if(inventory==null){inventory=await CdpSession.OpenAsync(InventoryFramePart,TimeSpan.FromSeconds(2),frames).ConfigureAwait(false);inventory.FishingDeadline(-1);}
+    inventory.FishingDeadline(1800);
     if(!await inventory.MatchesServerEpochAsync().ConfigureAwait(false))throw new InvalidOperationException("SERVER_SESSION_CHANGED");
+    if(uncertainId!=""){
+     string check=await inventory.EvaluateStringAsync("window.__fpSlots064?window.__fpSlots064.query("+Json.Serialize(uncertainId)+"): 'CONTEXT_LOST'",false).ConfigureAwait(false);
+     if(check=="CONTEXT_LOST"){LastResult="DELIVERY_UNCERTAIN_CONTEXT_LOST: 前回の入力結果を確認できません。F6で停止して状態確認";return false;}
+     var receipt=Json.DeserializeObject(check) as Dictionary<string,object>;
+     string code=receipt==null?"INVALID_RESULT":GetString(receipt,"code");
+     if(code=="RECEIPT"){uncertainId="";installed=true;LastResult=slot==uncertainSlot?"SUBMITTED_RECEIPT_RECOVERED":"PREVIOUS_ACTION_RECEIPT_RECOVERED";return slot==uncertainSlot;}
+     if(code!="NOT_FOUND"){LastResult="DELIVERY_UNCERTAIN";return false;}
+     uncertainId="";
+    }
     if(!installed){
      string source=File.ReadAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"BackgroundSlots.js"));
      await inventory.EvaluateStringAsync(source,false).ConfigureAwait(false);
-     await inventory.EvaluateStringAsync("window.__fpSlots063.start()",false).ConfigureAwait(false);installed=true;
+     await inventory.EvaluateStringAsync("window.__fpSlots064.start()",false).ConfigureAwait(false);installed=true;
     }
     token.ThrowIfCancellationRequested();string request=Json.Serialize(new Dictionary<string,object>{{"slot",slot},{"id",id}});
-    string raw=await inventory.EvaluateStringAsync("window.__fpSlots063.use("+request+")",false).ConfigureAwait(false);
+    mightSubmit=true;
+    string raw=await inventory.EvaluateStringAsync("window.__fpSlots064.use("+request+")",false).ConfigureAwait(false);
     var data=Json.DeserializeObject(raw) as Dictionary<string,object>;LastResult=data==null?"INVALID_RESULT":GetString(data,"code");
-    return data!=null&&data.ContainsKey("sent")&&data["sent"] is bool&&(bool)data["sent"];
-   }finally{inventory.FishingDeadline(-1);}
+    if(data==null){uncertainId=id;uncertainSlot=slot;return false;}
+    return data.ContainsKey("sent")&&data["sent"] is bool&&(bool)data["sent"];
+   }catch(Exception e){
+    if(token.IsCancellationRequested||e.Message.Contains("SERVER_SESSION_CHANGED"))throw;
+    if(mightSubmit){uncertainId=id;uncertainSlot=slot;}
+    LastResult=(mightSubmit?"DELIVERY_UNCERTAIN":"RECONNECTING")+": "+e.GetType().Name+" "+e.Message;
+    Disconnect();return false;
+   }finally{if(inventory!=null)try{inventory.FishingDeadline(-1);}catch{}}
   }
-  public void Dispose(){if(dead)return;dead=true;if(inventory!=null){try{inventory.FishingDeadline(350);inventory.EvaluateStringAsync("window.__fpSlots063?window.__fpSlots063.stop():'STOPPED'",false).GetAwaiter().GetResult();}catch{}inventory.Dispose();inventory=null;}}
+  public void CompleteObservedAction(){if(dead)return;uncertainId="";if(inventory==null||!installed)return;try{inventory.FishingDeadline(500);inventory.EvaluateStringAsync("window.__fpSlots064?window.__fpSlots064.complete():'NONE'",false).GetAwaiter().GetResult();}catch{}finally{try{inventory.FishingDeadline(-1);}catch{}}}
+  public void Dispose(){if(dead)return;dead=true;if(inventory!=null){try{inventory.FishingDeadline(350);inventory.EvaluateStringAsync("window.__fpSlots064?window.__fpSlots064.stop():'STOPPED'",false).GetAwaiter().GetResult();}catch{}Disconnect();}}
  }
 }
 namespace FishingPilot {

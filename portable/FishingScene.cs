@@ -18,9 +18,10 @@ namespace FishingPilot {
 internal static partial class CdpBridge {
  // Independent NUI contexts, one serialized caller per connection; never sends desktop keys.
  public sealed class FishingConnection : IDisposable {
+  readonly HashSet<string> inputFrames=new HashSet<string>();
   readonly Dictionary<string,CdpSession> sessions=new Dictionary<string,CdpSession>();
   readonly string probe; readonly List<string> urls=new List<string>(); readonly CancellationToken token;
-  string selected=""; readonly Dictionary<string,double> failedUntil=new Dictionary<string,double>(); public string LastDiscovery=""; double lastRingAt=-10000; readonly HashSet<string> installed=new HashSet<string>(); string[] epochFrames; string epoch=""; int scan; double scanAt,healthAt; bool dead;
+  double lastSuccessfulRead=-100000;string selected=""; readonly Dictionary<string,double> failedUntil=new Dictionary<string,double>(); public string LastDiscovery=""; double lastRingAt=-10000; readonly HashSet<string> installed=new HashSet<string>(); string[] epochFrames; string epoch=""; int scan; double scanAt,healthAt; bool dead;
   readonly System.Diagnostics.Stopwatch timer=System.Diagnostics.Stopwatch.StartNew();
   public string Epoch {get{return epoch;}}
   public FishingConnection(string script,CancellationToken cancellation){probe=script;token=cancellation;}
@@ -37,6 +38,7 @@ internal static partial class CdpBridge {
   static void Collect(Dictionary<string,object> tree,List<string> result){var f=GetObject(tree,"frame");string u=GetString(f,"url");if((u.IndexOf("cfx-nui-",StringComparison.OrdinalIgnoreCase)>=0||u.StartsWith("nui://",StringComparison.OrdinalIgnoreCase))&&!result.Contains(u))result.Add(u);object ch;if(tree.TryGetValue("childFrames",out ch)){var children=ReadJsonArray(ch);if(children!=null)foreach(var o in children){var child=o as Dictionary<string,object>;if(child!=null)Collect(child,result);}}}
   async Task<FishingPilot.Scene> ReadOne(string url,bool allowInput,string cycle,bool fast) {
    var session=await Get(url).ConfigureAwait(false);
+   if(allowInput)inputFrames.Add(url);
    if(!installed.Contains(url)){await Read(session,probe).ConfigureAwait(false);installed.Add(url);}
    string command=Json.Serialize(new Dictionary<string,object>{{"enabled",allowInput},{"cycle",cycle??""}});
    string raw=await Read(session,"window.__fpProbe3?window.__fpProbe3.sample("+(fast?"true":"false")+","+command+"): 'REINSTALL'").ConfigureAwait(false);
@@ -53,7 +55,7 @@ internal static partial class CdpBridge {
    scene.Delivery=GetString(d,"delivery");var input=GetObject(d,"input");scene.InputReason=GetString(input,"reason");
    if(Bool(input,"sent")){scene.SentKey=NumI(input,"key",-1);scene.InputSequence=NumI(input,"seq");scene.InputRound=NumI(input,"round");scene.InputPointer=Num(input,"pointer",0);scene.InputStart=Num(input,"start",0);scene.InputEnd=Num(input,"end",0);}
    if(d.ContainsKey("notices"))foreach(var n in ReadJsonArray(d["notices"])??new object[0]){var v=(Dictionary<string,object>)n;scene.Notices.Add(new FishingPilot.Notice{Kind=GetString(v,"kind"),Id=url+":"+GetString(v,"id")});}
-   scene.RenderVisibility=GetString(d,"documentVisible");scene.RenderFocused=Bool(d,"focused");return scene;
+   scene.Discovery="svg="+NumI(d,"svgCount")+" canvas="+NumI(d,"canvasCount");scene.RenderVisibility=GetString(d,"documentVisible");scene.RenderFocused=Bool(d,"focused");return scene;
   }
   readonly Dictionary<string,FishingPilot.Scene> recent=new Dictionary<string,FishingPilot.Scene>();
   public string BackgroundStatus="focus_emulation=not_requested";bool backgroundActive;
@@ -73,7 +75,7 @@ internal static partial class CdpBridge {
   }
   async Task<FishingPilot.Scene> Probe(string url,bool allow,string cycle){
    double now=timer.Elapsed.TotalMilliseconds,until;if(failedUntil.TryGetValue(url,out until)&&until>now)return null;
-   try{var value=await ReadOne(url,allow,cycle,true).ConfigureAwait(false);Remember(url,value);failedUntil.Remove(url);return value;}
+   try{var value=await ReadOne(url,allow,cycle,true).ConfigureAwait(false);Remember(url,value);lastSuccessfulRead=timer.Elapsed.TotalMilliseconds;failedUntil.Remove(url);if(!value.Ring.Valid)LastDiscovery="frame="+url+" "+value.Discovery+" visible="+value.RenderVisibility;return value;}
    catch(Exception e){if(e.Message.Contains("SERVER_SESSION_CHANGED"))throw;CdpSession broken;if(sessions.TryGetValue(url,out broken)){broken.Dispose();sessions.Remove(url);}installed.Remove(url);failedUntil[url]=now+2000;LastDiscovery="frame="+url+" error="+e.Message;return null;}
   }
   public async Task<FishingPilot.Scene> Poll(bool allowInput=false,string cycle="") {
@@ -82,18 +84,20 @@ internal static partial class CdpBridge {
    // Sample the active ring before health checks, screenshot capture or any unrelated UI.
    if(selected!=""){
     var v=await Probe(selected,allowInput,cycle).ConfigureAwait(false);
-    if(v!=null){chosen=v;if(v.Ring.Valid){lastRingAt=now;Ancillary(v,now);v.Discovery=LastDiscovery;return v;}}
+    if(v!=null){chosen=v;if(v.Ring.Valid){lastRingAt=now;Ancillary(v,now);v.Discovery+=" "+LastDiscovery;return v;}}
    }
    if(now-healthAt>1500){var connection=await Get(InventoryFramePart).ConfigureAwait(false);connection.FishingDeadline(1200);
     try{var tree=await connection.FishingFrames().ConfigureAwait(false);if(!ServerFrameTreeMatches(tree,epochFrames))throw new InvalidOperationException("SERVER_SESSION_CHANGED");Collect(tree,urls);}finally{connection.FishingDeadline(-1);}healthAt=now;}
    // Known skill/fishing resources are sampled every poll, not once per complete frame sweep.
    var priority=urls.Where(u=>Rank(u)<=1&&u!=selected).Take(8).ToList();
+   if(now>=noticeAt){foreach(string hud in urls.Where(u=>Rank(u)==2&&u!=selected).Take(3))if(!priority.Contains(hud))priority.Add(hud);noticeAt=now+200;}
    if(now>=scanAt&&urls.Count>0){for(int i=0;i<urls.Count;i++){string u=urls[scan++%urls.Count];if(u!=selected&&!priority.Contains(u)&&u!="nui://game/ui/root.html"){priority.Add(u);break;}}scanAt=now+120;}
    foreach(string u in priority){
     var current=await Probe(u,allowInput,cycle).ConfigureAwait(false);if(current==null)continue;
-    if(current.Ring.Valid){selected=u;lastRingAt=now;Ancillary(current,now);current.Discovery="native_frame="+u+" "+BackgroundStatus;return current;}
+    if(current.Ring.Valid){selected=u;lastRingAt=now;Ancillary(current,now);current.Discovery+=" native_frame="+u+" "+BackgroundStatus;return current;}
     if(current.Present&&!chosen.Present)chosen=current;
    }
+   if(timer.Elapsed.TotalMilliseconds-lastSuccessfulRead>1500)throw new InvalidOperationException("NUI_READ_UNAVAILABLE: "+LastDiscovery);
    Ancillary(chosen,now);chosen.Discovery="frames="+urls.Count+" scanned="+scan+" "+BackgroundStatus+" "+LastDiscovery;
    return chosen;
   }
@@ -134,6 +138,6 @@ internal static partial class CdpBridge {
   }
   public static int ConsolePort() { return FishingPilot.Native.FiveMConsolePort(); }
   public static bool Hotbar(int port,int digit,CancellationToken token){if(token.IsCancellationRequested||digit<1||digit>5||(port!=29200&&port!=29300))return false;string cmd="hotkey"+digit;bool sent=false;try{sent=TrySendDevCon(port,"-"+cmd+";+"+cmd,0);if(sent)token.WaitHandle.WaitOne(50);return sent;}finally{if(sent)TrySendDevCon(port,"-"+cmd,0);}}
-  public void Dispose(){if(dead)return;dead=true;if(backgroundActive)try{SetBackgroundActive(false).GetAwaiter().GetResult();}catch{}foreach(var s in sessions.Values)try{s.FishingDeadline(200);s.EvaluateStringAsync("window.__fpProbe3?window.__fpProbe3.stop(): 'STOPPED'",false).GetAwaiter().GetResult();}catch{}finally{s.Dispose();}sessions.Clear();}
+  public void Dispose(){if(dead)return;dead=true;if(backgroundActive)try{SetBackgroundActive(false).GetAwaiter().GetResult();}catch{}foreach(var pair in sessions)try{var s=pair.Value;if(inputFrames.Contains(pair.Key)){s.FishingDeadline(200);s.EvaluateStringAsync("window.__fpProbe3?window.__fpProbe3.stop(): 'STOPPED'",false).GetAwaiter().GetResult();}}catch{}finally{pair.Value.Dispose();}sessions.Clear();}
  }
 }

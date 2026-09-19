@@ -71,6 +71,7 @@ namespace FishingPilot {
     notes.Add("native UI protocol: allowlist, typed payload validation, immutable settings update, calibration preservation");
     count+=Tests050.Run(output);
     count+=Tests060.Run(output);
+    count+=Tests064.Run(output);
     count+=Tests040.Run(output);notes.Add("storage040: exact metadata ledger, protected items, paired receipts, durable pending guard tested");
     NativeInputTest(notes);
     File.WriteAllText(Path.Combine(output,"RESULT.txt"),"PASS\nassertions="+count+"\n"+String.Join("\n",notes.ToArray())+"\nNo live FiveM execution or catch-success claim.\n");return 0;

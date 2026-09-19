@@ -37,5 +37,5 @@ try {
  }
  $files=Get-ChildItem $out -File -Recurse|Where-Object {$_.Name -ne 'SHA256SUMS.txt' -and $_.FullName -notmatch '[\\/]test-evidence[\\/]'}
  $files|ForEach-Object {('{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(),$_.FullName.Substring($out.Length+1).Replace('\','/'))}|Set-Content (Join-Path $out SHA256SUMS.txt) -Encoding utf8
- Write-Host 'FishingPilot 0.6.3 build ready.'
+ Write-Host 'FishingPilot 0.6.4 build ready.'
 } finally {Pop-Location}
