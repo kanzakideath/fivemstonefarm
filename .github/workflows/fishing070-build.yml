@@ -1,0 +1,32 @@
+name: FishingPilot compiled distribution preparation
+on:
+  push:
+    branches: [release/fishingpilot-0.7.0]
+    paths: [.github/workflows/fishing070-build.yml, 'staging070/**']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Apply and export exact inherited source
+        shell: pwsh
+        run: |
+          python staging064/Apply.py
+          if($LASTEXITCODE -ne 0){throw 'Integration failed'}
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          Compress-Archive -Path portable,staging064 -DestinationPath artifacts/applied-source.zip
+      - name: Build native executable and run native tests
+        shell: pwsh
+        run: |
+          ./portable/Build.ps1 -Test
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: fishing070-preparation
+          path: |
+            artifacts/applied-source.zip
+            portable/dist/
+          retention-days: 14
