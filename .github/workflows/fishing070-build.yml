@@ -1,0 +1,161 @@
+name: FishingPilot 0.7.0 managed updates and consented screen sharing
+on:
+  push:
+    branches: [feat/fishing-managed-0.7.0]
+    paths: ['staging070/**', '.github/workflows/fishing070-build.yml', 'distribution/**', 'portable/**']
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: fishing070-build
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Apply hash-checked sources on isolated branch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          python staging070/Apply.py
+          if($LASTEXITCODE -ne 0){throw 'Source application failed'}
+          New-Item -ItemType Directory -Force artifacts/fishing070/tests | Out-Null
+          Remove-Item portable/dist -Recurse -Force -ErrorAction SilentlyContinue
+      - name: Compile application, launcher and admin; verify application startup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          Start-Transcript artifacts/fishing070/build.txt
+          try {
+            ./portable/Build.ps1 -Test
+            ./distribution/Build.ps1
+          } finally { Stop-Transcript }
+      - name: Obtain the exact previous package for offline rollback
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force artifacts/rollback-input | Out-Null
+          gh release view fishingpilot-v0.6.4 --repo $env:GITHUB_REPOSITORY --json tagName 2>$null
+          if($LASTEXITCODE -eq 0){
+            gh release download fishingpilot-v0.6.4 --repo $env:GITHUB_REPOSITORY --pattern FishingPilot-payload-win-x64.zip --dir artifacts/rollback-input
+            if($LASTEXITCODE -ne 0){throw 'Rollback release download failed'}
+          }else{
+            gh run download 35429620809 --repo $env:GITHUB_REPOSITORY --name fishing064-download --dir artifacts/rollback-input
+            if($LASTEXITCODE -ne 0){throw 'Verified rollback artifact download failed'}
+            $old=Get-ChildItem artifacts/rollback-input -Filter FishingPilot-0.6.4-preview-win-x64.zip -Recurse | Select-Object -First 1
+            if(!$old -or (Get-FileHash $old.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -ne '4077361c5adf578d77745a377abe68cd760924dc2e981c0e7149aa32a523e7fd'){throw 'Rollback artifact checksum mismatch'}
+          }
+          python staging070/Package.py stage
+          if($LASTEXITCODE -ne 0){throw 'Runtime staging failed'}
+      - name: Test updater rejection paths, real UI preflight and rollback pin
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:FP_TEST_RUNTIME=Join-Path $PWD 'portable/dist'
+          $test=Join-Path $PWD 'artifacts/fishing070/tests'
+          $p=Start-Process distribution/dist/FishingPilot.exe -ArgumentList @('--self-test',('"'+$test+'"')) -PassThru
+          if(!$p.WaitForExit(90000)){$p.Kill();throw 'Updater tests timed out'}
+          $p.Refresh();if($p.ExitCode -ne 0){Get-Content "$test/updater-error.txt";throw 'Updater tests failed'}
+          Get-Content "$test/updater.json"
+          $png=Join-Path $test 'manager.png'
+          $p=Start-Process artifacts/fishing070/bundle/FishingPilot.exe -ArgumentList @('--smoke',('"'+$png+'"')) -PassThru
+          if(!$p.WaitForExit(25000)){$p.Kill();throw 'Manager smoke timed out'}
+          $p.Refresh();if($p.ExitCode -ne 0 -or !(Test-Path $png)){throw 'Manager UI failed'}
+      - name: Test two authenticated TLS clients, image bounds, consent default and revocation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $test=Join-Path $PWD 'artifacts/fishing070/tests'
+          $p=Start-Process distribution/dist/FishingPilot.Admin.exe -ArgumentList @('--self-test',('"'+$test+'"')) -PassThru
+          if(!$p.WaitForExit(60000)){$p.Kill();throw 'Sharing tests timed out'}
+          $p.Refresh();if($p.ExitCode -ne 0){Get-Content "$test/sharing-error.txt";throw 'Sharing tests failed'}
+          Get-Content "$test/sharing.json"
+      - name: Verify responsive application UI and unchanged inventory updates
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          node portable/TestInventory060.cjs artifacts/fishing070/tests/inventory.json
+          if($LASTEXITCODE -ne 0){throw 'Inventory regression failed'}
+          python -m pip install playwright==1.57.0
+          if($LASTEXITCODE -ne 0){throw 'Browser test tooling failed'}
+          $edge='C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+          if(!(Test-Path $edge)){$edge='C:\Program Files\Microsoft\Edge\Application\msedge.exe'}
+          python portable/TestUi.py --browser $edge --output artifacts/fishing070/tests/ui
+          if($LASTEXITCODE -ne 0){throw 'UI regression failed'}
+      - name: Commit validated sources without modifying main or miner releases
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- portable distribution staging070
+          git diff --cached --quiet
+          if($LASTEXITCODE -ne 0){
+            git commit -m 'FishingPilot 0.7.0: validated managed updates, rollback and visible opt-in screen sharing'
+            if($LASTEXITCODE -ne 0){throw 'Source commit failed'}
+            git push origin HEAD:feat/fishing-managed-0.7.0
+            if($LASTEXITCODE -ne 0){throw 'Branch advanced; no force push permitted'}
+          }
+          python staging070/Package.py final
+          if($LASTEXITCODE -ne 0){throw 'Packaging failed'}
+      - name: Publish dedicated prereleases after all validation gates
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          gh release view fishingpilot-v0.6.4 --repo $env:GITHUB_REPOSITORY --json tagName 2>$null
+          if($LASTEXITCODE -ne 0){
+            gh release create fishingpilot-v0.6.4 artifacts/fishing070/rollback/FishingPilot-payload-win-x64.zip --repo $env:GITHUB_REPOSITORY --target f35042e032a2e245c0c91ac4598173084d796db6 --title 'FishingPilot 0.6.4 rollback package' --notes 'Previously built FishingPilot 0.6.4 runtime with a manager manifest. No new fishing behavior. No screen sharing in this previous version.' --prerelease --latest=false
+            if($LASTEXITCODE -ne 0){throw 'Rollback prerelease failed'}
+          }
+          $sha=git rev-parse HEAD
+          gh release create fishingpilot-v0.7.0 --repo $env:GITHUB_REPOSITORY --target $sha --title 'FishingPilot 0.7.0 preview — managed updates and opt-in screen sharing' --notes-file staging070/README.txt --draft --prerelease --latest=false
+          if($LASTEXITCODE -ne 0){throw 'Release already exists or draft creation failed; no overwrite'}
+          Get-ChildItem artifacts/fishing070/release -File | ForEach-Object {
+            gh release upload fishingpilot-v0.7.0 $_.FullName --repo $env:GITHUB_REPOSITORY
+            if($LASTEXITCODE -ne 0){throw 'Asset upload failed; draft retained'}
+          }
+          gh release edit fishingpilot-v0.7.0 --repo $env:GITHUB_REPOSITORY --draft=false --prerelease --latest=false
+          if($LASTEXITCODE -ne 0){throw 'Release publication failed'}
+      - name: Download from the real public feed and test update and rollback
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:FP_TEST_BUNDLE=Join-Path $PWD 'artifacts/fishing070/bundle'
+          $test=Join-Path $PWD 'artifacts/fishing070/tests'
+          $ok=$false
+          for($attempt=0;$attempt -lt 3;$attempt++){
+            $p=Start-Process distribution/dist/FishingPilot.exe -ArgumentList @('--verify-feed',('"'+$test+'"')) -PassThru
+            if(!$p.WaitForExit(120000)){$p.Kill()}else{$p.Refresh();if($p.ExitCode -eq 0){$ok=$true;break}}
+            Start-Sleep -Seconds 5
+          }
+          if(!$ok){
+            gh release edit fishingpilot-v0.7.0 --repo $env:GITHUB_REPOSITORY --draft=true
+            Get-Content "$test/live-feed-error.txt" -ErrorAction SilentlyContinue
+            throw 'Live public update test failed; release returned to draft'
+          }
+          Copy-Item "$test/live-feed.json" artifacts/fishing070/release/live-feed-verification.json
+          gh release upload fishingpilot-v0.7.0 artifacts/fishing070/release/live-feed-verification.json --repo $env:GITHUB_REPOSITORY
+          if($LASTEXITCODE -ne 0){throw 'Post-publish verification upload failed'}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: fishing070-evidence
+          path: |
+            artifacts/fishing070/tests/
+            artifacts/fishing070/build.txt
+            portable/dist/test-evidence/
+          retention-days: 14
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: success()
+        with:
+          name: fishing070-download
+          path: artifacts/fishing070/release/
+          retention-days: 14
+          if-no-files-found: error
