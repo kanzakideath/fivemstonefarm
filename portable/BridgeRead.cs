@@ -12,7 +12,7 @@ internal static partial class CdpBridge {
    session.FishingDeadline(1000);
    try {
     if(DateTime.UtcNow>=nextEpochCheck){if(!await session.MatchesServerEpochAsync().ConfigureAwait(false))return new FishingPilot.Telemetry{Error="接続が変わりました"};nextEpochCheck=DateTime.UtcNow.AddMilliseconds(1000);}
-    string expression=installed?"window.__fpInventory060?window.__fpInventory060.sample():'REINSTALL'":"(()=>{"+InventoryPrelude()+"return "+probe.Trim().TrimEnd(';')+";})()";
+    string expression=installed?"window.__fpInventory060?window.__fpInventory060.sample():'REINSTALL'":"(()=>{"+InventoryPrelude()+"return ("+probe.Trim().TrimEnd(';')+");})()";
     string raw=await session.EvaluateStringAsync(expression,false).ConfigureAwait(false);
     if(raw=="REINSTALL"){installed=false;return new FishingPilot.Telemetry{Epoch=epoch,Error="所持品の更新監視を再接続中"};}
     installed=true;

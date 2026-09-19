@@ -46,12 +46,12 @@ namespace FishingPilot {
    stop=new CancellationTokenSource();var token=stop.Token;sessionId=Guid.NewGuid().ToString("N").Substring(0,12);round.Reset();outcomes.Clear();epoch="";phase="ready";reason="";lastPhase="";castIssued=seenRing=fullAlert=acknowledged=resultWarned=false;before=null;pendingNeed="";nextHud=0;foodActionAt=-10000;nextCastAt=Now;lastRingAt=-10000;quietSince=-1;hungerVotes=waterVotes=0;castRetries=0;heartbeat=lastUi=sceneRetry=0;
    hunger=new VitalGauge();water=new VitalGauge();cachedFood=new VitalGauge();cachedWater=new VitalGauge();notices.Clear();noticeQueue.Clear();
    consolePort=o.BackgroundMode?CdpBridge.FishingConnection.ConsolePort():0;
-   telemetry=new Telemetry();state=new Status{Running=true};Log("start","version=0.6.1-preview observe_only="+o.ObserveOnly+" background="+o.BackgroundMode+" console="+consolePort+" auto_needs="+o.AutoNeeds);
+   telemetry=new Telemetry();state=new Status{Running=true};Log("start","version=0.6.2-preview observe_only="+o.ObserveOnly+" background="+o.BackgroundMode+" console="+consolePort+" auto_needs="+o.AutoNeeds);
    observer=new SceneObserver(()=>epoch,()=>Native.GetForegroundWindow()==target,()=>Now,token);telemetryWorker=Task.Run(()=>TelemetryLoop(token));worker=Task.Run(()=>Loop(token));
   }
   async Task TelemetryLoop(CancellationToken token) {
-   CdpBridge.FishingTelemetryReader reader=null;
-   try{while(!token.IsCancellationRequested){Telemetry value;try{if(reader==null)reader=new CdpBridge.FishingTelemetryReader();value=await reader.Read().ConfigureAwait(false);}catch(Exception e){value=new Telemetry{Error="NUI読み取り再接続: "+e.GetType().Name};if(reader!=null)reader.Dispose();reader=null;}value.At=Now;if(token.IsCancellationRequested)return;lock(gate)telemetry=value;ApplyInventory(value);Publish();await Task.Delay(value.Known?120:400,token).ConfigureAwait(false);}}
+   CdpBridge.FishingTelemetryReader reader=null;string lastReadError="";double lastReadErrorAt=-10000;
+   try{while(!token.IsCancellationRequested){Telemetry value;try{if(reader==null)reader=new CdpBridge.FishingTelemetryReader();value=await reader.Read().ConfigureAwait(false);}catch(Exception e){string code=e.GetType().Name+": "+e.Message.Replace("\r"," ").Replace("\n"," ");if(code.Length>180)code=code.Substring(0,180);value=new Telemetry{Error="所持品の読み取りエラー: "+code};if(lastReadError!=code||Now-lastReadErrorAt>=5000){Log("telemetry_error",code);lastReadError=code;lastReadErrorAt=Now;}if(reader!=null)reader.Dispose();reader=null;}if(value.Known&&lastReadError!=""){Log("telemetry_recovered","inventory_source="+value.InventorySource);lastReadError="";}value.At=Now;if(token.IsCancellationRequested)return;lock(gate)telemetry=value;ApplyInventory(value);Publish();await Task.Delay(value.Known?120:400,token).ConfigureAwait(false);}}
    catch(OperationCanceledException){}finally{if(reader!=null)reader.Dispose();}
   }
   void Loop(CancellationToken token) {
@@ -226,7 +226,7 @@ namespace FishingPilot {
   double lastLimited;
   void LogThrottled(string kind,string detail){if(Now-lastLimited<2000)return;lastLimited=Now;Log(kind,detail);}
   readonly System.Collections.Concurrent.ConcurrentQueue<string> logQueue=new System.Collections.Concurrent.ConcurrentQueue<string>();Task logWriter;
-  public void Log(string kind,string detail){try{if(logQueue.Count>10000)return;logQueue.Enqueue(new JavaScriptSerializer().Serialize(new{utc=DateTime.UtcNow.ToString("o"),ms=Now,version="0.6.1-preview",session=sessionId,type=kind,detail=detail})+Environment.NewLine);lock(logGate){if(logWriter==null||logWriter.IsCompleted)logWriter=Task.Run((Action)WriteLogs);}}catch{}}
+  public void Log(string kind,string detail){try{if(logQueue.Count>10000)return;logQueue.Enqueue(new JavaScriptSerializer().Serialize(new{utc=DateTime.UtcNow.ToString("o"),ms=Now,version="0.6.2-preview",session=sessionId,type=kind,detail=detail})+Environment.NewLine);lock(logGate){if(logWriter==null||logWriter.IsCompleted)logWriter=Task.Run((Action)WriteLogs);}}catch{}}
   void WriteLogs(){for(;;){var lines=new System.Text.StringBuilder();string line;for(int i=0;i<512&&logQueue.TryDequeue(out line);i++)lines.Append(line);if(lines.Length>0)try{string p=Path.Combine(root,"events.jsonl");if(File.Exists(p)&&new FileInfo(p).Length>4*1024*1024){string old=p+".1";if(File.Exists(old))File.Delete(old);File.Move(p,old);}File.AppendAllText(p,lines.ToString());}catch{}lock(logGate){if(logQueue.IsEmpty){logWriter=null;return;}}}}
   public void FlushLogs(){Task writer;lock(logGate)writer=logWriter;if(writer!=null)try{writer.Wait(3000);}catch{}}
 
