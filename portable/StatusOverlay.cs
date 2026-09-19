@@ -26,7 +26,7 @@ namespace FishingPilot {
   public StatusOverlay(){FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=false;TopMost=true;ClientSize=new Size(360,260);Font=new Font("Yu Gothic UI",10);follow=new Timer{Interval=200};follow.Tick+=delegate{Follow();};follow.Start();}
   public void Configure(OverlayOptions o){if(Object.ReferenceEquals(o,settings))return;settings=o??new OverlayOptions();settings.Validate();Follow();Render();}
   public void UpdateState(Status s,IntPtr hwnd,bool show){status=s??new Status();game=hwnd;enabled=show;Follow();Render();}
-  int DesiredHeight(){int line=settings.FontSize+18;return 45+(settings.ShowSession?92:0)+(settings.ShowHeldValue?line:0)+(settings.ShowTrunkValue?line+22:0)+(settings.ShowWeight?line:0)+(settings.ShowNeeds?line:0)+(settings.ShowStatus?line:0)+(settings.ShowMovement?line:0)+(settings.ShowLifetime?line:0)+(settings.ShowDiagnostics?line*2:0)+(settings.ShowItems?Math.Min(settings.MaxRows,(status.Live.HeldValue.Items??new ItemDisplay[0]).Length)*line:0);}
+  int DesiredHeight(){int line=settings.FontSize+18;return 45+(settings.ShowSession?92:0)+(settings.ShowHeldValue?line:0)+(settings.ShowTrunkValue?line+22:0)+(settings.ShowWeight?line:0)+(settings.ShowNeeds?line:0)+(settings.ShowStatus?line+42:0)+(settings.ShowMovement?line:0)+(settings.ShowLifetime?line:0)+(settings.ShowDiagnostics?line*2:0)+(settings.ShowItems?Math.Min(settings.MaxRows,(status.Live.HeldValue.Items??new ItemDisplay[0]).Length)*line:0);}
   void Follow(){if(!enabled||game==IntPtr.Zero||!Native.IsWindow(game)||IsIconic(game)||Native.GetForegroundWindow()!=game){if(Visible)Hide();return;}
    var c=Native.Client(game);if(c.Width<300||c.Height<240){if(Visible)Hide();return;}
    int w=Math.Min(settings.Width,c.Width-24),h=Math.Min(DesiredHeight(),c.Height-24);
@@ -50,7 +50,7 @@ namespace FishingPilot {
    if(settings.ShowTrunkValue){Row(g,"荷台全体",Money(live.TrunkValue),ref y,width);DrawText(g,live.TrunkKnown?(live.TrunkOpen?"開いている荷台 · ":"最終確認 "+live.TrunkUpdated+" · ")+(live.TrunkLabel==""?live.TrunkId:live.TrunkLabel):"荷台を開くと中身全体を集計します",9,FontStyle.Regular,Color.FromArgb(117,125,139),ref y,22,width);}
    if(settings.ShowWeight)Row(g,"重量",live.Weight+(live.Fresh?"":" · 更新待ち"),ref y,width);
    if(settings.ShowNeeds)Row(g,"空腹 / 水分",status.Hunger+" / "+status.Thirst,ref y,width);
-   if(settings.ShowStatus)Row(g,status.Running?"実行中":"停止",status.Phase,ref y,width);
+   if(settings.ShowStatus){Row(g,status.Running?"実行中":"停止",status.Phase,ref y,width);using(var f=new Font("Yu Gothic UI",9))using(var b=new SolidBrush(Color.FromArgb(103,112,128)))using(var fmt=new StringFormat{Trimming=StringTrimming.EllipsisCharacter})g.DrawString(status.Detail??"",f,b,new RectangleF(17,y,width-34,40),fmt);y+=42;}
    if(settings.ShowMovement)Row(g,"10分ごと前進",status.Movement,ref y,width);
    if(settings.ShowLifetime)Row(g,"取得累計の見込",Money(live.LifetimeValue),ref y,width);
    if(settings.ShowItems)foreach(var item in live.HeldValue.Items.Take(settings.MaxRows))Row(g,item.Label+" ×"+item.Count,item.PriceKnown?"¥"+item.Value.ToString("N0"):"単価未登録",ref y,width);

@@ -21,9 +21,9 @@ namespace FishingPilot {
   [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern int GetWindowText(IntPtr h,StringBuilder s,int n);
   [DllImport("user32.dll")]public static extern bool IsWindow(IntPtr h);
   [DllImport("user32.dll")]public static extern short GetAsyncKeyState(int k);
-  [DllImport("user32.dll")]static extern uint SendInput(uint n,INPUT[] inputs,int size);
+  [DllImport("user32.dll",SetLastError=true)]static extern uint SendInput(uint n,INPUT[] inputs,int size);
   [DllImport("user32.dll")]static extern uint MapVirtualKey(uint code,uint map);
-  [DllImport("user32.dll")]public static extern bool RegisterHotKey(IntPtr h,int id,uint mod,uint key);
+  [DllImport("user32.dll",SetLastError=true)]public static extern bool RegisterHotKey(IntPtr h,int id,uint mod,uint key);
   [DllImport("user32.dll")]public static extern bool UnregisterHotKey(IntPtr h,int id);
   [DllImport("user32.dll")]public static extern bool SetProcessDPIAware();
   [DllImport("winmm.dll")]public static extern uint timeBeginPeriod(uint p);
@@ -45,14 +45,16 @@ namespace FishingPilot {
     }return found.Count==1?found[0]:0;
    }finally{Marshal.FreeHGlobal(buffer);}
   }
-  public static bool Press(IntPtr h,uint expectedPid,int digit,CancellationToken cancel){
+  [ThreadStatic] public static string LastInputDiagnostic;
+  public static bool Press(IntPtr h,uint expectedPid,int digit,CancellationToken cancel,int holdMs=24){
    uint pid;GetWindowThreadProcessId(h,out pid);
-   if(cancel.IsCancellationRequested||h!=GetForegroundWindow()||pid!=expectedPid||!IsWindow(h)||digit<0||digit>9)return false;
-   int vk=0x30+digit;if((GetAsyncKeyState(vk)&0x8000)!=0)return false;
+   LastInputDiagnostic="target_or_cancel_guard";
+   if(cancel.IsCancellationRequested||h!=GetForegroundWindow()||pid!=expectedPid||!IsWindow(h)||digit<0||digit>9||holdMs<10||holdMs>200)return false;
+   int vk=0x30+digit;if((GetAsyncKeyState(vk)&0x8000)!=0){LastInputDiagnostic="key_already_down";return false;}
    var down=new INPUT{type=1,data=new UNION{ki=new KEYBDINPUT{scan=(ushort)MapVirtualKey((uint)vk,0),flags=0x0008}}};
    var up=down;up.data.ki.flags|=0x0002;
    bool sent=false;
-   try{sent=SendInput(1,new[]{down},Marshal.SizeOf(typeof(INPUT)))==1;if(sent)cancel.WaitHandle.WaitOne(24);return sent;}
+   try{sent=SendInput(1,new[]{down},Marshal.SizeOf(typeof(INPUT)))==1;int error=Marshal.GetLastWin32Error();LastInputDiagnostic=sent?"keydown_sent hold_ms="+holdMs:"SendInput_failed win32="+error+" integrity_or_input_block_possible";if(sent)cancel.WaitHandle.WaitOne(holdMs);return sent;}
    finally{if(sent)SendInput(1,new[]{up},Marshal.SizeOf(typeof(INPUT)));}
   }
   public static bool HoldForward(IntPtr h,uint expectedPid,int milliseconds,CancellationToken cancel,Func<bool> enabled){

@@ -16,8 +16,12 @@ internal static partial class CdpBridge {
     string raw=await session.EvaluateStringAsync(expression,false).ConfigureAwait(false);
     if(raw=="REINSTALL"){installed=false;return new FishingPilot.Telemetry{Epoch=epoch,Error="所持品の更新監視を再接続中"};}
     installed=true;
+    return DecodeSnapshot(raw,epoch);
+   }finally{session.FishingDeadline(-1);}
+  }
+  public static FishingPilot.Telemetry DecodeSnapshot(string raw,string epoch) {
     var d=Json.DeserializeObject(raw) as Dictionary<string,object>;if(d==null)throw new InvalidDataException("Invalid live inventory snapshot");
-    var l=GetObject(d,"left");var r=GetObject(d,"right");
+    var l=OptionalObject(d,"left");var r=OptionalObject(d,"right");
     var inv=Decode(l);var right=Decode(r);
     bool unknown=d.ContainsKey("unknownDelta")&&d["unknownDelta"] is bool&&(bool)d["unknownDelta"];
     bool open=d.ContainsKey("open")&&d["open"] is bool&&(bool)d["open"];
@@ -26,12 +30,12 @@ internal static partial class CdpBridge {
       Trunk=type=="trunk"?right:new FishingPilot.Inventory(),TrunkId=type=="trunk"?GetString(r,"id"):"",TrunkLabel=type=="trunk"?GetString(r,"label"):"",TrunkOpen=open&&type=="trunk",
       Revision=d.ContainsKey("revision")?Convert.ToInt64(d["revision"]):0,InventorySource=GetString(d,"source"),
       Error=inv.Known&&!unknown?"": "所持品を一度開いて閉じ、重量と全スロットを同期してください"};
-   }finally{session.FishingDeadline(-1);}
   }
+  static Dictionary<string,object> OptionalObject(Dictionary<string,object> parent,string key){object value;return parent.TryGetValue(key,out value)?value as Dictionary<string,object>:null;}
   static FishingPilot.Inventory Decode(Dictionary<string,object> data) {
    if(data==null||data.Count==0||!data.ContainsKey("weight")||Convert.ToDouble(data["weight"])<0)return new FishingPilot.Inventory();
    var inv=FishingPilot.Inventory.Parse(FormatInventorySnapshotResult("SNAPSHOT_DETAIL "+Json.Serialize(data)));
-   object rows;if(data.TryGetValue("items",out rows)&&rows is object[])foreach(var obj in (object[])rows){var item=obj as Dictionary<string,object>;if(item==null)continue;string name=GetString(item,"name"),label=GetString(item,"label");if(name.Length>0&&label.Length<=128)inv.Labels[name]=label;}
+   object rows;if(data.TryGetValue("items",out rows))foreach(var obj in ReadJsonArray(rows)??new object[0]){var item=obj as Dictionary<string,object>;if(item==null)continue;string name=GetString(item,"name"),label=GetString(item,"label");if(name.Length>0&&label.Length<=128)inv.Labels[name]=label;}
    return inv;
   }
   public void Dispose(){dead=true;if(session!=null)session.Dispose();session=null;}

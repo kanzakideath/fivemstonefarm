@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -1392,7 +1392,7 @@ internal static partial class CdpBridge
         if (detail == null)
             return "ERROR INVALID_INVENTORY";
         object itemsValue;
-        var items = detail.TryGetValue("items", out itemsValue) ? itemsValue as object[] : null;
+        var items = detail.TryGetValue("items", out itemsValue) ? ReadJsonArray(itemsValue) : null;
         if (items == null)
             return "ERROR INVALID_INVENTORY";
 
@@ -2137,7 +2137,7 @@ internal static partial class CdpBridge
                 return "ERROR INVALID_DEPOSIT_RECEIPT";
             object itemsValue;
             var items = detail.TryGetValue("items", out itemsValue)
-                ? itemsValue as object[] : null;
+                ? ReadJsonArray(itemsValue) : null;
             if (items == null || items.Length != stacks)
                 return "ERROR INVALID_DEPOSIT_RECEIPT";
 
@@ -2831,7 +2831,7 @@ internal static partial class CdpBridge
             return;
         }
 
-        object[] array = value as object[];
+        object[] array = ReadJsonArray(value);
         if (array != null)
         {
             builder.Append('[');
@@ -2957,7 +2957,7 @@ internal static partial class CdpBridge
             client.Encoding = Encoding.UTF8;
             text = client.DownloadString(TargetsUrl);
         }
-        var targets = Json.DeserializeObject(text) as object[];
+        var targets = ReadJsonArray(Json.DeserializeObject(text));
         if (targets == null)
             throw new InvalidOperationException("DEBUG_TARGET_UNAVAILABLE");
         foreach (object item in targets)
@@ -3062,7 +3062,7 @@ internal static partial class CdpBridge
         object childrenObject;
         if (frameTree.TryGetValue("childFrames", out childrenObject))
         {
-            var children = childrenObject as object[];
+            var children = ReadJsonArray(childrenObject);
             if (children != null)
             {
                 foreach (object child in children)
@@ -3087,7 +3087,7 @@ internal static partial class CdpBridge
         object childrenObject;
         if (frameTree.TryGetValue("childFrames", out childrenObject))
         {
-            var children = childrenObject as object[];
+            var children = ReadJsonArray(childrenObject);
             if (children != null)
             {
                 foreach (object child in children)
@@ -4341,6 +4341,13 @@ internal static partial class CdpBridge
         public RouteStep(int duration, int mask) { Duration = duration; Mask = mask; }
         public int Duration { get; private set; }
         public int Mask { get; private set; }
+    }
+
+    private static object[] ReadJsonArray(object value)
+    {
+        var array=value as object[]; if(array!=null)return array;
+        var list=value as System.Collections.IList; if(list==null)return null;
+        var result=new object[list.Count];list.CopyTo(result,0);return result;
     }
 
     private static Dictionary<string, object> GetObject(Dictionary<string, object> source, string key)

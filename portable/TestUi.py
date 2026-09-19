@@ -2,7 +2,7 @@ from pathlib import Path
 import json,argparse,mimetypes
 from playwright.sync_api import sync_playwright
 p=argparse.ArgumentParser();p.add_argument('--browser');p.add_argument('--inline',action='store_true');p.add_argument('--output',default='ui-evidence');a=p.parse_args();r=Path(__file__).parent/'ui';out=Path(a.output);out.mkdir(parents=True,exist_ok=True)
-state={'type':'state','version':'0.6.0-preview','busy':False,'countdown':0,'feedback':'','status':{'Phase':'停止中','Ring':'未検出','Backend':'未確認','Delivery':'未確認','ReadMs':0,'Inventory':'未確認','Hunger':'未確認','Thirst':'未確認'},'settings':{'ObserveOnly':True,'BackgroundMode':True,'AutoNeeds':True,'FoodKey':1,'DrinkKey':3,'ReserveGrams':500,'GaugeRadius':20,'MinRecastMs':1400,'ShowOverlay':True}}
+state={'type':'state','version':'0.6.1-preview','busy':False,'countdown':0,'feedback':'','status':{'Phase':'停止中','Ring':'未検出','Backend':'未確認','Delivery':'未確認','ReadMs':0,'Inventory':'未確認','Hunger':'未確認','Thirst':'未確認'},'settings':{'ObserveOnly':True,'BackgroundMode':True,'AutoNeeds':True,'FoodKey':1,'DrinkKey':3,'ReserveGrams':500,'GaugeRadius':20,'MinRecastMs':1400,'ShowOverlay':True}}
 results=[]
 with sync_playwright() as pw:
  b=pw.chromium.launch(headless=True,executable_path=a.browser,args=['--no-sandbox']);ctx=b.new_context();page=ctx.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))

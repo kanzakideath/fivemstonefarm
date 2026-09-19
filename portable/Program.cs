@@ -12,11 +12,11 @@ using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
-[assembly: AssemblyVersion("0.6.0.0")]
-[assembly: AssemblyFileVersion("0.6.0.0")]
+[assembly: AssemblyVersion("0.6.1.0")]
+[assembly: AssemblyFileVersion("0.6.1.0")]
 namespace FishingPilot {
  static class Program {
-  internal const string Version="0.6.0-preview";
+  internal const string Version="0.6.1-preview";
   [STAThread] static int Main(string[] args) {
    Native.SetProcessDPIAware();Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);
    if(args.Length>1&&args[0]=="--storage-expressions"){CdpBridge.ExportStorageExpressions(args[1]);return 0;}
@@ -84,7 +84,7 @@ namespace FishingPilot {
    fallback=new Label{Dock=DockStyle.Fill,Text="釣りアシストを起動しています…",TextAlign=ContentAlignment.MiddleCenter};Controls.Add(fallback);
    tray=new NotifyIcon{Icon=SystemIcons.Information,Text="釣りアシスト",Visible=smoke==null};var menu=new ContextMenuStrip();menu.Items.Add("表示",null,delegate{Show();WindowState=FormWindowState.Normal;Activate();});menu.Items.Add("停止（F6）",null,delegate{StopNow();});menu.Items.Add("診断ZIPを保存",null,delegate{TryAction(Export);});menu.Items.Add("終了",null,delegate{Close();});tray.ContextMenuStrip=menu;tray.DoubleClick+=delegate{Show();WindowState=FormWindowState.Normal;Activate();};
    timer=new System.Windows.Forms.Timer{Interval=500};timer.Tick+=async delegate{if(countdown>0&&++countdownTick%2==0){countdown--;if(countdown==0)TryAction(StartNow);}if(smoke==null&&countdown==0&&!setupBusy&&!engine.Busy)await engine.RefreshIdleInventory();Push();};timer.Start();
-   Shown+=async delegate {if(smoke==null){bool a=Native.RegisterHotKey(Handle,1,0x4000,InputPolicy.StartKey),b=Native.RegisterHotKey(Handle,2,0x4000,InputPolicy.StopKey);Native.RegisterHotKey(Handle,3,0x4003,0x75);Native.RegisterHotKey(Handle,4,0x4003,0x76);if(!a||!b)feedback="F5/F6が他アプリと競合しています。旧採掘機・旧FishingPilotを終了してください";}await Initialize();};
+   Shown+=async delegate {if(smoke==null){bool a=Native.RegisterHotKey(Handle,1,0x4000,InputPolicy.StartKey),b=Native.RegisterHotKey(Handle,2,0x4000,InputPolicy.StopKey);Native.RegisterHotKey(Handle,3,0x4003,0x75);Native.RegisterHotKey(Handle,4,0x4003,0x76);engine.Log("hotkeys_registered","F5="+a+" F6="+b);if(!a||!b){feedback="F5/F6が他アプリと競合しています。旧採掘機・旧FishingPilotを終了してください";tray.ShowBalloonTip(6000,"釣りアシスト",feedback,ToolTipIcon.Warning);}}await Initialize();};
    FormClosing+=delegate {closing=true;countdown=0;if(setupStop!=null)setupStop.Cancel();timer.Stop();overlay.Dispose();engine.Dispose();for(int i=1;i<=4;i++)Native.UnregisterHotKey(Handle,i);tray.Visible=false;tray.Dispose();};
   }
   async Task Initialize(){try{
@@ -148,13 +148,13 @@ namespace FishingPilot {
   }
   void EnsureIdle(){if(countdown>0||engine.Busy||setupBusy)throw new InvalidOperationException("停止処理を完了してから操作してください");}
   void Save(Options o){UiCommands.Validate(o);string p=Path.Combine(root,"settings.json"),tmp=p+".tmp";File.WriteAllText(tmp,json.Serialize(o));if(File.Exists(p))File.Replace(tmp,p,p+".bak");else File.Move(tmp,p);}
-  void StartNow(){countdown=0;EnsureIdle();UiCommands.Validate(config);Save(config);engine.Start(json.Deserialize<Options>(json.Serialize(config)));state.Running=true;feedback="";Push();}
+  void StartNow(){engine.Log("start_requested","source=F5_or_button observe_only="+config.ObserveOnly+" background="+config.BackgroundMode);countdown=0;EnsureIdle();UiCommands.Validate(config);Save(config);engine.Start(json.Deserialize<Options>(json.Serialize(config)));state.Running=true;feedback="";Push();}
   void StopNow(){countdown=0;if(setupStop!=null)setupStop.Cancel();engine.Stop();state.Running=false;state.Phase="停止処理中";feedback="停止を要求しました";Push();}
-  void TryAction(Action a){try{a();}catch(Exception e){feedback=e.Message;engine.Log("ui_error",e.GetType().Name);Push();}}
+  void TryAction(Action a){try{a();}catch(Exception e){feedback=e.Message;engine.Log("ui_error",e.GetType().Name+": "+e.Message);if(!engine.Running){state.Phase="開始できませんでした";state.Detail=e.Message;overlay.Configure(config.Overlay);overlay.UpdateState(state,Native.FindFishingWindow(),config.ShowOverlay);}try{tray.ShowBalloonTip(6000,"釣りアシスト",e.Message,ToolTipIcon.Warning);}catch{}Push();}}
   void OnState(Status s){if(closing||IsDisposed)return;try{BeginInvoke((Action)delegate{if(engine.Running&&!s.Running)return;state=s;overlay.Configure(config.Overlay);overlay.UpdateState(s,engine.TargetWindow,config.ShowOverlay);Push();});}catch(InvalidOperationException){}}
   void Push(){if(!ready||closing||view==null||view.CoreWebView2==null)return;try{view.CoreWebView2.PostWebMessageAsJson(json.Serialize(new{type="state",version=Program.Version,status=state,settings=config,busy=engine.Busy||countdown>0||setupBusy,countdown=countdown,feedback=feedback,storage=StorageState(),prices=chart}));}catch{}}
   void OnAlert(string text){if(closing)return;try{BeginInvoke((Action)delegate{tray.ShowBalloonTip(8000,"釣りアシスト",text,ToolTipIcon.Warning);System.Media.SystemSounds.Exclamation.Play();});}catch{}Task.Run(delegate{object voice=null;try{var type=Type.GetTypeFromProgID("SAPI.SpVoice");voice=Activator.CreateInstance(type);type.InvokeMember("Speak",BindingFlags.InvokeMethod,null,voice,new object[]{text,0});}catch{}finally{if(voice!=null)try{System.Runtime.InteropServices.Marshal.FinalReleaseComObject(voice);}catch{}}});}
   void Export(){EnsureIdle();engine.FlushLogs();using(var dialog=new SaveFileDialog{Filter="ZIP|*.zip",FileName="FishingPilot-diagnostics-"+DateTime.Now.ToString("yyyyMMdd-HHmmss")+".zip",OverwritePrompt=true}){if(dialog.ShowDialog(this)!=DialogResult.OK)return;string tmp=dialog.FileName+".tmp-"+Guid.NewGuid().ToString("N");try{using(var zip=ZipFile.Open(tmp,ZipArchiveMode.Create)){foreach(string file in Directory.GetFiles(root)){string name=Path.GetFileName(file);if(name=="settings.json"||name=="events.jsonl"||name=="events.jsonl.1"||name=="storage-registration.json"||name=="storage-pending.json"||name=="storage-pending.json.bak"||name=="storage-receipts.jsonl"||name=="storage-receipts.jsonl.1"||name=="catch-history.json"||name=="price-aliases.json")zip.CreateEntryFromFile(file,name);}var entry=zip.CreateEntry("build.json");using(var writer=new StreamWriter(entry.Open()))writer.Write(json.Serialize(new{version=Program.Version,exported=DateTime.UtcNow.ToString("o"),live_game_verified=false}));}if(File.Exists(dialog.FileName))File.Replace(tmp,dialog.FileName,null);else File.Move(tmp,dialog.FileName);}finally{if(File.Exists(tmp))File.Delete(tmp);}feedback="診断ZIPを保存しました。中身を確認してチャットへ添付してください";}}
-  protected override void WndProc(ref Message m){if(m.Msg==0x0312){int id=m.WParam.ToInt32();if(id==1&&!engine.Busy&&countdown==0)TryAction(StartNow);else if(id==2)StopNow();else if((id==3||id==4)&&!engine.Busy&&countdown==0)TryAction(delegate{IntPtr h=Native.FishingWindow();if(h==IntPtr.Zero)return;var c=Native.Client(h);Point p=Cursor.Position;if(!c.Contains(p))return;var o=json.Deserialize<Options>(json.Serialize(config));double x=(p.X-c.X)/(double)c.Width,y=(p.Y-c.Y)/(double)c.Height;if(id==3){o.FoodX=x;o.FoodY=y;}else{o.WaterX=x;o.WaterY=y;}Save(o);config=o;feedback=id==3?"空腹ゲージの位置を登録しました":"水分ゲージの位置を登録しました";Push();});}base.WndProc(ref m);}
+  protected override void WndProc(ref Message m){if(m.Msg==0x0312){int id=m.WParam.ToInt32();if(id==1){engine.Log("hotkey_received","key=F5 busy="+engine.Busy+" countdown="+countdown);if(!engine.Busy&&countdown==0)TryAction(StartNow);}else if(id==2)StopNow();else if((id==3||id==4)&&!engine.Busy&&countdown==0)TryAction(delegate{IntPtr h=Native.FishingWindow();if(h==IntPtr.Zero)return;var c=Native.Client(h);Point p=Cursor.Position;if(!c.Contains(p))return;var o=json.Deserialize<Options>(json.Serialize(config));double x=(p.X-c.X)/(double)c.Width,y=(p.Y-c.Y)/(double)c.Height;if(id==3){o.FoodX=x;o.FoodY=y;}else{o.WaterX=x;o.WaterY=y;}Save(o);config=o;feedback=id==3?"空腹ゲージの位置を登録しました":"水分ゲージの位置を登録しました";Push();});}base.WndProc(ref m);}
  }
 }

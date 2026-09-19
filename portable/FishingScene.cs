@@ -34,7 +34,7 @@ internal static partial class CdpBridge {
    urls.Sort((a,b)=>Rank(a).CompareTo(Rank(b)));healthAt=timer.Elapsed.TotalMilliseconds;
   }
   static int Rank(string s){s=s.ToLowerInvariant();return s.Contains("ox_lib")?0:s.Contains("skill")||s.Contains("circle")||s.Contains("fish")||s.Contains("minigame")||s.Contains("bl_ui")?1:s.Contains("hud")?2:3;}
-  static void Collect(Dictionary<string,object> tree,List<string> result){var f=GetObject(tree,"frame");string u=GetString(f,"url");if((u.IndexOf("cfx-nui-",StringComparison.OrdinalIgnoreCase)>=0||u.StartsWith("nui://",StringComparison.OrdinalIgnoreCase))&&!result.Contains(u))result.Add(u);object ch;if(tree.TryGetValue("childFrames",out ch))foreach(var o in (object[])ch)Collect((Dictionary<string,object>)o,result);}
+  static void Collect(Dictionary<string,object> tree,List<string> result){var f=GetObject(tree,"frame");string u=GetString(f,"url");if((u.IndexOf("cfx-nui-",StringComparison.OrdinalIgnoreCase)>=0||u.StartsWith("nui://",StringComparison.OrdinalIgnoreCase))&&!result.Contains(u))result.Add(u);object ch;if(tree.TryGetValue("childFrames",out ch)){var children=ReadJsonArray(ch);if(children!=null)foreach(var o in children){var child=o as Dictionary<string,object>;if(child!=null)Collect(child,result);}}}
   async Task<FishingPilot.Scene> ReadOne(string url,bool allowInput,string cycle,bool fast) {
    var session=await Get(url).ConfigureAwait(false);
    if(!installed.Contains(url)){await Read(session,probe).ConfigureAwait(false);installed.Add(url);}
@@ -52,7 +52,7 @@ internal static partial class CdpBridge {
    if(Bool(r,"valid"))scene.Ring=new FishingPilot.Ring{Valid=true,Native=true,Key=scene.Key,Pointer=Num(r,"pointer",0),Start=Num(r,"start",0),End=Num(r,"end",0),Radius=Num(r,"radius",0),Identity=url+":"+scene.Stamp,Confidence=1};
    scene.Delivery=GetString(d,"delivery");var input=GetObject(d,"input");scene.InputReason=GetString(input,"reason");
    if(Bool(input,"sent")){scene.SentKey=NumI(input,"key",-1);scene.InputSequence=NumI(input,"seq");scene.InputRound=NumI(input,"round");scene.InputPointer=Num(input,"pointer",0);scene.InputStart=Num(input,"start",0);scene.InputEnd=Num(input,"end",0);}
-   if(d.ContainsKey("notices")&&d["notices"] is object[])foreach(var n in (object[])d["notices"]){var v=(Dictionary<string,object>)n;scene.Notices.Add(new FishingPilot.Notice{Kind=GetString(v,"kind"),Id=url+":"+GetString(v,"id")});}
+   if(d.ContainsKey("notices"))foreach(var n in ReadJsonArray(d["notices"])??new object[0]){var v=(Dictionary<string,object>)n;scene.Notices.Add(new FishingPilot.Notice{Kind=GetString(v,"kind"),Id=url+":"+GetString(v,"id")});}
    return scene;
   }
   public async Task<FishingPilot.Scene> Poll(bool allowInput=false,string cycle="") {
