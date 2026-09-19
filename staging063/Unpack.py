@@ -47,3 +47,27 @@ f.write_text(s,encoding='utf-8',newline='\n')
 f=p/'Package.py';s=f.read_text(encoding='utf-8').replace("all(x['ok'] for x in b['rounds'])", "all(x['ok'] or (x.get('after_host_stop') and x.get('key') is None) for x in b['rounds'])")
 s=s.replace(" assert b['actual_inventory_js']>0", " assert not any(x.get('after_host_stop') and x.get('key') is not None for x in b['rounds']), 'digit after host stop'\n assert b['actual_inventory_js']>0")
 f.write_text(s,encoding='utf-8',newline='\n')
+# Keep cached observations raw: merged busy flags must not feed themselves back
+# through other frames and remain true indefinitely after a progress bar ends.
+f=p/'Refine.py';s=f.read_text(encoding='utf-8')
+s+='''
+f=p/'FishingScene.cs';s=f.read_text(encoding='utf-8')
+s=s.replace('recent[url]=value;', 'recent[url]=new FishingPilot.Scene{At=value.At,Busy=value.Busy,Hunger=value.Hunger,Water=value.Water,Notices=new List<FishingPilot.Notice>(value.Notices)};')
+f.write_text(s,encoding='utf-8',newline='\\n')
+'''
+f.write_text(s,encoding='utf-8',newline='\n')
+f=p/'Integration.cs';s=f.read_text(encoding='utf-8')
+s=s.replace('[STAThread]static int Main', '''static void CheckRawCache(){
+ var type=typeof(Engine).Assembly.GetType("CdpBridge+FishingConnection");
+ using(var link=(IDisposable)Activator.CreateInstance(type,new object[]{"",CancellationToken.None})){
+ var flags=System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic;
+ var remember=type.GetMethod("Remember",flags);var merge=type.GetMethod("Ancillary",flags);
+ var busy=new Scene{Busy=true};var idle=new Scene();
+ remember.Invoke(link,new object[]{"a",busy});remember.Invoke(link,new object[]{"b",idle});merge.Invoke(link,new object[]{idle,0.0});
+ if(!idle.Busy)throw new Exception("Expected live busy observation to propagate");
+ var clear=new Scene();remember.Invoke(link,new object[]{"a",clear});merge.Invoke(link,new object[]{clear,0.0});
+ if(clear.Busy)throw new Exception("Derived busy state polluted the raw cache");
+ }}
+ [STAThread]static int Main''')
+s=s.replace('try{using(var game=', 'try{CheckRawCache();result["raw_cache_regression"]=true;using(var game=')
+f.write_text(s,encoding='utf-8',newline='\n')
