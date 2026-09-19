@@ -6,4 +6,15 @@ assert hashlib.sha256(b).hexdigest()=='3f501c1bbf86188ccb0f156d46ef3a0780f5d57d5
 for name,text in json.loads(lzma.decompress(b)).items():
  assert Path(name).name==name and not name.startswith('.')
  (p/name).write_text(text,encoding='utf-8',newline='\n')
-print('Verified and unpacked source bundle')
+# Windows Schannel cannot consistently use EphemeralKeySet certificates.
+# UserKeySet without PersistKeySet uses a temporary key removed with certificate disposal.
+v=p/'View.cs';s=v.read_text(encoding='utf-8')
+s=s.replace('X509KeyStorageFlags.EphemeralKeySet','X509KeyStorageFlags.UserKeySet')
+s=s.replace('public string PairCode;public string Token;','public string PairCode;public string Token;int disposed;')
+s=s.replace('public void Dispose(){alive=false;', 'public void Dispose(){if(Interlocked.Exchange(ref disposed,1)!=0)return;alive=false;')
+s=s.replace('/* The certificate is retained until all in-flight TLS handshakes return. */','var ending=cert;Task.Run(()=>{var w=Stopwatch.StartNew();while(!sockets.IsEmpty&&w.ElapsedMilliseconds<7000)Thread.Sleep(20);if(ending!=null)ending.Dispose();});')
+s=s.replace('catch(Exception e){MessageBox.Show(e.ToString(),"FishingPilot 画面共有エラー");return 1;}', 'catch(Exception e){if(args.Length>1&&args[0].StartsWith("--test",StringComparison.Ordinal)){File.WriteAllText(args[1],new System.Web.Script.Serialization.JavaScriptSerializer().Serialize(new{pass=false,error=e.ToString()}));return 1;}MessageBox.Show(e.ToString(),"FishingPilot 画面共有エラー");return 1;}')
+v.write_text(s,encoding='utf-8',newline='\n')
+v=p/'Manager.cs';s=v.read_text(encoding='utf-8');s=s.replace('catch(Exception e){MessageBox.Show(e.ToString(),"FishingPilot 起動エラー");return 1;}', 'catch(Exception e){if(args.Length>1&&(args[0]=="--self-test"||args[0]=="--test-feed")){File.WriteAllText(args[1],Store.Json.Serialize(new{pass=false,error=e.ToString()}));return 1;}MessageBox.Show(e.ToString(),"FishingPilot 起動エラー");return 1;}');v.write_text(s,encoding='utf-8',newline='\n')
+v=p/'Build.ps1';s=v.read_text(encoding='utf-8').replace('<DebugType>none</DebugType>','<ApplicationManifest>../portable/app.manifest</ApplicationManifest><DebugType>none</DebugType>');s=s.replace('throw "$Mode failed"','if(Test-Path $result){Get-Content $result};throw "$Mode failed"');v.write_text(s,encoding='utf-8',newline='\n')
+print('Verified source, Windows TLS compatibility and DPI configuration')
