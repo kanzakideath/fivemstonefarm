@@ -1,0 +1,106 @@
+name: FishingPilot 0.5.0 input and overlay repair
+on:
+  push:
+    branches: [fix/fishing-input-overlay-0.5.0]
+    paths: [.github/workflows/fishing050-build.yml]
+permissions:
+  contents: write
+concurrency:
+  group: fishing050-build
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Integrate the versioned repair
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force artifacts/fishing050 | Out-Null
+          $engine=Get-Content portable/Engine.cs -Raw
+          if($engine.Contains('0.4.0-preview')) {
+            python staging050/Repair.py
+            if($LASTEXITCODE -ne 0){throw 'Source integration failed'}
+            python staging050/Finalize.py
+            if($LASTEXITCODE -ne 0){throw 'CSS geometry integration failed'}
+            python staging050/Tracking.py
+            if($LASTEXITCODE -ne 0){throw 'Tracking integration failed'}
+            Copy-Item staging050/README.txt portable/README.txt -Force
+          } elseif(!$engine.Contains('0.5.0-preview')) {throw 'Unexpected source version'}
+          git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --check
+          if($LASTEXITCODE -ne 0){throw 'Source whitespace check failed'}
+      - name: Build and test the Windows executable and overlay
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          Start-Transcript artifacts/fishing050/build.txt
+          try { ./portable/Build.ps1 -Test } finally { Stop-Transcript }
+      - name: Browser recognition, inventory UI and unchanged storage regressions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $expr=Join-Path $PWD 'artifacts/fishing050/storage-expressions.json'
+          $p=Start-Process portable/dist/FishingPilot.exe -ArgumentList @('--storage-expressions',('"'+$expr+'"')) -PassThru
+          if(!$p.WaitForExit(12000)){$p.Kill();throw 'Expression export timed out'}
+          $p.Refresh();if($p.ExitCode -ne 0 -or !(Test-Path $expr)){throw 'Expression export failed'}
+          python -m pip install playwright==1.57.0
+          if($LASTEXITCODE -ne 0){throw 'Browser tool installation failed'}
+          $edge='C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+          if(!(Test-Path $edge)){$edge='C:\Program Files\Microsoft\Edge\Application\msedge.exe'}
+          $browser=@()
+          if(Test-Path $edge){$browser=@('--browser',$edge)}else{python -m playwright install chromium;if($LASTEXITCODE -ne 0){throw 'Browser installation failed'}}
+          python portable/TestScene.py @browser --output artifacts/fishing050/scene
+          if($LASTEXITCODE -ne 0){throw 'Rendered circle or focused browser input regression failed'}
+          python portable/TestUi.py @browser --output artifacts/fishing050/ui
+          if($LASTEXITCODE -ne 0){throw 'iOS UI or inventory counter regression failed'}
+          python portable/TestStorage.py @browser --expressions $expr --output artifacts/fishing050/storage
+          if($LASTEXITCODE -ne 0){throw 'Existing storage integrity regression failed'}
+      - name: Commit only the validated portable source to the isolated branch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- portable
+          git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --cached --check
+          if($LASTEXITCODE -ne 0){throw 'Validated staging check failed'}
+          git diff --cached --quiet
+          if($LASTEXITCODE -ne 0){
+            git commit -m 'FishingPilot 0.5.0: tested foreground and CSS geometry repair, overlay and F5/F6'
+            if($LASTEXITCODE -ne 0){throw 'Validated source commit failed'}
+            git push origin HEAD:fix/fishing-input-overlay-0.5.0
+            if($LASTEXITCODE -ne 0){throw 'Branch changed during build; no force push allowed'}
+          }
+      - name: Package the tested binary, exact source and verification
+        shell: pwsh
+        run: |
+          python portable/Package050.py
+          if($LASTEXITCODE -ne 0){throw 'Packaging or ZIP verification failed'}
+      - name: Retain diagnostics and attempted source even when a gate fails
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts/fishing050 | Out-Null
+          $files=Get-ChildItem portable -File | Where-Object Extension -in '.cs','.csproj','.ps1','.py','.js','.txt'
+          New-Item -ItemType Directory -Force artifacts/fishing050/attempted-source | Out-Null
+          $files | Copy-Item -Destination artifacts/fishing050/attempted-source -Force
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: fishing050-evidence
+          path: |
+            artifacts/fishing050/
+            portable/dist/test-evidence/
+          retention-days: 14
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: success()
+        with:
+          name: fishing050-download
+          path: artifacts/fishing050-download/
+          retention-days: 14
+          if-no-files-found: error
