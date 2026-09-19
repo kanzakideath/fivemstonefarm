@@ -1,0 +1,40 @@
+name: FishingPilot 0.7.1 published feed verification
+on:
+  push:
+    branches: [release/fishingpilot-0.7.1-owner]
+    paths: [.github/workflows/fishing071-feed-verify.yml]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 7
+    steps:
+      - name: Verify released package and actual update discovery without rebuilding or changing release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force evidence | Out-Null
+          Invoke-WebRequest 'https://github.com/kanzakideath/fivemstonefarm/releases/download/fishingpilot-v0.7.1-preview/FishingPilot-0.7.1-win-x64.zip' -OutFile client.zip
+          if((Get-FileHash client.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'b786d77b165daa3dee1347201444aa5b1543f38e807a76badb9bb697f2e05b01'){throw 'Published client differs from the tested ZIP'}
+          Expand-Archive client.zip client
+          $ok=$false
+          for($i=1;$i -le 4;$i++){
+            $result=Join-Path $PWD ('evidence/feed-'+$i+'.json')
+            $p=Start-Process client/FishingPilot.exe -ArgumentList @('--test-feed',('"'+$result+'"')) -PassThru
+            if(!$p.WaitForExit(60000)){$p.Kill();throw 'Feed test timed out'}
+            $p.Refresh()
+            if(Test-Path $result){$r=Get-Content $result -Raw | ConvertFrom-Json;Get-Content $result;if($p.ExitCode -eq 0 -and $r.pass -and $r.version -eq '0.7.1' -and $r.sha256 -eq '50db8e7c6cac4ec7a1660c21b913e70d1b474d7313cf7d0c6539e9ac96d7fed8'){$ok=$true;Copy-Item $result evidence/published-feed.json;break}}
+            Start-Sleep -Seconds 15
+          }
+          if(!$ok){throw 'Compiled updater did not discover and verify published 0.7.1'}
+          Invoke-WebRequest 'https://github.com/kanzakideath/fivemstonefarm/releases/download/fishingpilot-v0.7.1-preview/FishingPilot-Admin-0.7.1-win-x64.zip' -OutFile admin.zip
+          if((Get-FileHash admin.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'ca555640647eec6d150b41a4586406721685338ee3b604584882ffc787f03f79'){throw 'Published admin differs from tested ZIP'}
+          @{pass=$true;client_sha256='b786d77b165daa3dee1347201444aa5b1543f38e807a76badb9bb697f2e05b01';admin_sha256='ca555640647eec6d150b41a4586406721685338ee3b604584882ffc787f03f79';note='Exact published executables; no rebuild, no mutation of release; WAN not tested'} | ConvertTo-Json | Set-Content evidence/published-packages.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: fishing071-published-evidence
+          path: evidence/
+          retention-days: 14
+          if-no-files-found: error
