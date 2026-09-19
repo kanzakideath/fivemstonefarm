@@ -1,0 +1,100 @@
+name: FishingPilot 0.6.4 dark UI and recovery validation
+on:
+  push:
+    branches: [fix/fishing-dark-needs-0.6.4]
+    paths: [.github/workflows/fishing064-build.yml, 'staging064/**']
+permissions:
+  contents: write
+concurrency:
+  group: fishing064-build
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Apply verified isolated source changes
+        shell: pwsh
+        run: |
+          python staging064/Apply.py
+          if($LASTEXITCODE -ne 0){throw 'Source integrity or application failed'}
+          Remove-Item portable/dist -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force artifacts/fishing064 | Out-Null
+      - name: Build real Windows executable and test policies, native UI and saved themes
+        shell: pwsh
+        run: |
+          Start-Transcript artifacts/fishing064/build.txt
+          try { ./portable/Build.ps1 -Test } finally { Stop-Transcript }
+      - name: Test background workflow with missing HUD, hidden input, failure, lost receipt and supply timeout
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          python -m pip install playwright==1.57.0 websockets==15.0.1
+          if($LASTEXITCODE -ne 0){throw 'Test tooling installation failed'}
+          $edge='C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+          if(!(Test-Path $edge)){$edge='C:\Program Files\Microsoft\Edge\Application\msedge.exe'}
+          if(!(Test-Path $edge)){throw 'Expected test browser missing'}
+          "TEST_BROWSER=$edge" >> $env:GITHUB_ENV
+          node staging064/TestSlots.cjs
+          if($LASTEXITCODE -ne 0){throw 'Slot and transport guards failed'}
+          node staging064/TestHud.cjs
+          if($LASTEXITCODE -ne 0){throw 'HUD messages failed'}
+          ./staging064/RunBackground.ps1 -Name white -Style white -Browser $edge
+          ./staging064/RunBackground.ps1 -Name red -Style red -Browser $edge -FocusUnsupported
+          foreach($case in @('unknown-hud','hidden-focus','fail-first','receipt-loss','supply-timeout')){
+            ./staging064/RunBackground.ps1 -Name $case -Case $case -Style white -Browser $edge
+          }
+      - name: Inventory, circle, responsive themes and unchanged storage regressions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          node portable/TestInventory060.cjs artifacts/fishing064/inventory/RESULT.json
+          if($LASTEXITCODE -ne 0){throw 'Inventory regression failed'}
+          $expr=Join-Path $PWD 'artifacts/fishing064/storage-expressions.json'
+          $p=Start-Process portable/dist/FishingPilot.exe -ArgumentList @('--storage-expressions',('"'+$expr+'"')) -PassThru
+          if(!$p.WaitForExit(12000)){$p.Kill();throw 'Storage expression export timed out'}
+          $p.Refresh();if($p.ExitCode -ne 0 -or !(Test-Path $expr)){throw 'Storage export failed'}
+          python portable/TestScene.py --browser $env:TEST_BROWSER --output artifacts/fishing064/scene
+          if($LASTEXITCODE -ne 0){throw 'Scene regression failed'}
+          python portable/TestUi.py --browser $env:TEST_BROWSER --output artifacts/fishing064/ui
+          if($LASTEXITCODE -ne 0){throw 'Theme and UI regression failed'}
+          python portable/TestStorage.py --browser $env:TEST_BROWSER --expressions $expr --output artifacts/fishing064/storage
+          if($LASTEXITCODE -ne 0){throw 'Storage regression failed'}
+      - name: Commit only validated application source on isolated branch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- portable
+          git diff --cached --quiet
+          if($LASTEXITCODE -ne 0){
+            git commit -m 'FishingPilot 0.6.4: dark UI, bounded needs wait, failure recast and background guards'
+            if($LASTEXITCODE -ne 0){throw 'Validated source commit failed'}
+            git push origin HEAD:fix/fishing-dark-needs-0.6.4
+            if($LASTEXITCODE -ne 0){throw 'Branch advanced; no force push permitted'}
+          }
+      - name: Package executable, source and exact verification
+        shell: pwsh
+        run: |
+          python staging064/Package.py
+          if($LASTEXITCODE -ne 0){throw 'Packaging integrity gate failed'}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: fishing064-evidence
+          path: |
+            artifacts/fishing064/
+            portable/dist/test-evidence/
+          retention-days: 14
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: success()
+        with:
+          name: fishing064-download
+          path: artifacts/fishing064-download/
+          retention-days: 14
+          if-no-files-found: error
