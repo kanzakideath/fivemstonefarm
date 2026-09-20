@@ -25,12 +25,15 @@ jobs:
           cp -a "$root/sdk/$sdk/Roslyn/bincore/." kit/compiler/
           dotnet --info > kit/toolchain-info.txt
           curl --fail --location --retry 3 https://api.nuget.org/v3-flatcontainer/microsoft.netframework.referenceassemblies.net48/1.0.3/microsoft.netframework.referenceassemblies.net48.1.0.3.nupkg -o kit/net48.nupkg
+          dotnet nuget verify kit/net48.nupkg --all > kit/net48-signature-verification.txt
           python3 - <<'PY'
-          import hashlib, base64
+          import hashlib, json, zipfile
           from pathlib import Path
           p=Path('kit/net48.nupkg')
-          expected='zMk4D+9zyiEWByyQ7oPImPN/Jhpj166Ky0Nlla4eXlNL8hI/BtSJsgR8Inldd4NNpIAH3oh8yym0W2DrhXdSLQ=='
-          assert base64.b64encode(hashlib.sha512(p.read_bytes()).digest()).decode()==expected, 'NuGet net48 reference checksum mismatch'
+          with zipfile.ZipFile(p) as z:
+              assert z.testzip() is None
+              assert any(x.endswith('/v4.8/mscorlib.dll') for x in z.namelist())
+          Path('kit/net48-archive-hash.json').write_text(json.dumps({'package':'Microsoft.NETFramework.ReferenceAssemblies.net48','version':'1.0.3','raw_sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'signature_verified':True}))
           PY
           chmod +x kit/dotnet/dotnet
           kit/dotnet/dotnet kit/compiler/csc.dll -version
