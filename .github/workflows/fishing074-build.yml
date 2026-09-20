@@ -1,0 +1,253 @@
+name: FishingPilot 0.7.4 consumables and fullscreen background reliability
+
+on:
+  push:
+    branches:
+      - 'release/fishingpilot-0.7.4-reliability'
+    paths:
+      - '.github/workflows/fishing074-build.yml'
+      - 'staging074/**'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: '全テスト後に0.7.4を更新フィードへ公開する'
+        required: true
+        type: boolean
+        default: false
+
+concurrency:
+  group: fishing074-release
+  cancel-in-progress: false
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Restore immutable 0.7.3 baseline and verify the reviewed 0.7.4 overlay
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python staging074/Prepare.py
+          if ($LASTEXITCODE -ne 0) { throw 'Source integrity failure' }
+          Remove-Item portable/dist -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item artifacts/fishing074,artifacts/fishing074-download -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force artifacts/fishing074 | Out-Null
+
+      - name: Build Windows core and test native startup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Start-Transcript artifacts/fishing074/build.txt
+          try { ./portable/Build.ps1 -Test } finally { Stop-Transcript }
+
+      - name: Build updater and sharing agent and run native release tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./staging074/Build.ps1
+
+      - name: Test recognition input UI inventory storage and Admin isolation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install playwright==1.57.0
+          if ($LASTEXITCODE -ne 0) { throw 'Browser tooling install failed' }
+          $edge = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+          if (!(Test-Path $edge)) { $edge = 'C:\Program Files\Microsoft\Edge\Application\msedge.exe' }
+          if (!(Test-Path $edge)) { throw 'Test browser missing' }
+
+          node portable/TestInventory060.cjs artifacts/fishing074/inventory/RESULT.json
+          if ($LASTEXITCODE -ne 0) { throw 'Inventory regression failed' }
+          python portable/TestScene.py --browser $edge --output artifacts/fishing074/scene
+          if ($LASTEXITCODE -ne 0) { throw 'Scene regression failed' }
+          python staging073/TestLease.py --browser $edge --output artifacts/fishing074/lease
+          if ($LASTEXITCODE -ne 0) { throw 'Input lease regression failed' }
+          python portable/TestUi.py --browser $edge --inline --output artifacts/fishing074/ui
+          if ($LASTEXITCODE -ne 0) { throw 'Main UI regression failed' }
+          python staging073/TestAdminUi.py --browser $edge --output artifacts/fishing074/admin-ui
+          if ($LASTEXITCODE -ne 0) { throw 'Admin regression failed' }
+          python staging073/TestExperience.py --browser $edge --output artifacts/fishing074/experience
+          if ($LASTEXITCODE -ne 0) { throw 'Experience/background regression failed' }
+
+          $expressions = Join-Path $PWD 'artifacts/fishing074/storage-expressions.json'
+          $process = Start-Process portable/dist/FishingPilot.exe -ArgumentList @('--storage-expressions', ('"' + $expressions + '"')) -PassThru
+          if (!$process.WaitForExit(12000)) { $process.Kill(); throw 'Storage export timed out' }
+          $process.Refresh()
+          if ($process.ExitCode -ne 0 -or !(Test-Path $expressions)) { throw 'Storage export failed' }
+          python portable/TestStorage.py --browser $edge --expressions $expressions --output artifacts/fishing074/storage
+          if ($LASTEXITCODE -ne 0) { throw 'Storage regression failed' }
+
+      - name: Package unified app Admin source verification and exact 0.7.3 rollback
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python staging074/Package.py
+          if ($LASTEXITCODE -ne 0) { throw 'Package creation failed' }
+          python staging074/Validate.py package
+          if ($LASTEXITCODE -ne 0) { throw 'Package validation failed' }
+
+      - name: Upload fully tested release candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fishing074-release-candidate
+          path: artifacts/fishing074-download/
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Keep attempted source and test evidence
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts/fishing074 | Out-Null
+          python -c "from pathlib import Path; import zipfile; r=Path('.'); z=zipfile.ZipFile('artifacts/fishing074/attempted-source.zip','w',zipfile.ZIP_DEFLATED); [(z.write(p,p.as_posix())) for d in ('portable','staging071','staging072','staging073','staging074') for p in (r/d).rglob('*') if p.is_file() and not any(x in p.parts for x in ('bin','obj','dist','node_modules','__pycache__')) and not any(x.startswith('test-evidence') for x in p.parts)]; z.close()"
+
+      - name: Upload build evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fishing074-build-evidence
+          path: |
+            artifacts/fishing074/
+            portable/dist/test-evidence/
+          retention-days: 14
+          if-no-files-found: warn
+
+  publish:
+    needs: build-and-test
+    if: github.event_name == 'workflow_dispatch' && inputs.publish == true && github.ref == 'refs/heads/release/fishingpilot-0.7.4-reliability'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    environment: release
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Download the exact tested release candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: fishing074-release-candidate
+          path: artifacts/fishing074-download
+
+      - name: Upload assets to a non-public draft release
+        id: draft
+        timeout-minutes: 15
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python staging074/Publish.py draft
+          if ($LASTEXITCODE -ne 0) { throw 'Draft upload failed' }
+
+      - name: Re-download and verify every draft asset before publication
+        timeout-minutes: 15
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python staging074/Publish.py verify-draft
+          if ($LASTEXITCODE -ne 0) { throw 'Draft verification failed' }
+
+      - name: Publish the verified FishingPilot prerelease
+        id: promote
+        timeout-minutes: 5
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python staging074/Publish.py publish
+          if ($LASTEXITCODE -ne 0) { throw 'Release promotion failed' }
+
+      - name: Verify the public feed with both 0.7.3 and 0.7.4 managers
+        id: feed
+        timeout-minutes: 15
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          try {
+            $feedDeadline = [DateTime]::UtcNow.AddMinutes(10)
+            $candidate = Join-Path $PWD 'artifacts/fishing074-download'
+            $feedRoot = Join-Path $PWD 'artifacts/fishing074-release/feed'
+            New-Item -ItemType Directory -Force $feedRoot | Out-Null
+            $appChecksum = ((Get-Content (Join-Path $candidate 'FishingPilot-0.7.4-app.zip.sha256') -Raw).Trim() -split '\s+')[0]
+
+            $newRoot = Join-Path $feedRoot 'manager-074'
+            Expand-Archive (Join-Path $candidate 'FishingPilot-0.7.4-win-x64.zip') $newRoot -Force
+
+            $oldZip = Join-Path $feedRoot 'FishingPilot-0.7.3-win-x64.zip'
+            Invoke-WebRequest 'https://github.com/kanzakideath/fivemstonefarm/releases/download/fishingpilot-v0.7.3-preview/FishingPilot-0.7.3-win-x64.zip' -OutFile $oldZip -TimeoutSec 120
+            $oldHash = (Get-FileHash $oldZip -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($oldHash -ne 'c75d5091419d644ec48b395ca22a21de09716d9a2b0c6365dc9f4c4b38367fc2') { throw 'Published 0.7.3 manager baseline changed' }
+            $oldRoot = Join-Path $feedRoot 'manager-073'
+            Expand-Archive $oldZip $oldRoot -Force
+
+            function Test-Feed([string]$manager, [string]$label) {
+              $destination = Join-Path $feedRoot ($label + '.json')
+              for ($attempt = 0; $attempt -lt 6; $attempt++) {
+                $remaining = ($feedDeadline - [DateTime]::UtcNow).TotalMilliseconds
+                if ($remaining -le 0) { throw 'Public feed verification exceeded its 10-minute total deadline' }
+                Remove-Item $destination -Force -ErrorAction SilentlyContinue
+                $process = Start-Process $manager -ArgumentList @('--test-feed', ('"' + $destination + '"')) -PassThru
+                $waitMs = [Math]::Max(1, [Math]::Min(70000, [int]$remaining))
+                if (!$process.WaitForExit($waitMs)) {
+                  $process.Kill()
+                  if ([DateTime]::UtcNow -ge $feedDeadline) { throw 'Public feed verification exceeded its 10-minute total deadline' }
+                  throw "$label feed check timed out"
+                }
+                $process.Refresh()
+                if (Test-Path $destination) {
+                  $value = Get-Content $destination -Raw | ConvertFrom-Json
+                  if ($process.ExitCode -eq 0 -and $value.pass -and $value.version -eq '0.7.4' -and $value.sha256 -eq $appChecksum) { return }
+                }
+                if ($attempt -lt 5) {
+                  $sleepSeconds = [Math]::Min(15, [Math]::Max(0, [int](($feedDeadline - [DateTime]::UtcNow).TotalSeconds)))
+                  if ($sleepSeconds -gt 0) { Start-Sleep -Seconds $sleepSeconds }
+                }
+              }
+              if (Test-Path $destination) { Get-Content $destination }
+              throw "$label did not resolve the verified 0.7.4 feed"
+            }
+
+            Test-Feed (Join-Path $oldRoot 'FishingPilot.exe') 'manager-073'
+            Test-Feed (Join-Path $newRoot 'FishingPilot.exe') 'manager-074'
+          } catch {
+            $feedFailure = $_.Exception.Message
+            python staging074/Publish.py redraft
+            if ($LASTEXITCODE -ne 0) { throw "EMERGENCY: feed failed and release could not be returned to draft: $feedFailure" }
+            throw "Public feed verification failed; release returned to draft: $feedFailure"
+          }
+
+      - name: Return a failed public release to draft immediately
+        if: always() && steps.draft.outcome != 'skipped' && steps.feed.outcome != 'success'
+        timeout-minutes: 5
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python staging074/Publish.py redraft
+          if ($LASTEXITCODE -ne 0) { throw 'EMERGENCY: failed release could not be returned to draft' }
+
+      - name: Keep publication evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fishing074-publication-evidence
+          path: artifacts/fishing074-release/
+          retention-days: 30
+          if-no-files-found: warn
