@@ -1,0 +1,45 @@
+name: FishingPilot offline Windows compiler kit
+on:
+  push:
+    branches: [build/fishingpilot-075-local-compiler]
+    paths: [.github/workflows/fishing075-compiler-kit.yml]
+permissions:
+  contents: read
+jobs:
+  kit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Collect installed Microsoft compiler and matching runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p kit/dotnet/shared/Microsoft.NETCore.App kit/dotnet/host/fxr kit/compiler output
+          root=$(dirname "$(readlink -f "$(command -v dotnet)")")
+          sdk=$(dotnet --list-sdks | awk '$1 ~ /^8[.]/ {print $1}' | sort -V | tail -1)
+          runtime=$(dotnet --list-runtimes | awk '$1 == "Microsoft.NETCore.App" && $2 ~ /^8[.]/ {print $2}' | sort -V | tail -1)
+          test -n "$sdk"; test -n "$runtime"
+          cp "$root/dotnet" kit/dotnet/
+          cp -a "$root/shared/Microsoft.NETCore.App/$runtime" kit/dotnet/shared/Microsoft.NETCore.App/
+          cp -a "$root/host/fxr/$runtime" kit/dotnet/host/fxr/
+          cp -a "$root/sdk/$sdk/Roslyn/bincore/." kit/compiler/
+          dotnet --info > kit/toolchain-info.txt
+          curl --fail --location --retry 3 https://api.nuget.org/v3-flatcontainer/microsoft.netframework.referenceassemblies.net48/1.0.3/microsoft.netframework.referenceassemblies.net48.1.0.3.nupkg -o kit/net48.nupkg
+          python3 - <<'PY'
+          import hashlib, base64
+          from pathlib import Path
+          p=Path('kit/net48.nupkg')
+          expected='zMk4D+9zyiEWByyQ7oPImPN/Jhpj166Ky0Nlla4eXlNL8hI/BtSJsgR8Inldd4NNpIAH3oh8yym0W2DrhXdSLQ=='
+          assert base64.b64encode(hashlib.sha512(p.read_bytes()).digest()).decode()==expected, 'NuGet net48 reference checksum mismatch'
+          PY
+          chmod +x kit/dotnet/dotnet
+          kit/dotnet/dotnet kit/compiler/csc.dll -version
+          tar -czf output/fishing075-compiler-kit.tar.gz -C kit .
+          sha256sum output/fishing075-compiler-kit.tar.gz > output/SHA256SUMS.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fishing075-offline-compiler
+          path: output/
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
